@@ -1,0 +1,9 @@
+[
+  { "align": "left", "attribute": "hostname", "class": "", "order": 1, "sortable": true, "text": "Hostname", "type": "String" },
+  { "align": "left", "attribute": "ip", "class": "", "order": 2, "sortable": false, "text": "IP", "type": "String" },
+  { "align": "left", "attribute": "vendor", "class": "", "order": 3, "sortable": true, "text": "Vendor", "type": "String" },
+  { "align": "left", "attribute": "platform.name", "class": "", "order": 4, "sortable": true, "text": "Platform", "type": "String" },
+  { "align": "left", "attribute": "model", "class": "", "order": 5, "sortable": true, "text": "Model", "type": "String" },
+  { "align": "left", "attribute": "softwareRelease", "class": "", "order": 6, "sortable": false, "text": "Software", "type": "String" },
+  { "align": "left", "attribute": "interfaces", "class": "", "order": 7, "sortable": false, "text": "Interfaces", "type": "InterfaceCountOfDevice" }
+]

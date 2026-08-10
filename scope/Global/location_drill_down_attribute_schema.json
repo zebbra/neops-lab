@@ -1,0 +1,7 @@
+[
+  { "attribute": "name", "text": "Name", "type": "String" },
+  { "attribute": "id", "text": "ID", "type": "String" },
+  { "attribute": "location.address", "text": "Address", "type": "String" },
+  { "attribute": "location.zipCode", "text": "Zip Code", "type": "String" },
+  { "attribute": "location.city", "text": "City", "type": "String" }
+]

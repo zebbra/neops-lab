@@ -1,0 +1,16 @@
+# Minimal containerlab probe: confirms containerlab can deploy on this host
+# (privileges) and that a `linux`-kind FRR node takes a `swpN` interface over a
+# real veth link. Uses only frrouting/frr:latest (no build/pull needed).
+name: neops-clab-probe
+prefix: ""
+
+topology:
+  nodes:
+    r1:
+      kind: linux
+      image: frrouting/frr:latest
+    r2:
+      kind: linux
+      image: frrouting/frr:latest
+  links:
+    - endpoints: ["r1:swp1", "r2:swp1"]

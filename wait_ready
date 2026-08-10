@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Block until the lab worker is online and ready to execute a function block.
+
+`docker compose up -d` returns once containers are *started*, not once the
+worker inside them has connected to the engine and registered its function
+blocks. Running a workflow before that races the worker and fails partway
+through with:
+
+    failed_safe_ack — Function block with id fb.lab.neops.io/...:1.0.0 not found
+
+(The sibling race — the *workflow definition* not yet being registered by
+lab_bootstrap — surfaces earlier as "Workflow with ID null not found" and is
+handled by `docker compose wait lab_bootstrap`.)
+
+This polls the engine's per-function-block worker registry until at least one
+`online` worker is registered for every requested function block, so callers
+like `make local-lab-discover` can run deterministically instead of racing.
+
+Usage
+-----
+    ./wait_ready fb.base.neops.io/global_discover_network:0.1.0 [more fb ids ...]
+
+Exit codes
+----------
+    0   every requested function block has an online worker
+    2   timed out before all function blocks became ready
+"""
+
+import argparse
+import json
+import sys
+import time
+from urllib import error, request
+
+
+def parse_fb_id(fb_id: str) -> tuple[str, str, str]:
+    """Split `pkg/name:version` into (pkg, name, version) for the REST path."""
+    try:
+        pkg_name, version = fb_id.rsplit(":", 1)
+        pkg, name = pkg_name.rsplit("/", 1)
+    except ValueError as exc:
+        raise SystemExit(f"invalid function block id {fb_id!r}; expected 'pkg/name:version'") from exc
+    return pkg, name, version
+
+
+def online_worker_count(engine_url: str, fb_id: str) -> int | None:
+    """Return the number of online workers for a function block.
+
+    Returns None if the engine can't be reached or the block isn't registered
+    yet (both are transient during startup and should keep the caller polling).
+    """
+    pkg, name, version = parse_fb_id(fb_id)
+    url = f"{engine_url}/function-blocks/{pkg}/{name}/{version}/workers"
+    try:
+        with request.urlopen(url, timeout=5) as resp:
+            workers = json.load(resp)
+    except (error.HTTPError, error.URLError, TimeoutError, json.JSONDecodeError):
+        return None
+    if not isinstance(workers, list):
+        return None
+    return sum(1 for w in workers if w.get("state") == "online")
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(
+        prog="wait_ready",
+        description="Block until an online worker is registered for each function block.",
+    )
+    p.add_argument("function_blocks", nargs="+", help="Function block ids: pkg/name:version")
+    p.add_argument("--engine-url", default="http://localhost:3030")
+    p.add_argument("--timeout", type=int, default=180, help="Total wait budget in seconds (default: 180)")
+    p.add_argument("--interval", type=float, default=2.0, help="Poll interval in seconds (default: 2.0)")
+    args = p.parse_args()
+
+    pending = list(args.function_blocks)
+    deadline = time.monotonic() + args.timeout
+    started = time.monotonic()
+
+    while pending:
+        still_pending = []
+        for fb_id in pending:
+            count = online_worker_count(args.engine_url, fb_id)
+            if count:
+                elapsed = int(time.monotonic() - started)
+                print(f"  [{elapsed:3d}s] ready: {fb_id} ({count} online worker(s))")
+            else:
+                still_pending.append(fb_id)
+        pending = still_pending
+
+        if not pending:
+            return 0
+        if time.monotonic() >= deadline:
+            print(
+                f"timeout: no online worker for {', '.join(pending)} within {args.timeout}s",
+                file=sys.stderr,
+            )
+            return 2
+        time.sleep(args.interval)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

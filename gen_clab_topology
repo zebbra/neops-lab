@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""Render the containerlab lab from `topology.json` (stdlib-only, run on the host).
+
+Writes the containerlab topology + device configs under `generated/` (git-ignored)
+and the committed `workflow-execution-parameters/discover-params.json`. Reuses the
+per-device renderers from the sibling `gen_device_configs`.
+"""
+
+import importlib.machinery
+import importlib.util
+import json
+import pathlib
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+TOPOLOGY = HERE / "topology.json"
+FRR_DIR = HERE / "generated" / "frr"
+SRL_DIR = HERE / "generated" / "srl"
+CLAB_DIR = HERE / "generated"
+CLAB_FILE = CLAB_DIR / "neops-lab.clab.json"
+DISCOVER_PARAMS = HERE / "workflow-execution-parameters" / "discover-params.json"
+AUTODETECT_PARAMS = HERE / "workflow-execution-parameters" / "discover-params-autodetect.json"
+SUBNET_PARAMS = HERE / "workflow-execution-parameters" / "discover-params-subnet.json"
+
+# Reuse the per-device render helpers from the extension-less sibling module.
+_dc_loader = importlib.machinery.SourceFileLoader("gen_device_configs", str(HERE / "gen_device_configs"))
+_dc_spec = importlib.util.spec_from_loader(_dc_loader.name, _dc_loader)
+if _dc_spec is None:  # never happens with an explicit loader; keeps the types honest
+    raise SystemExit(f"could not load {HERE / 'gen_device_configs'}")
+gen_device_configs = importlib.util.module_from_spec(_dc_spec)
+_dc_loader.exec_module(gen_device_configs)
+
+render_frr = gen_device_configs.render_frr
+render_srl = gen_device_configs.render_srl
+_write = gen_device_configs._write
+_prune_stale = gen_device_configs._prune_stale
+
+
+def mgmt_creds(vendor: str) -> tuple[str, str]:
+    """Return `(username, password)` for a vendor's management access."""
+    if vendor == "frr":
+        return ("frr", "frr")
+    if vendor == "srl":
+        return ("admin", "NokiaSrl1!")
+    raise ValueError(f"unknown vendor {vendor!r}")
+
+
+def clab_iface(vendor: str, name: str) -> str:
+    """Map a device interface name to its containerlab netdev name.
+
+    SR Linux `ethernet-1/N` -> `e1-N` (containerlab's linux netdev name, which
+    the NOS aliases back to `ethernet-1/N`). FRR names are used as-is (`swp1`).
+    """
+    if name.startswith("ethernet-"):
+        return "e" + name[len("ethernet-") :].replace("/", "-")
+    return name
+
+
+def _peer_iface_to_clab(vendor: str, ref: str) -> str:
+    """Convert a peer interface reference to its clab netdev name.
+
+    Handles both the SHORT forms used inside `to` strings (FRR `swpN`, SRL
+    `e1/N`) and the full `name` forms (SRL `ethernet-1/N`).
+      FRR:  `swp1`         -> `swp1`
+      SRL:  `e1/1`         -> `e1-1`
+      SRL:  `ethernet-1/1` -> `e1-1`
+    """
+    if ref.startswith("ethernet-"):
+        return "e" + ref[len("ethernet-") :].replace("/", "-")
+    if ref.startswith("e") and "/" in ref:
+        return ref.replace("/", "-")
+    return ref
+
+
+def parse_endpoint(to: str, devices: dict) -> tuple[str, str] | None:
+    """Parse a `to` string into `(host, iface)` if it targets a device.
+
+    Returns `None` for stub/host-facing endpoints:
+      * no colon (`"isp-upstream"`, `"server web-01"`)
+      * `"<host>:<iface>"` where `<host>` is not a device key
+        (e.g. `"cust-a-ce:ge0/0"`).
+    """
+    if ":" not in to:
+        return None
+    host, _, iface = to.partition(":")
+    if host not in devices:
+        return None
+    return (host, iface)
+
+
+def build_links(devices: dict) -> tuple[list, list]:
+    """Build `(veth_links, dummy_links)` from the device map.
+
+    Real inter-device links become veth links `{"endpoints": [a, b]}`, deduped
+    so a physically shared link (listed on both devices) appears once. Stub /
+    host-facing ports become `dummy` links on the owning node.
+    """
+    veth_links: list = []
+    dummy_links: list = []
+    seen: set = set()
+
+    for host, dev in devices.items():
+        vendor = dev["vendor"]
+        for iface in dev["interfaces"]:
+            local_ep = f"{host}:{clab_iface(vendor, iface['name'])}"
+            parsed = parse_endpoint(iface["to"], devices)
+            if parsed is None:
+                dummy_links.append(
+                    {
+                        "type": "dummy",
+                        "endpoint": {
+                            "node": host,
+                            "interface": clab_iface(vendor, iface["name"]),
+                        },
+                    }
+                )
+                continue
+            peer, peer_iface = parsed
+            peer_vendor = devices[peer]["vendor"]
+            remote_ep = f"{peer}:{_peer_iface_to_clab(peer_vendor, peer_iface)}"
+            key = frozenset({local_ep, remote_ep})
+            if key in seen:
+                continue
+            seen.add(key)
+            veth_links.append({"endpoints": [local_ep, remote_ep]})
+
+    return veth_links, dummy_links
+
+
+def render_clab(devices: dict) -> dict:
+    """Render the full containerlab topology document."""
+    nodes: dict = {}
+    for host, dev in devices.items():
+        vendor = dev["vendor"]
+        if vendor == "frr":
+            nodes[host] = {
+                "kind": "linux",
+                "mgmt-ipv4": dev["mgmt_ip"],
+                "binds": [
+                    f"frr/{host}.iface:/etc/frr/lab-interfaces/{host}.iface:ro",
+                    "../devices/frr/set-aliases.sh:/etc/frr/set-aliases.sh:ro",
+                ],
+                "exec": ["sh /etc/frr/set-aliases.sh"],
+            }
+        elif vendor == "srl":
+            nodes[host] = {
+                "kind": "nokia_srlinux",
+                "mgmt-ipv4": dev["mgmt_ip"],
+                "startup-config": f"srl/{host}.cli",
+            }
+        else:
+            raise ValueError(f"unknown vendor {vendor!r} for {host}")
+
+    veth_links, dummy_links = build_links(devices)
+
+    return {
+        "name": "neops-lab",
+        "prefix": "",
+        "mgmt": {"network": "lab-net", "ipv4-subnet": "172.30.0.0/24"},
+        "topology": {
+            "kinds": {
+                "linux": {"image": "neops-lab-frr:latest"},
+                "nokia_srlinux": {"image": "ghcr.io/nokia/srlinux:26.3"},
+            },
+            "nodes": nodes,
+            "links": veth_links + dummy_links,
+        },
+    }
+
+
+def render_discover_params(devices: dict) -> dict:
+    """Render the discover-params document in device-declaration order.
+
+    A single host is a /32 subnet. Credentials are supplied once as a list
+    rather than repeated per subnet. Because these subnets declare their
+    platform, each credential is scoped to its vendor's platform, so no host
+    is ever tried with the other vendor's login.
+    """
+    subnets = [{"cidr": f"{dev['mgmt_ip']}/32", "platform": dev["vendor"]} for dev in devices.values()]
+    return {"subnets": subnets, "credentials": _credentials(devices, scoped=True)}
+
+
+def render_autodetect_params(devices: dict) -> dict:
+    """Same /32 subnets with `platform` left out, so discovery has to detect it.
+
+    The lab's second discovery scenario: nothing is known about a host but its
+    address, which is what a real greenfield scan looks like.
+    """
+    subnets = [{"cidr": f"{dev['mgmt_ip']}/32"} for dev in devices.values()]
+    return {"subnets": subnets, "credentials": _credentials(devices)}
+
+
+def render_subnet_params(devices: dict) -> dict:
+    """One subnet target for the complete lab management network."""
+    del devices
+    return {
+        "subnets": [
+            {
+                "cidr": "172.30.0.0/24",
+                "credentials": [
+                    {"username": "frr", "password": "frr"},
+                    {"username": "admin", "password": "NokiaSrl1!"},
+                ],
+            }
+        ]
+    }
+
+
+def _credentials(devices: dict, scoped: bool = False) -> list:
+    """One entry per distinct vendor, in device-declaration order.
+
+    ``scoped`` stamps each entry with its vendor's platform; the lab's vendor
+    names double as platform short names.
+    """
+    credentials = []
+    for vendor in dict.fromkeys(dev["vendor"] for dev in devices.values()):
+        username, password = mgmt_creds(vendor)
+        entry = {"username": username, "password": password}
+        if scoped:
+            entry["platform"] = vendor
+        credentials.append(entry)
+    return credentials
+
+
+def _dump_discover_params(data: dict) -> str:
+    """Serialize discover-params with the committed compact per-entry layout.
+
+    Each subnet object sits on its own line as `{ "cidr": ..., ... }` with
+    spaces inside the braces -- a layout `json.dumps` cannot produce directly.
+    """
+    lines = ["{", '  "subnets": [']
+    subnets = data["subnets"]
+    for i, subnet in enumerate(subnets):
+        fields = ", ".join(f'"{k}": {json.dumps(v)}' for k, v in subnet.items())
+        comma = "," if i < len(subnets) - 1 else ""
+        lines.append(f"    {{ {fields} }}{comma}")
+    lines.append("  ],")
+    lines.append('  "credentials": [')
+    creds = data["credentials"]
+    for i, cred in enumerate(creds):
+        fields = ", ".join(f'"{k}": {json.dumps(v)}' for k, v in cred.items())
+        comma = "," if i < len(creds) - 1 else ""
+        lines.append(f"    {{ {fields} }}{comma}")
+    lines.append("  ]")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _dump_subnet_params(data: dict) -> str:
+    return json.dumps(data, indent=2) + "\n"
+
+
+def main() -> int:
+    data = json.loads(TOPOLOGY.read_text())
+    devices = data["devices"]
+
+    frr_hosts = set()
+    srl_hosts = set()
+
+    for host, dev in devices.items():
+        vendor = dev["vendor"]
+        if vendor == "frr":
+            _write(FRR_DIR / f"{host}.iface", render_frr(host, dev))
+            frr_hosts.add(host)
+        elif vendor == "srl":
+            _write(SRL_DIR / f"{host}.cli", render_srl(host, dev))
+            srl_hosts.add(host)
+        else:
+            print(f"unknown vendor {vendor!r} for {host}", file=sys.stderr)
+            return 1
+
+    _prune_stale(FRR_DIR, ".iface", frr_hosts)
+    _prune_stale(SRL_DIR, ".cli", srl_hosts)
+
+    CLAB_DIR.mkdir(parents=True, exist_ok=True)
+    clab = render_clab(devices)
+    CLAB_FILE.write_text(json.dumps(clab, indent=2) + "\n")
+
+    _write(DISCOVER_PARAMS, _dump_discover_params(render_discover_params(devices)))
+    _write(AUTODETECT_PARAMS, _dump_discover_params(render_autodetect_params(devices)))
+    _write(SUBNET_PARAMS, _dump_subnet_params(render_subnet_params(devices)))
+
+    veth_count = sum(1 for link in clab["topology"]["links"] if link.get("type") != "dummy")
+    dummy_count = sum(1 for link in clab["topology"]["links"] if link.get("type") == "dummy")
+    print(
+        f"generated clab topology: {len(clab['topology']['nodes'])} nodes, "
+        f"{veth_count} veth links, {dummy_count} dummy links"
+    )
+    print(f"generated {len(frr_hosts)} FRR + {len(srl_hosts)} SRL device configs")
+    print("generated discover-params.json + discover-params-autodetect.json + discover-params-subnet.json")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

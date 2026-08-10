@@ -1,0 +1,22 @@
+[ {
+    "configId": "neops-local-noop",
+    "authority": "http://localhost:8080",
+    "redirectUrl": "http://localhost:8080/",
+    "postLogoutRedirectUri": "http://localhost:8080/",
+    "clientId": "neops-local",
+    "scope": "openid",
+    "responseType": "code",
+    "silentRenew": false,
+    "useRefreshToken": false,
+    "autoUserInfo": false,
+    "triggerAuthorizationResultEvent": true,
+    "authWellknownEndpoints": {
+      "issuer": "http://localhost:8080",
+      "jwksUri": "http://localhost:8080/jwks",
+      "authorizationEndpoint": "http://localhost:8080/auth",
+      "tokenEndpoint": "http://localhost:8080/token",
+      "userInfoEndpoint": "http://localhost:8080/userinfo",
+      "endSessionEndpoint": "http://localhost:8080/logout"
+    }
+  }
+]

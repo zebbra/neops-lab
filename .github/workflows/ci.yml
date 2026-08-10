@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint-test:
+    name: Lint, type-check, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies (dev)
+        run: uv sync --group dev --frozen
+
+      # `.` and not an explicit file list: the lab's host scripts have no `.py`
+      # extension and are reached through ruff's `extend-include` in
+      # pyproject.toml, which only applies to a directory walk.
+      - name: Ruff format (check)
+        run: uv run ruff format --check .
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Type-check
+        run: uv run pyrefly check
+
+      - name: Run tests
+        run: uv run pytest tests
+
+      - name: Summary
+        run: echo "### Ruff/pyrefly/pytest passed ✅" >> $GITHUB_STEP_SUMMARY
+
+  docker:
+    name: Build lab images (no push)
+    needs: lint-test
+    runs-on: hetzner
+    steps:
+      - uses: actions/checkout@v4
+
+      # neops-lab-frr / neops-lab-bootstrap are LOCAL-only images: every lab
+      # host builds them itself, nothing is published to a registry. This job
+      # exists so a broken Dockerfile fails in CI instead of on a developer's
+      # first `make local-lab-up`.
+      - name: Build lab images
+        run: make build-docker

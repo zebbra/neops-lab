@@ -1,0 +1,105 @@
+site_name: NeOps Lab
+
+# Project-only extensions on top of the canonical base
+# (zebbra/mkdocs-documentation/assets/mkdocs_base.yml). Everything else the docs
+# use — admonitions, tabs, snippets, mermaid, tasklist, abbr, magiclink — is
+# already in the base and applies site-wide. Lists CONCATENATE on merge, so only
+# add what the base does not already carry.
+markdown_extensions:
+  - def_list  # glossary entries
+
+nav:
+  - Start: index.md
+  - Get started:
+      - "Get started": getting-started/index.md
+      - "Prerequisites": getting-started/10-prerequisites.md
+      - "Quickstart": getting-started/20-quickstart.md
+      - "Your first discovery": getting-started/30-first-discovery.md
+  - Concepts:
+      - "Concepts": 10-concepts/index.md
+      - "Architecture": 10-concepts/10-architecture.md
+      - "Topology as source of truth": 10-concepts/20-topology.md
+      - "Discovery": 10-concepts/30-discovery.md
+      - "The /app/lab mount": 10-concepts/40-container-paths.md
+  - Operating the lab:
+      - "Operating the lab": 20-operations/index.md
+      - "Make targets": 20-operations/10-make-targets.md
+      - "Images": 20-operations/20-images.md
+      - "Adding a device": 20-operations/30-adding-a-device.md
+      - "Troubleshooting": 20-operations/40-troubleshooting.md
+  - Development:
+      - "Development": 60-development/index.md
+      - "Dev setup": 60-development/10-dev-setup.md
+      - "Invariants": 60-development/20-invariants.md
+  - Appendix:
+      - "Appendix": 99-appendix/index.md
+      - "Glossary": 99-appendix/glossary.md
+      - "NeOps ecosystem": 99-appendix/neops-ecosystem.md
+
+
+# --8<-- [start:theme]
+theme:
+  # Dark and light mode, defaults to system theme
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/link
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/toggle-switch-off
+        name: Switch to system preference
+# --8<-- [end:theme]
+
+# --8<-- [start:repo]
+repo_url: https://github.com/zebbra/neops-lab
+edit_uri: edit/develop/docs
+# --8<-- [end:repo]
+
+# --8<-- [start:social]
+extra:
+  social:
+    - icon: fontawesome/solid/house
+      link: https://zebbra.ch
+      name: Zebbra
+# --8<-- [end:social]
+
+# --8<-- [start:copyright]
+copyright: Copyright &copy; Zebbra AG
+# --8<-- [end:copyright]
+
+plugins:
+  # `search`, `include_dir_to_nav` and `document-dates` come from the base —
+  # re-declaring them here would register them twice (lists concatenate).
+  - exclude:
+      glob:
+        - '*.tmp'
+        - '*.pdf'
+        - '*.gz'
+        - node_modules
+        - '**/node_modules/*'
+        - .venv
+        - '**/.venv/*'
+        # Source trees symlinked into docs/ for snippet includes. They are
+        # include targets, not pages.
+        - bootstrap/*
+        - clab/*
+        - cms/*
+        - devices/*
+        - function_blocks/*
+        - scope/*
+        - tests/*
+        - workflows/*
+        - workflow-execution-parameters/*
+      regex:
+        - .*\.(tmp|bin|tar)$

@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "mainDashboard": { "urlPath": "overview" },
+  "entries": [
+    {
+      "urlPath": "overview",
+      "onNavigation": true,
+      "pinToSidebar": true,
+      "config": {
+        "title": "Lab Overview",
+        "dashboardType": "STANDARD",
+        "contextConfig": {
+          "deviceContextConfig": { "pageSize": 100 },
+          "interfaceContextConfig": { "pageSize": 500 }
+        },
+        "cards": [
+          {
+            "gridConfig": { "x": 0, "y": 0, "rows": 2, "cols": 12, "minItemRows": 1, "minItemCols": 2 },
+            "cardConfig": {
+              "cardId": "markdown",
+              "data": {
+                "text": "# Neops Lab\n\nA multi-vendor lab: **10 FRRouting routers** + **5 Nokia SR Linux switches** discovered over SSH.\n\nUse the **Devices**, **Interfaces** and **Topology** views to explore. Re-run `make local-lab-discover` to repopulate.\n"
+              }
+            }
+          },
+          {
+            "gridConfig": { "x": 0, "y": 2, "rows": 1, "cols": 12, "minItemRows": 1, "minItemCols": 2 },
+            "cardConfig": {
+              "cardId": "query",
+              "data": { "entityType": "device", "title": "Find devices" }
+            }
+          },
+          {
+            "gridConfig": { "x": 0, "y": 3, "rows": 4, "cols": 4, "minItemRows": 2, "minItemCols": 2 },
+            "cardConfig": {
+              "cardId": "pie-chart",
+              "data": {
+                "title": "Devices by vendor",
+                "entityType": "device",
+                "groupJmesPath": "[*].vendor"
+              }
+            }
+          },
+          {
+            "gridConfig": { "x": 4, "y": 3, "rows": 4, "cols": 4, "minItemRows": 2, "minItemCols": 2 },
+            "cardConfig": {
+              "cardId": "pie-chart",
+              "data": {
+                "title": "Interfaces by state",
+                "entityType": "interface",
+                "groupJmesPath": "[*].state"
+              }
+            }
+          },
+          {
+            "gridConfig": { "x": 8, "y": 3, "rows": 4, "cols": 4, "minItemRows": 2, "minItemCols": 2 },
+            "cardConfig": {
+              "cardId": "bar-chart",
+              "data": {
+                "title": "Devices by platform",
+                "entityType": "device",
+                "groupJmesPath": "[*].platform.name"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

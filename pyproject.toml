@@ -1,0 +1,136 @@
+# neops-lab is NOT a distributable package — nothing here is built, published or
+# imported by another project. This file exists purely to configure the dev
+# tooling (pytest / ruff / pyrefly) and to give `uv run` a place to resolve them
+# from. `package = false` keeps uv from trying to build a wheel of the repo.
+
+[project]
+name = "neops-lab"
+version = "0.0.0"
+description = "Local containerlab developer lab for the NeOps platform (not a distributable package)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "zebbra AG" }]
+
+# The lab scripts are stdlib-only on purpose: they run on the host, before any
+# virtualenv exists, with nothing but `python3`. Keep this list empty.
+dependencies = []
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0.3,<10", # CVE-2025-71176 fix
+  "ruff>=0.14.11",
+  "pyrefly>=0.48.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+indent-width = 4
+# The lab's host scripts are executables with NO `.py` extension (the tests load
+# them by path via SourceFileLoader, and the Makefile / README invoke them as
+# `./gen_clab_topology`). Ruff discovers files by extension, so each one has to
+# be named here or it is silently never linted. Renaming them to `*.py` is not
+# an option — it would break every caller.
+# `apply_cms_config` is deliberately absent: it is a bash script, not Python.
+extend-include = [
+  "gen_clab_topology",
+  "gen_device_configs",
+  "run_workflow",
+  "wait_devices",
+  "wait_ready",
+]
+extend-exclude = [
+  "generated",
+  ".make_scripts",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+docstring-code-line-length = 120
+
+[tool.ruff.lint]
+select = [
+  "F",    # Pyflakes
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "I",    # isort
+  "B",    # flake8-bugbear
+  "UP",   # pyupgrade
+  "N",    # pep8-naming
+  "S",    # flake8-bandit
+  "A",    # flake8-builtins
+  "C4",   # flake8-comprehensions
+  "SIM",  # flake8-simplify
+  "RET",  # flake8-return
+  "PIE",  # flake8-pie
+  "ARG",  # flake8-unused-arguments
+  "PTH",  # flake8-use-pathlib
+  "PERF", # perflint
+  "PT",   # flake8-pytest-style
+  "PL",   # pylint
+  "RUF",  # Ruff-specific rules
+]
+ignore = [
+  "E501", # Handled by formatter / explicit line-length
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+  "D",      # Don't require docstrings in tests
+  "ANN",    # Don't require full typing in tests
+  "S101",   # Allow asserts in tests
+  "PLR2004" # Allow magic values in tests
+]
+"**/__init__.py" = [
+  "D104",   # Package docstring
+]
+"gen_clab_topology" = [
+  # The lab's credentials are published in the README and only ever reach
+  # throwaway containers on a local bridge network.
+  "S105",   # Hardcoded password (the lab's frr/frr + admin/NokiaSrl1! logins)
+  # `clab_iface`/`_peer_iface_to_clab` keep `vendor` in the signature even where
+  # the mapping happens to be vendor-independent: every call site dispatches on
+  # vendor, and the tests pin the two-argument form.
+  "ARG001",
+]
+# Host scripts open URLs built from local CLI arguments, not user input.
+"run_workflow" = ["S310"]
+"wait_ready" = ["S310"]
+"bootstrap/register.py" = [
+  "PLR2004", # HTTP status codes read better as literals than as named constants
+]
+
+[tool.pyrefly]
+python-version = "3.12"
+project-includes = [
+  "tests/**/*.py",
+  "function_blocks/**/*.py",
+  # Same extension-less scripts as ruff's extend-include above.
+  "gen_clab_topology",
+  "gen_device_configs",
+  "run_workflow",
+  "wait_devices",
+  "wait_ready",
+]
+project-excludes = [
+  "**/__pycache__/**",
+  "**/.venv/**",
+  "**/.git/**",
+  "generated/**",
+  ".make_scripts/**",
+]
+search-path = ["."]

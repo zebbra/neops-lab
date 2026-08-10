@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# Bootstraps the `neops` user with full CMS permissions and configures the
+# `Global` scope (visibility, table columns, drill-down, dashboard).
+#
+# Why the scope is named `Global` (capital G):
+#   The neops-cms-free image seeds a default scope named `Global` on every CMS
+#   startup (via init_scopes / NEOPS_SCOPES). Earlier this script created a
+#   *second*, lowercase `global` scope — Postgres name uniqueness is
+#   case-sensitive, so the two coexisted as duplicates. Targeting `Global` makes
+#   get_or_create match the seeded scope and update it in place, so the lab ends
+#   up with exactly one scope.
+#   Caveat: the seeded `Global` has always_update_on_restart=True, so a CMS
+#   restart resets its columns/filters to the image defaults (but NOT
+#   dashboard_configuration, which init_scopes never writes). Re-run this script
+#   (or `make local-env-init`) after a CMS restart to re-apply the lab columns.
+#
+# Why this can't be done purely via GraphQL:
+#   roleUpsert / scopesUpsert / roleScopeUpsert all gate on the caller already
+#   holding `write` permission on those models (and on the `settings-permissions`
+#   PermissionElement for roleScopeUpsert). A freshly-bootstrapped CMS gives the
+#   `neops` Django superuser zero CMS roles, so every one of those mutations
+#   answers "User is not allowed". We seed the initial role + scope through
+#   `manage.py shell` (same tool `local-env-init` uses to mint the API key) and
+#   then verify via GraphQL.
+#
+# The scope's table columns, location drill-down and dashboard come from JSON
+# files under scope/Global/ — edit those to change the lab's initial views.
+#
+# Re-runnable: every step is idempotent (get_or_create + explicit re-set).
+
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+CMS_URL=${CMS_URL:-http://localhost:8001}
+USERNAME=${CMS_USERNAME:-neops}
+ROLE_NAME=${ROLE_NAME:-lab-admin}
+SCOPE_NAME=${SCOPE_NAME:-Global}
+
+# Per-scope UI config lives as JSON files under scope/<name>/. It is applied
+# in two ways because the CMS reseeds part of the `Global` scope on every
+# `manage.py` invocation:
+#
+#   * dashboard_configuration -> set via `manage.py shell`. The CMS's init_scopes
+#     (run in a background thread on every AppConfig.ready(), i.e. every manage.py
+#     command) rewrites the seeded scope's columns/filters/drilldown, but it
+#     NEVER touches dashboard_configuration, so a shell write for it is stable.
+#     It is a JSONField (assign a dict) and is passed into the container
+#     base64-encoded (multi-line JSON gets mangled through `exec -e`).
+#   * table columns + location drill-down -> set via the GraphQL scopesUpsert
+#     mutation as the LAST step, AFTER all manage.py blocks. Writing them through
+#     the already-running server avoids the init_scopes race that a shell write
+#     would lose. (These reset to image defaults on a CMS restart / any later
+#     manage.py run; re-run this script to reapply.)
+SCOPE_DIR="scope/${SCOPE_NAME}"
+# `tr -d '\n'` (not `base64 -w0`) so this works on both GNU and BSD/macOS base64.
+DASHBOARD=$(base64 "${SCOPE_DIR}/dashboard_configuration.json" | tr -d '\n')
+
+if [ ! -f cms_api_key.env ]; then
+    echo "error: cms_api_key.env not found. Run 'make local-env-init' first." >&2
+    exit 1
+fi
+
+NEOPS_CMS_TOKEN=$(grep -oP 'NEOPS_CMS_TOKEN=\K.*' cms_api_key.env || true)
+if [ -z "$NEOPS_CMS_TOKEN" ]; then
+    echo "error: NEOPS_CMS_TOKEN missing in cms_api_key.env." >&2
+    exit 1
+fi
+
+echo "==> Seeding role '$ROLE_NAME' and scope '$SCOPE_NAME' via manage.py shell"
+docker compose exec -T \
+    -e SCOPE_NAME="$SCOPE_NAME" \
+    -e USERNAME="$USERNAME" \
+    -e ROLE_NAME="$ROLE_NAME" \
+    -e DASHBOARD="$DASHBOARD" \
+    cms ./manage.py shell <<'PYSCRIPT'
+import base64
+import json
+import os
+
+from django.contrib.auth import get_user_model
+from neops.core.models import Scope
+from neops.enterprise.permissions.permissions_simple.models import RolePermission, RoleScope
+
+
+def _decode(var):
+    """Decode a base64 env var back to the original JSON text."""
+    return base64.b64decode(os.environ[var]).decode("utf-8")
+
+
+User = get_user_model()
+neops = User.objects.get(username=os.environ["USERNAME"])
+
+# permission flags are read=1, execute=2, write=4. With
+# NEOPS_PERMISSIONS_SIMPLE_IMPLICIT_PERMISSION_LEVEL the model's save() promotes
+# the value to 2**bit_length()-1, so passing 4 stores 7 (read+execute+write).
+FULL = 4
+
+role, role_created = RolePermission.objects.get_or_create(
+    name=os.environ["ROLE_NAME"], defaults={"default_permission": FULL}
+)
+role.default_permission = FULL
+role.save()
+neops.roles.add(role)
+print(f"  role: {role.name!r} (id={role.id}) default_permission={int(role.default_permission)} created={role_created}")
+
+# Target the image-seeded `Global` scope (get_or_create matches it) so the lab
+# has a single scope, then apply full visibility + the lab's table columns,
+# location drill-down and dashboard from scope/<name>/*.json.
+scope, scope_created = Scope.objects.get_or_create(
+    name=os.environ["SCOPE_NAME"],
+    defaults=dict(description="Full visibility across all entities (lab default)"),
+)
+scope.show_devices = True
+scope.show_groups = True
+scope.show_interfaces = True
+scope.show_clients = True
+scope.show_topology = True
+# dashboard_configuration is a JSONField; assign a parsed dict. init_scopes never
+# rewrites this field, so a shell write is stable (unlike the columns, which are
+# applied via GraphQL below). Columns are intentionally NOT set here.
+scope.dashboard_configuration = json.loads(_decode("DASHBOARD"))
+scope.save()
+print(f"  scope: {scope.name!r} (id={scope.id}) created={scope_created}")
+print(f"    dashboards: {len(scope.dashboard_configuration.get('entries', []))}")
+
+rs, rs_created = RoleScope.objects.get_or_create(
+    role=role, scope=scope, defaults={"permission": FULL}
+)
+rs.permission = FULL
+rs.save()
+print(f"  role->scope: {role.name} -> {scope.name} permission={int(rs.permission)} created={rs_created}")
+PYSCRIPT
+
+# The lab devices use platforms `frr` and `srl`, which are not part of the CMS's
+# default platform seed. Discovery registers devices by platform short_name (see
+# neops_worker_sdk Device/Platform), so these must exist or resolution fails.
+# The proper fix is seeding them upstream in neops-core NEOPS_PLATFORMS; we also
+# seed them here (idempotently, via the CMS's own init_platforms) so the lab
+# works against the prebuilt neops-cms-free image without a rebuild.
+echo
+echo "==> Seeding lab platforms (frr, srl) via manage.py shell"
+docker compose exec -T cms ./manage.py shell <<'PYSCRIPT'
+from neops.core.models.platform import init_platforms
+from neops.core.models import Platform
+
+init_platforms([
+    {"name": "FRRouting", "short_name": "frr",
+     "libraries": [{"name": "nornir", "key": "linux"}, {"name": "netmiko", "key": "linux"}]},
+    {"name": "Nokia SR Linux", "short_name": "srl",
+     "libraries": [{"name": "netmiko", "key": "nokia_srl"}]},
+])
+seeded = sorted(Platform.objects.filter(short_name__in=["frr", "srl"]).values_list("short_name", flat=True))
+print(f"  lab platforms present: {seeded}")
+PYSCRIPT
+
+# Resolve the scope id via the ORM (direct DB, no permission filter). We must
+# NOT discover it through the permission-filtered GraphQL `{ scopes }` query:
+# the CMS caches each user's accessible scopes in-memory for 10 minutes
+# (NEOPS_PERMISSIONS_SIMPLE_CACHE_LIFETIME), so a freshly-granted scope can be
+# invisible to that query for a while. scopesUpsert(id: ...) authorizes by id
+# and works regardless of that cache.
+SCOPE_ID=$(docker compose exec -T cms ./manage.py shell -c \
+    "from neops.core.models import Scope; print('SCOPEID=%s' % Scope.objects.get(name='${SCOPE_NAME}').id)" \
+    2>/dev/null | grep -oE 'SCOPEID=[0-9]+' | cut -d= -f2)
+if [ -z "$SCOPE_ID" ]; then
+    echo "error: could not resolve id for scope '$SCOPE_NAME'." >&2
+    exit 1
+fi
+
+# Apply table columns + location drill-down via GraphQL, AFTER the manage.py
+# blocks above. init_scopes (which runs on every manage.py command) resets these
+# columns on the seeded `Global` scope, so writing them through the running
+# server as the last step is what makes them stick. (dashboard_configuration is
+# not settable via this image's scopesUpsert mutation, hence the shell write
+# above.)
+echo
+echo "==> Applying scope columns + drill-down via GraphQL scopesUpsert (scope id=$SCOPE_ID)"
+CMS_URL="$CMS_URL" NEOPS_CMS_TOKEN="$NEOPS_CMS_TOKEN" SCOPE_ID="$SCOPE_ID" SCOPE_DIR="$SCOPE_DIR" \
+    python3 <<'PYEOF'
+import json
+import os
+import urllib.error
+import urllib.request
+
+url = os.environ["CMS_URL"].rstrip("/") + "/graphql"
+token = os.environ["NEOPS_CMS_TOKEN"]
+scope_dir = os.environ["SCOPE_DIR"]
+scope_id = os.environ["SCOPE_ID"]
+
+
+def gql(query, variables=None):
+    body = json.dumps({"query": query, "variables": variables or {}}).encode()
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Api-Key {token}"},
+    )
+    try:
+        payload = json.load(urllib.request.urlopen(req))
+    except urllib.error.HTTPError as exc:
+        # Surface the GraphQL error body instead of a bare HTTPError traceback.
+        raise SystemExit(f"GraphQL HTTP {exc.code}: {exc.read().decode(errors='replace')}") from exc
+    if payload.get("errors"):
+        raise SystemExit(f"GraphQL error: {payload['errors']}")
+    return payload["data"]
+
+
+def read_json_text(name):
+    with open(os.path.join(scope_dir, name)) as fh:
+        return fh.read()
+
+data = gql(
+    """
+    mutation($id: ID!, $dev: String!, $grp: String!, $iface: String!, $client: String!, $drill: JSONString!) {
+      scopesUpsert(
+        id: $id,
+        devicecolumns: $dev,
+        groupcolumns: $grp,
+        interfacecolumns: $iface,
+        clientcolumns: $client,
+        locationDrillDownAttributeSchema: $drill
+      ) { scope { id name } }
+    }
+    """,
+    {
+        "id": scope_id,
+        "dev": read_json_text("devicecolumns.json"),
+        "grp": read_json_text("groupcolumns.json"),
+        "iface": read_json_text("interfacecolumns.json"),
+        "client": read_json_text("clientcolumns.json"),
+        "drill": read_json_text("location_drill_down_attribute_schema.json"),
+    },
+)
+s = data["scopesUpsert"]["scope"]
+print(f"  columns applied to scope {s['id']} {s['name']!r}")
+PYEOF
+
+echo
+echo "==> Verifying via GraphQL"
+curl -fsS \
+    -H "Authorization: Api-Key $NEOPS_CMS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -X POST "$CMS_URL/graphql" \
+    -d '{"query":"{ scopes { results { id name showDevices showGroups showInterfaces showClients showTopology } } role { results { id name users { username } rolepermission { defaultPermission } } } }"}' \
+    | python3 -m json.tool

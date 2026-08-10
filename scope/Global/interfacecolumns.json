@@ -1,0 +1,8 @@
+[
+  { "align": "left", "attribute": "name", "class": "", "order": 1, "sortable": true, "text": "Port", "type": "String" },
+  { "align": "left", "attribute": "description", "class": "", "order": 2, "sortable": false, "text": "Description", "type": "String" },
+  { "align": "left", "attribute": "state", "class": "", "order": 3, "sortable": true, "text": "State", "type": "String" },
+  { "align": "left", "attribute": "device.hostname", "class": "", "order": 4, "sortable": true, "text": "Device", "type": "String" },
+  { "align": "left", "attribute": "device.platform.name", "class": "", "order": 5, "sortable": false, "text": "Platform", "type": "String" },
+  { "align": "left", "attribute": "clients", "class": "", "order": 6, "sortable": false, "text": "Clients", "type": "ClientCountOfInterface" }
+]

@@ -1,0 +1,153 @@
+{
+  "devices": {
+    "core-rtr-01": {
+      "mgmt_ip": "172.30.0.11",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "core-rtr-02:swp1" },
+        { "name": "swp2", "to": "edge-rtr-01:swp1" },
+        { "name": "swp3", "to": "edge-rtr-02:swp1" },
+        { "name": "swp4", "to": "wan-rtr-01:swp1" }
+      ]
+    },
+    "core-rtr-02": {
+      "mgmt_ip": "172.30.0.12",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "core-rtr-01:swp1" },
+        { "name": "swp2", "to": "edge-rtr-01:swp2" },
+        { "name": "swp3", "to": "edge-rtr-02:swp2" },
+        { "name": "swp4", "to": "wan-rtr-02:swp1" }
+      ]
+    },
+    "edge-rtr-01": {
+      "mgmt_ip": "172.30.0.13",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "core-rtr-01:swp2" },
+        { "name": "swp2", "to": "core-rtr-02:swp2" },
+        { "name": "swp3", "to": "pe-rtr-01:swp1" },
+        { "name": "swp4", "to": "pe-rtr-02:swp1" }
+      ]
+    },
+    "edge-rtr-02": {
+      "mgmt_ip": "172.30.0.14",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "core-rtr-01:swp3" },
+        { "name": "swp2", "to": "core-rtr-02:swp3" },
+        { "name": "swp3", "to": "pe-rtr-03:swp1" }
+      ]
+    },
+    "pe-rtr-01": {
+      "mgmt_ip": "172.30.0.15",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "edge-rtr-01:swp3" },
+        { "name": "swp2", "to": "cust-a-ce:ge0/0" }
+      ]
+    },
+    "pe-rtr-02": {
+      "mgmt_ip": "172.30.0.16",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "edge-rtr-01:swp4" },
+        { "name": "swp2", "to": "cust-b-ce:ge0/0" }
+      ]
+    },
+    "pe-rtr-03": {
+      "mgmt_ip": "172.30.0.17",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "edge-rtr-02:swp3" },
+        { "name": "swp2", "to": "cust-c-ce:ge0/0" }
+      ]
+    },
+    "wan-rtr-01": {
+      "mgmt_ip": "172.30.0.18",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "core-rtr-01:swp4" },
+        { "name": "swp2", "to": "border-rtr-01:swp1" }
+      ]
+    },
+    "wan-rtr-02": {
+      "mgmt_ip": "172.30.0.19",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "core-rtr-02:swp4" },
+        { "name": "swp2", "to": "border-rtr-01:swp2" }
+      ]
+    },
+    "border-rtr-01": {
+      "mgmt_ip": "172.30.0.20",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        { "name": "swp1", "to": "wan-rtr-01:swp2" },
+        { "name": "swp2", "to": "wan-rtr-02:swp2" },
+        { "name": "swp3", "to": "isp-upstream" }
+      ]
+    },
+    "spine-01": {
+      "mgmt_ip": "172.30.0.31",
+      "vendor": "srl",
+      "loopback": null,
+      "interfaces": [
+        { "name": "ethernet-1/1", "to": "leaf-01:e1/1" },
+        { "name": "ethernet-1/2", "to": "leaf-02:e1/1" },
+        { "name": "ethernet-1/3", "to": "leaf-03:e1/1" }
+      ]
+    },
+    "spine-02": {
+      "mgmt_ip": "172.30.0.32",
+      "vendor": "srl",
+      "loopback": null,
+      "interfaces": [
+        { "name": "ethernet-1/1", "to": "leaf-01:e1/2" },
+        { "name": "ethernet-1/2", "to": "leaf-02:e1/2" },
+        { "name": "ethernet-1/3", "to": "leaf-03:e1/2" }
+      ]
+    },
+    "leaf-01": {
+      "mgmt_ip": "172.30.0.33",
+      "vendor": "srl",
+      "loopback": null,
+      "interfaces": [
+        { "name": "ethernet-1/1", "to": "spine-01:e1/1" },
+        { "name": "ethernet-1/2", "to": "spine-02:e1/1" },
+        { "name": "ethernet-1/3", "to": "server web-01" },
+        { "name": "ethernet-1/4", "to": "server db-01" }
+      ]
+    },
+    "leaf-02": {
+      "mgmt_ip": "172.30.0.34",
+      "vendor": "srl",
+      "loopback": null,
+      "interfaces": [
+        { "name": "ethernet-1/1", "to": "spine-01:e1/2" },
+        { "name": "ethernet-1/2", "to": "spine-02:e1/2" },
+        { "name": "ethernet-1/3", "to": "server app-01" }
+      ]
+    },
+    "leaf-03": {
+      "mgmt_ip": "172.30.0.35",
+      "vendor": "srl",
+      "loopback": null,
+      "interfaces": [
+        { "name": "ethernet-1/1", "to": "spine-01:e1/3" },
+        { "name": "ethernet-1/2", "to": "spine-02:e1/3" },
+        { "name": "ethernet-1/3", "to": "server app-02" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "subnets": [
+    {
+      "cidr": "172.30.0.0/24",
+      "credentials": [
+        {
+          "username": "frr",
+          "password": "frr"
+        }
+      ]
+    },
+    { "cidr": "172.30.0.31/32", "platform": "srl", "credentials": [{ "username": "admin", "password": "NokiaSrl1!" }] },
+    { "cidr": "172.30.0.32/32", "platform": "srl", "credentials": [{ "username": "admin", "password": "NokiaSrl1!" }] },
+    { "cidr": "172.30.0.33/32", "credentials": [{ "username": "admin", "password": "NokiaSrl1!" }] },
+    { "cidr": "172.30.0.34/32", "credentials": [{ "username": "admin", "password": "NokiaSrl1!" }] },
+    { "cidr": "172.30.0.35/32", "credentials": [{ "username": "admin", "password": "NokiaSrl1!" }] }
+  ]
+}

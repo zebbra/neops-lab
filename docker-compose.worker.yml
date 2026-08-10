@@ -1,0 +1,54 @@
+services:
+  worker:
+    # The worker runs the PUBLISHED SDK image — this repo holds the lab, not the
+    # SDK source. Override via NEOPS_WORKER_SDK_IMAGE (e.g. a locally-built
+    # neops-worker-sdk:latest) to try SDK changes here before they are released;
+    # `pull_policy: missing` then finds the local image and skips the registry.
+    image: ${NEOPS_WORKER_SDK_IMAGE:-quay.io/zebbra/neops-worker-sdk:develop}
+    pull_policy: ${NEOPS_WORKER_SDK_PULL_POLICY:-missing}
+    depends_on:
+      workflow_engine:
+        condition: service_healthy
+    environment:
+      URL_BLACKBOARD: http://workflow_engine:3030
+      # In-container paths (the SDK image's WORKDIR is /app):
+      #   lab/function_blocks -> this repo, bind-mounted below at /app/lab
+      #   neops/fb            -> the base function blocks, which ship INSIDE the
+      #                          published neops-worker-sdk image (`COPY ./neops
+      #                          neops/` in its base stage). FB discovery walks
+      #                          these relative to the CWD. If discovery ever
+      #                          fails with "Function block ... not found",
+      #                          check the image you pinned carries /app/neops/fb.
+      DIR_FUNCTION_BLOCKS: lab/function_blocks,neops/fb
+      WORKER_NAME: simple-lab-worker
+      NEOPS_BLOCKING_DETECTOR: "true"
+    volumes:
+      # The whole repo is the lab: mounted at /app/lab so the in-container paths
+      # above (and `docker compose exec worker python3 lab/wait_devices`) resolve.
+      - .:/app/lab:ro
+    networks:
+      - default
+      - lab-net
+
+  lab_bootstrap:
+    # Built by `make build-docker`; the explicit tag keeps that build and this
+    # service on the same image.
+    image: neops-lab-bootstrap:latest
+    build: ./bootstrap
+    depends_on:
+      workflow_engine:
+        condition: service_healthy
+    environment:
+      ENGINE_URL: http://workflow_engine:3030
+      WORKFLOWS_DIR: /workflows
+    volumes:
+      - ./workflows:/workflows:ro
+    restart: "no"
+
+networks:
+  lab-net:
+    name: lab-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

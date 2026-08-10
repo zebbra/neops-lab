@@ -1,0 +1,53 @@
+# Lab discovery: SSH into the containerlab devices and register them as Device
+# entities in the CMS.
+label: simple_lab_discovery
+name: simple_lab_discovery
+package: wf.lab.neops.io
+majorVersion: 1
+minorVersion: 2
+patchVersion: 0
+seedEntity: global
+type: workflow
+description: "Discover the lab devices and register them in the CMS."
+
+parameterSchema:
+  type: object
+  properties:
+    subnets:
+      type: array
+      description: "CIDRs to expand; a single host is a /32. A subnet can scope credentials and a platform, and the most specific prefix wins for overlaps."
+      default: []
+      items:
+        type: object
+        properties:
+          cidr: { type: string }
+          platform: { type: string }
+          credentials:
+            type: array
+            items:
+              type: object
+              properties:
+                username: { type: string }
+                password: { type: string }
+                platform: { type: string }
+              required: [username, password]
+        required: [cidr]
+    credentials:
+      type: array
+      description: "Logins tried in order against hosts whose subnet carries none. An entry may be scoped to a platform."
+      items:
+        type: object
+        properties:
+          username: { type: string }
+          password: { type: string }
+          platform: { type: string }
+        required: [username, password]
+      default: []
+steps:
+  - type: functionBlock
+    label: discover
+    functionBlock: "fb.base.neops.io/global_discover_network:0.1.0"
+    runOn: global
+    parameters:
+      subnets: "{{ parameters.subnets }}"
+      credentials: "{{ parameters.credentials }}"

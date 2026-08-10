@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Render per-device interface configs from `topology.json` (stdlib-only).
+
+FRR -> `generated/frr/<host>.iface` (`name|description` per line); SR Linux ->
+`generated/srl/<host>.cli` (`set / interface …` lines).
+"""
+
+import json
+import pathlib
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+TOPOLOGY = HERE / "topology.json"
+FRR_DIR = HERE / "generated" / "frr"
+SRL_DIR = HERE / "generated" / "srl"
+
+
+def short_name(name: str) -> str:
+    """Return the interface's own short name for the description.
+
+    FRR names are used as-is (`swp1`); SR Linux `ethernet-1/N` becomes `e1/N`.
+    """
+    if name.startswith("ethernet-"):
+        return "e" + name[len("ethernet-") :]
+    return name
+
+
+def description(hostname: str, iface: dict) -> str:
+    """Build the interface description: `<host>:<short> -> <to>`."""
+    return f"{hostname}:{short_name(iface['name'])} -> {iface['to']}"
+
+
+def render_frr(hostname: str, dev: dict) -> str:
+    """Render an FRR `.iface` file body: `name|description` per line.
+
+    Emits the loopback line first (`lo|<host> loopback`) when set.
+    """
+    lines = []
+    loopback = dev.get("loopback")
+    if loopback:
+        lines.append(f"{loopback}|{hostname} loopback")
+    lines.extend(f"{iface['name']}|{description(hostname, iface)}" for iface in dev["interfaces"])
+    return "\n".join(lines) + "\n"
+
+
+def render_srl(hostname: str, dev: dict) -> str:
+    """Render an SR Linux `.cli` file body: two `set` lines per interface."""
+    lines = []
+    for iface in dev["interfaces"]:
+        name = iface["name"]
+        lines.append(f"set / interface {name} admin-state enable")
+        lines.append(f'set / interface {name} description "{description(hostname, iface)}"')
+    return "\n".join(lines) + "\n"
+
+
+def _write(path: pathlib.Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+def _prune_stale(directory: pathlib.Path, suffix: str, keep: set) -> None:
+    """Remove generated `*<suffix>` files for hostnames not in `keep`."""
+    if not directory.is_dir():
+        return
+    for path in directory.glob(f"*{suffix}"):
+        if path.stem not in keep:
+            path.unlink()
+
+
+def main() -> int:
+    data = json.loads(TOPOLOGY.read_text())
+    devices = data["devices"]
+
+    frr_hosts = set()
+    srl_hosts = set()
+
+    for hostname, dev in devices.items():
+        vendor = dev["vendor"]
+        if vendor == "frr":
+            _write(FRR_DIR / f"{hostname}.iface", render_frr(hostname, dev))
+            frr_hosts.add(hostname)
+        elif vendor == "srl":
+            _write(SRL_DIR / f"{hostname}.cli", render_srl(hostname, dev))
+            srl_hosts.add(hostname)
+        else:
+            print(f"unknown vendor {vendor!r} for {hostname}", file=sys.stderr)
+            return 1
+
+    _prune_stale(FRR_DIR, ".iface", frr_hosts)
+    _prune_stale(SRL_DIR, ".cli", srl_hosts)
+
+    print(f"generated {len(frr_hosts)} FRR + {len(srl_hosts)} SRL device configs")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

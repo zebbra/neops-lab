@@ -1,0 +1,187 @@
+---
+title: Troubleshooting
+description: Failure modes indexed by symptom — the three boot-order races, the CMS startup requirements, and the blank web client that curl cannot see.
+tags: [operations, debugging]
+---
+
+# Troubleshooting
+
+*Indexed by what you actually see. Most of these are boot-order races that already have a wait guarding them — if you hit one, the usual cause is a hand-run command that skipped the wait.*
+
+## Start here
+
+```bash
+export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
+docker compose ps                 # what is running, what exited
+make local-lab-logs               # worker + lab_bootstrap, followed
+docker compose logs cms           # CMS startup crashes land here
+containerlab inspect -t generated/neops-lab.clab.json
+```
+
+Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the `worker` or `lab_bootstrap` services — the base compose file does not declare them. The make targets set it themselves.
+
+---
+
+## `Workflow with ID null not found`
+
+**Where:** the engine, when you trigger discovery.
+
+**Cause:** the workflow definition has not been registered yet. `docker compose up -d` returns once containers are *Started*, not *Completed*, and `lab_bootstrap` is a one-shot container that POSTs the definitions and exits.
+
+**The guard:** `make local-lab-up` runs `docker compose wait lab_bootstrap`, which blocks until that container exits and propagates its exit code — so a failed registration fails the target instead of silently producing this error later.
+
+**Fix:** let `make local-lab-up` finish before running discovery. If the container exited non-zero, read its log:
+
+```bash
+docker compose logs lab_bootstrap
+```
+
+A `409` or an "already exists" body is treated as success, so a real failure here means the engine rejected the definition.
+
+---
+
+## `Function block … not found`
+
+**Where:** the execution's terminal state, as `failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.1.0 not found`.
+
+**Two different causes, in order of likelihood:**
+
+1. **You raced the worker.** The worker registers its function blocks with the engine *asynchronously* after its container starts. `make local-lab-up` and `make local-lab-discover` both run `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` first, which polls the engine's per-function-block worker registry until an online worker exists. Run the make target rather than `run_workflow` directly.
+
+2. **The image does not carry the block.** `neops/fb` ships *inside* the published `neops-worker-sdk` image; it is not mounted from this repo. If you pinned `NEOPS_WORKER_SDK_IMAGE` at a local or older build, check it:
+
+    ```bash
+    docker compose exec worker ls /app/neops/fb
+    ```
+
+See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10-concepts/40-container-paths.md).
+
+---
+
+## Devices never become reachable
+
+**Where:** `wait_devices` times out — `timeout: 172.30.0.31:22, … not reachable within 240s`.
+
+**Cause:** devices boot slower than `containerlab deploy` returns. FRR is up in a second or two; Nokia SR Linux takes tens of seconds to bring up its management stack. Running discovery before then makes those hosts fail with a connection error and drop out of the 15-device count.
+
+**The guard:** `make local-lab-up` deploys containerlab *early* — before the worker-readiness wait — precisely so SR Linux boot time overlaps with something useful, then polls TCP 22 on every mgmt IP.
+
+!!! important "The poll runs from *inside* the lab network, on purpose"
+    ```bash
+    docker compose exec -T worker python3 lab/wait_devices
+    ```
+
+    Not from the host. On macOS and Docker Desktop the host has **no route** to
+    the `lab-net` bridge IPs (`172.30.0.0/24`), so a host-side poll hangs until
+    timeout even when every device is perfectly healthy. The worker is on
+    `lab-net`, so container-to-container reachability — the same path discovery
+    actually uses — works on every platform.
+
+    This is also why the command carries a `lab/` prefix: the repo is mounted
+    at `/app/lab` inside the worker.
+
+**Fix:** give it more time (`./wait_devices --timeout 600` from inside the worker), or check the device itself:
+
+```bash
+docker logs spine-01
+containerlab inspect -t generated/neops-lab.clab.json
+```
+
+!!! warning "Never replace a wait with a `sleep`"
+    Each of the three waits exists because of a real, reproduced failure. A
+    fixed sleep is both slower on a fast machine and still racy on a slow one.
+
+---
+
+## The CMS crashes at startup
+
+**Symptom:** the `cms` container exits or never becomes healthy; the log mentions `token_service check_keys`.
+
+**Cause:** missing `cms/jwt/{private,public}.pem`. Newer `neops-cms-free` images require an RSA keypair for RS256 JWT issuance, and `docker-compose.yml` mounts `cms/jwt` read-only into the container.
+
+**Fix:**
+
+```bash
+make lab-jwt
+```
+
+Idempotent, and a prerequisite of `local-env-init` / `local-env-up` — so this only bites when the stack is started by hand.
+
+---
+
+## The web client renders an empty page
+
+**Symptom:** <http://localhost:8080/> returns HTTP 200 and a blank `<app-root>`. **curl cannot see this failure** — the HTML is fine; the Angular bootstrap is what fails.
+
+**Cause:** `cms/oidc-config.json` must contain at least one well-formed `OpenIdConfiguration` entry with **inline** `authWellknownEndpoints` (no network discovery). The web client calls `OidcSecurityService.checkAuth()` in an `APP_INITIALIZER`; a `null` or `[]` config makes it fail before anything renders. The CMS serves the file through its `appSettings.oidcConfig` GraphQL resolver, so a missing `OIDC_CONFIG_PATH` produces the same result.
+
+**Fix:** check the file is present and non-empty, and that `OIDC_CONFIG_PATH=/etc/neops/oidc-config.json` is still set on the `cms` service.
+
+!!! tip "Verify UI behaviour with a browser, not curl"
+    Drive a real browser (the Playwright MCP, or just open the page) when
+    checking lab or UI behaviour. This failure mode is invisible to `curl`.
+
+---
+
+## The `Global` scope lost its columns
+
+**Symptom:** the web client's device table is back to default columns after a CMS restart.
+
+**Cause:** the CMS image seeds a scope named `Global` on every startup with `always_update_on_restart=True`, and `init_scopes` runs on *every* `manage.py` invocation — rewriting the seeded scope's columns, filters and drill-down. `dashboard_configuration` is not affected; `init_scopes` never writes it.
+
+**Fix:**
+
+```bash
+make apply-cms-config
+```
+
+!!! note "The scope is `Global`, capital G"
+    Postgres name uniqueness is case-sensitive, so a lowercase `global` creates
+    a silent *duplicate* scope rather than updating the seeded one.
+
+---
+
+## `docker compose pull` fails on an image that exists
+
+**Symptom:** `pull access denied for neops-worker-sdk, repository does not exist`.
+
+**Cause:** you set `NEOPS_*_IMAGE` to a local tag with no registry host, so docker resolves it as `docker.io/library/…`.
+
+**Fix:** run the pull with `--ignore-pull-failures`, or skip it — `pull_policy: missing` means `docker compose up -d` uses the present local image without contacting a registry.
+
+---
+
+## `containerlab deploy` says it requires root privileges
+
+**Cause:** containerlab is not set up for sudo-less operation. The make targets never call `sudo`.
+
+**Fix:** see [Prerequisites](../getting-started/10-prerequisites.md#containerlab-and-sudo-less-operation), then confirm with the two-node probe:
+
+```bash
+containerlab deploy  -t clab/probe.clab.yml
+containerlab destroy -t clab/probe.clab.yml
+```
+
+---
+
+## Duplicate interface rows after re-running discovery
+
+**Cause:** devices are keyed by IP so they are skipped on a second run, but **interfaces are always recorded**.
+
+**Fix:** run discovery against a fresh CMS.
+
+```bash
+make local-lab-down local-env-prune
+make local-env-init && make local-lab-up && make local-lab-discover
+```
+
+---
+
+## Nothing works and you want to start over
+
+```bash
+make local-lab-down local-env-prune
+make local-env-init && make local-lab-up && make local-lab-discover
+```
+
+`local-lab-down` tolerates there being no deployed lab (the `containerlab destroy` line is prefixed with `-`, so `make` continues on failure). `local-env-prune` drops the Elasticsearch and Postgres volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.

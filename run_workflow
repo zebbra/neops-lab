@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Trigger a neops workflow execution and wait for it to reach a terminal state.
+
+Examples
+--------
+    # Inline parameters
+    ./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 '{"subnets": []}'
+
+    # Parameters from a file (curl-style "@file")
+    ./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 @workflow-execution-parameters/discover-params.json
+
+    # Parameters from stdin
+    echo '{"foo": "bar"}' | ./run_workflow wf.example/something:1.0.0 -
+
+    # With executeOnParameters.ids
+    ./run_workflow wf.example/configure:1.0.0 '{}' --ids 12,34
+
+Exit codes
+----------
+    0   workflow reached `completed_ack`
+    1   workflow reached `failed_safe_ack` or `failed_unsafe_ack`
+    2   could not start the workflow, or polling timed out
+"""
+
+import argparse
+import json
+import pathlib
+import sys
+import textwrap
+import time
+from urllib import error, request
+
+# From neops-workflow-engine/src/model/execution/workflow-execution-status.ts:
+# only three terminal states exist, all end in `_ack`.
+TERMINAL_SUCCESS = {"completed_ack"}
+TERMINAL_FAILURE = {"failed_safe_ack", "failed_unsafe_ack"}
+
+
+def load_parameters(arg: str) -> dict:
+    """Resolve the `params` argument: inline JSON, `@file`, or `-` for stdin."""
+    if arg == "-":
+        return json.load(sys.stdin)
+    if arg.startswith("@"):
+        with pathlib.Path(arg[1:]).open() as fh:
+            return json.load(fh)
+    return json.loads(arg)
+
+
+def parse_ids(arg: str) -> list[int]:
+    return [int(x) for x in arg.split(",") if x.strip()]
+
+
+def http_json(url: str, *, payload: dict | None = None) -> dict:
+    data = json.dumps(payload).encode() if payload is not None else None
+    headers = {"Content-Type": "application/json"} if payload is not None else {}
+    req = request.Request(url, data=data, headers=headers)
+    with request.urlopen(req) as resp:
+        return json.load(resp)
+
+
+def start_execution(engine_url: str, workflow: str, parameters: dict, ids: list[int]) -> str:
+    """POST /workflow-execution and return the execution UUID."""
+    payload = {
+        "workflow": workflow,
+        "executeOnParameters": {"ids": ids},
+        "parameters": parameters,
+    }
+    try:
+        resp = http_json(f"{engine_url}/workflow-execution", payload=payload)
+    except error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        raise SystemExit(f"failed to start workflow ({e.code} {e.reason}): {body}") from e
+    except error.URLError as e:
+        raise SystemExit(f"failed to reach engine at {engine_url}: {e.reason}") from e
+    return resp["uuid"]
+
+
+def poll_until_terminal(engine_url: str, uuid: str, timeout: int, interval: float) -> int:
+    """Poll the execution until terminal state. Return shell-style exit code."""
+    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    last_line = None
+
+    while time.monotonic() < deadline:
+        try:
+            data = http_json(f"{engine_url}/workflow-execution/id/{uuid}")
+        except (error.HTTPError, error.URLError) as e:
+            print(f"  poll failed, retrying: {e}", file=sys.stderr)
+            time.sleep(interval)
+            continue
+
+        status = data.get("status", "?")
+        reason = (data.get("reason") or "").strip()
+        line = f"{status} — {reason}" if reason else status
+
+        if line != last_line:
+            elapsed = int(time.monotonic() - started)
+            print(f"  [{elapsed:3d}s] {line}")
+            last_line = line
+
+        if status in TERMINAL_SUCCESS:
+            return 0
+        if status in TERMINAL_FAILURE:
+            print(
+                f"execution finished in non-success terminal state: {status}" + (f" — {reason}" if reason else ""),
+                file=sys.stderr,
+            )
+            return 1
+
+        time.sleep(interval)
+
+    print(f"timeout: workflow did not reach terminal state within {timeout}s", file=sys.stderr)
+    return 2
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="run_workflow",
+        description="Trigger a neops workflow execution and wait for it to finish.",
+        epilog=textwrap.dedent(__doc__.split("Examples\n--------\n", 1)[1]),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "workflow",
+        help="SemVer workflow id, e.g. wf.lab.neops.io/simple_lab_discovery:1.0.0",
+    )
+    p.add_argument(
+        "parameters",
+        nargs="?",
+        default="{}",
+        help='JSON parameters: inline ({"k":"v"}), "@path/to/file", or "-" for stdin. Default: {}',
+    )
+    p.add_argument(
+        "--ids",
+        default="",
+        help="Comma-separated entity ids for executeOnParameters.ids (default: empty / global execution)",
+    )
+    p.add_argument(
+        "--engine-url",
+        default="http://localhost:3030",
+        help="Workflow engine REST base URL (default: http://localhost:3030)",
+    )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=300,
+        help="Total polling timeout in seconds (default: 300)",
+    )
+    p.add_argument(
+        "--interval",
+        type=float,
+        default=2.0,
+        help="Polling interval in seconds (default: 2.0)",
+    )
+    return p
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
+    parameters = load_parameters(args.parameters)
+    ids = parse_ids(args.ids)
+
+    uuid = start_execution(args.engine_url, args.workflow, parameters, ids)
+    print(f"execution {uuid}")
+
+    sys.exit(poll_until_terminal(args.engine_url, uuid, args.timeout, args.interval))
+
+
+if __name__ == "__main__":
+    main()

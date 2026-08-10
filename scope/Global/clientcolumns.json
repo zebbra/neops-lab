@@ -1,0 +1,7 @@
+[
+  { "align": "left", "attribute": "macaddress", "class": "", "order": 1, "sortable": false, "text": "MAC Address", "type": "String" },
+  { "align": "left", "attribute": "fromimport", "class": "", "order": 2, "sortable": false, "text": "Imported", "type": "String" },
+  { "align": "left", "attribute": "lastdiscovered", "class": "", "order": 3, "sortable": false, "text": "Last discovered", "type": "Date" },
+  { "align": "left", "attribute": "deviceInterface", "class": "", "order": 4, "sortable": false, "text": "Interface", "type": "InterfaceLink" },
+  { "align": "left", "attribute": "location.name", "class": "", "order": 5, "sortable": false, "text": "Location", "type": "String" }
+]

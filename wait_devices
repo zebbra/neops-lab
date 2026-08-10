@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Block until every lab device accepts SSH (TCP 22).
+
+`docker compose up -d` returns once device containers are *started*, not once
+their SSH server is actually listening. FRR comes up in a second or two, but
+Nokia SR Linux takes tens of seconds to boot its management stack. Running
+discovery before a device is reachable makes that host fail with a connection
+error and drop out of the 15-device count.
+
+This polls each device's TCP 22 until it accepts a connection, so callers like
+`make local-lab-discover` wait for the actual readiness condition instead of a
+fixed sleep. The host list defaults to the lab devices in topology.json — not
+the discovery parameters: a subnet target also contains unused addresses which
+must never block readiness.
+
+Usage
+-----
+    ./wait_devices                       # mgmt IPs from topology.json
+    ./wait_devices 172.30.0.11 10.0.0.5  # explicit IPs (optionally ip:port)
+    ./wait_devices --params other.json   # /32 subnets from a params file
+
+Exit codes
+----------
+    0   every device accepts TCP 22
+    2   timed out before all devices became reachable
+"""
+
+import argparse
+import json
+import pathlib
+import socket
+import sys
+import time
+
+DEFAULT_TOPOLOGY = pathlib.Path(__file__).with_name("topology.json")
+
+
+def hosts_from_topology(path: pathlib.Path) -> list[str]:
+    """Extract the `mgmt_ip` of every device in the lab topology."""
+    data = json.loads(path.read_text())
+    return [d["mgmt_ip"] for d in data.get("devices", {}).values() if d.get("mgmt_ip")]
+
+
+def hosts_from_params(path: pathlib.Path) -> list[str]:
+    """Extract the address of every /32 subnet in a discovery params file.
+
+    Wider prefixes are skipped: they enumerate candidate addresses, not known
+    devices, and waiting on unused addresses would always time out.
+    """
+    data = json.loads(path.read_text())
+    hosts = []
+    for subnet in data.get("subnets", []):
+        cidr = subnet.get("cidr", "")
+        address, _, prefixlen = cidr.partition("/")
+        if address and (not prefixlen or prefixlen == "32"):
+            hosts.append(address)
+    return hosts
+
+
+def parse_target(target: str) -> tuple[str, int]:
+    """Split `ip` or `ip:port` into (ip, port); port defaults to 22."""
+    if ":" in target:
+        ip, port = target.rsplit(":", 1)
+        return ip, int(port)
+    return target, 22
+
+
+def accepts_tcp(ip: str, port: int) -> bool:
+    try:
+        with socket.create_connection((ip, port), timeout=3):
+            return True
+    except OSError:
+        return False
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(
+        prog="wait_devices",
+        description="Block until every lab device accepts SSH (TCP 22).",
+    )
+    p.add_argument("hosts", nargs="*", help="Device IPs (or ip:port). Default: mgmt IPs from the lab topology.")
+    p.add_argument("--params", type=pathlib.Path, default=None, help="Discovery params JSON to read /32 IPs from.")
+    p.add_argument("--timeout", type=int, default=240, help="Total wait budget in seconds (default: 240)")
+    p.add_argument("--interval", type=float, default=2.0, help="Poll interval in seconds (default: 2.0)")
+    args = p.parse_args()
+
+    if args.hosts:
+        targets = args.hosts
+    elif args.params is not None:
+        targets = hosts_from_params(args.params)
+    else:
+        targets = hosts_from_topology(DEFAULT_TOPOLOGY)
+    if not targets:
+        print("no device hosts to wait for", file=sys.stderr)
+        return 0
+
+    pending = [parse_target(t) for t in targets]
+    deadline = time.monotonic() + args.timeout
+    started = time.monotonic()
+
+    while pending:
+        still_pending = []
+        for ip, port in pending:
+            if accepts_tcp(ip, port):
+                elapsed = int(time.monotonic() - started)
+                print(f"  [{elapsed:3d}s] ready: {ip}:{port}")
+            else:
+                still_pending.append((ip, port))
+        pending = still_pending
+
+        if not pending:
+            return 0
+        if time.monotonic() >= deadline:
+            missing = ", ".join(f"{ip}:{port}" for ip, port in pending)
+            print(f"timeout: {missing} not reachable within {args.timeout}s", file=sys.stderr)
+            return 2
+        time.sleep(args.interval)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

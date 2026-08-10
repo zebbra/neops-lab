@@ -1,0 +1,8 @@
+[
+  { "align": "left", "attribute": "name", "class": "", "order": 1, "sortable": false, "text": "Name", "type": "String" },
+  { "align": "left", "attribute": "title", "class": "", "order": 2, "sortable": false, "text": "Title", "type": "String" },
+  { "align": "left", "attribute": "description", "class": "", "order": 3, "sortable": false, "text": "Description", "type": "String" },
+  { "align": "left", "attribute": "location.address", "class": "", "order": 4, "sortable": false, "text": "Address", "type": "String" },
+  { "align": "left", "attribute": "location.city", "class": "", "order": 5, "sortable": false, "text": "City", "type": "String" },
+  { "align": "left", "attribute": "deviceCount", "class": "", "order": 6, "sortable": false, "text": "Devices", "type": "DeviceCountOfGroup" }
+]

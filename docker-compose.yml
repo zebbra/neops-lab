@@ -1,0 +1,191 @@
+services:
+  wait_health:
+    # This checks the high-level components for health status before returning from the docker compose up -d command
+    image: busybox
+    depends_on:
+      cms:
+        condition: service_healthy
+      workflow_engine:
+        condition: service_healthy
+      web_client:
+        condition: service_healthy
+
+  cms:
+    image: quay.io/zebbra/neops-cms-free:develop
+    environment:
+      - DEBUG=True
+      - DJANGO_SETTINGS_MODULE=neopsapp.settings
+      - DATABASE_URL=postgres://postgres:unsafe@postgres:5432/postgres
+      - DJANGO_ALLOWED_HOSTS=*
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - DJANGO_SECRET_KEY=unsafe
+      - CORS_ORIGIN_ALLOW_ALL=True
+      - NEOPS_PLUGINS=neops_auth_static_api_key neops_auth_django neops_permissions_simple
+      - DJANGO_ALLOW_ASYNC_UNSAFE=True
+      - AUTH_PROVIDERS_CONFIG_PATH="./auth_providers_with_secret.json"
+      # The web client's GraphQL `appSettings.oidcConfig` query reads this file via the CMS resolver
+      # (neops/core/schema.py: open(settings.OIDC_CONFIG_PATH)). When the file is missing the field
+      # returns null; the web client's Angular bootstrap (APP_INITIALIZER -> OidcSecurityService.checkAuth())
+      # then crashes on JSON.parse(null) and the login screen never renders. An empty-array file is the
+      # "OIDC disabled, no providers" sentinel that satisfies the web client.
+      - OIDC_CONFIG_PATH=/etc/neops/oidc-config.json
+      # Newer neops-cms-free:develop images require an RSA keypair for RS256 JWT
+      # issuance; without these paths the CMS crashes on startup (token_service
+      # check_keys). Dev-only keys are generated under cms/jwt by `make lab-jwt`
+      # (chained into `make local-env-init`; see the README prerequisites).
+      - NEOPS_JWT_PRIVATE_KEY_PATH=/etc/neops/jwt/private.pem
+      - NEOPS_JWT_PUBLIC_KEY_PATH=/etc/neops/jwt/public.pem
+    volumes:
+      - ./cms/oidc-config.json:/etc/neops/oidc-config.json:ro
+      - ./cms/jwt:/etc/neops/jwt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    command: >
+      bash -c "
+        python manage.py migrate &&
+        (DJANGO_SUPERUSER_PASSWORD=neops python manage.py createsuperuser --noinput --username neops --email neops@neops.io || true) &&
+        (python manage.py elastic_index --create 2>&1 || true) &&
+        python manage.py runserver 0.0.0.0:8000
+      "
+    ports:
+      - "8001:8000"
+    healthcheck:
+      # Using -L to follow redirects just in case /admin/ forwards to a login URL
+      test: [ "CMD-SHELL", "curl -f -L http://localhost:8000/admin/ || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s # Gives time for migrations to run before checking
+
+  workflow_engine:
+    # Override via NEOPS_WORKFLOW_ENGINE_IMAGE (e.g. a locally-built
+    # neops-workflow-engine:latest); defaults to the published develop image.
+    # `missing` means a local image that is already present is used as-is, with
+    # no registry call. Force with NEOPS_WORKFLOW_ENGINE_PULL_POLICY.
+    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:develop}
+    pull_policy: ${NEOPS_WORKFLOW_ENGINE_PULL_POLICY:-missing}
+    environment:
+      - DEBUG=True
+      - NEOPS_CMS_URL=http://cms:8000/graphql
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=unsafe
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - PORT=3030
+    env_file:
+      - cms_api_key.env
+    ports:
+      - "3030:3030"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cms:
+        condition: service_healthy # Ensures CMS is up before the workflow engine connects
+    healthcheck:
+      test: [ "CMD-SHELL", "node -e \"require('http').request('http://localhost:3030/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => { process.exit(1); }).end();\"" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  workflow-engine-client:
+    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:develop}
+    pull_policy: ${NEOPS_WORKFLOW_ENGINE_PULL_POLICY:-missing}
+    ports:
+      - "3031:5173"
+    depends_on:
+      workflow_engine:
+        condition: service_healthy
+    working_dir: /app/rest/monitor-app
+    command: >
+      sh -c "npm install && npm run dev"
+
+  web_client:
+    # Override via NEOPS_WEB_CLIENT_IMAGE (e.g. a locally-built
+    # neops-web-client:latest); defaults to the published develop image.
+    # `missing` means a local image that is already present is used as-is, with
+    # no registry call. Force with NEOPS_WEB_CLIENT_PULL_POLICY.
+    image: ${NEOPS_WEB_CLIENT_IMAGE:-quay.io/zebbra/neops-web-client:develop}
+    pull_policy: ${NEOPS_WEB_CLIENT_PULL_POLICY:-missing}
+    environment:
+      # Read by the entrypoint's `FRONTEND_*` env-injection. Browser-relative,
+      # so the values point at host-published ports, not in-network names.
+      FRONTEND_GRAPHQL_ENDPOINT: "http://localhost:8001/graphql"
+      FRONTEND_FILEAPI_ENDPOINT: "http://localhost:8001/"
+      FRONTEND_DEVMODE: "true"
+      # Workflow manager (monitor app) served by the workflow-engine-client
+      # service above, published on host port 3031.
+      FRONTEND_WORKFLOW_MANAGER_URL: "http://localhost:3031"
+    ports:
+      - "8080:8080"
+    depends_on:
+      cms:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: unsafe
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:5-alpine
+    networks:
+      - redis-net
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.2
+    environment:
+      - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+      - discovery.type=single-node
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - xpack.security.enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    cpus: 2
+    mem_limit: 8g
+    volumes:
+      - elasticsearch:/usr/share/elasticsearch/data
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -s -f http://localhost:9200 || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  elasticsearch:
+    driver: local
+  postgres_data:
+    driver: local
+
+networks:
+  redis-net:
+    driver: "bridge"

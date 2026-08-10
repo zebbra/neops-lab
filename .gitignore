@@ -1,0 +1,84 @@
+# -----------------------------------------------------------------------------
+# Lab runtime artifacts
+# -----------------------------------------------------------------------------
+
+# Generated containerlab topology, per-device configs + the per-lab runtime dir
+# (generated/clab-neops-lab). Everything under here is rebuilt from topology.json
+# by `./gen_clab_topology`; the runtime dir also holds containerlab-minted TLS
+# private keys, which must never be committed.
+generated/
+# containerlab runtime from the ad-hoc probe (clab/probe.clab.yml)
+clab-*/
+# Dev-only RSA keypair for the CMS, minted by `make lab-jwt`.
+cms/jwt/
+# CMS API key minted by `make local-env-init`.
+cms_api_key.env
+
+# -----------------------------------------------------------------------------
+# Python bytecode and caches
+# -----------------------------------------------------------------------------
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+wheels/
+.eggs/
+*.egg-info/
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+.pytest_cache/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+.tox/
+.nox/
+
+# Type checking and linting caches
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# Virtual environments and local Python runtime
+.env
+.env.*
+!.env.example
+.venv
+.venv*/
+venv/
+env/
+ENV/
+venv.bak/
+env.bak/
+__pypackages__/
+.python-version
+
+# IDE / editor settings (JetBrains, VS Code, Cursor, Aider)
+.idea/
+.vscode/
+.cursor/
+.cursorignore
+.aider*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation output (MkDocs)
+site/
+
+docs/assets/document_dates/
