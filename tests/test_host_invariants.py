@@ -6,9 +6,38 @@ one portability rule for the host scripts. See docs/60-development/20-invariants
 
 import ast
 import pathlib
+import re
 
 LAB_DIR = pathlib.Path(__file__).resolve().parents[1]
 HOST_SCRIPTS = ("gen_clab_topology", "gen_device_configs", "run_workflow", "wait_ready", "wait_devices")
+
+
+def _generator_constant(name: str) -> str:
+    """Read a module-level string constant from gen_clab_topology without importing it."""
+    tree = ast.parse((LAB_DIR / "gen_clab_topology").read_text())
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            assert isinstance(node.value, ast.Constant)
+            return str(node.value.value)
+    raise AssertionError(f"{name} not found in gen_clab_topology")
+
+
+def test_makefile_lab_subnet_matches_generator():
+    """The Makefile pre-creates `lab-net`; containerlab's mgmt block must use the same subnet."""
+    makefile = (LAB_DIR / "Makefile").read_text()
+    match = re.search(r"^LAB_SUBNET\s*:=\s*(\S+)", makefile, flags=re.M)
+    assert match, "LAB_SUBNET not defined in the Makefile"
+    assert match.group(1) == _generator_constant("LAB_SUBNET")
+    match = re.search(r"^LAB_NET\s*:=\s*(\S+)", makefile, flags=re.M)
+    assert match, "LAB_NET not defined in the Makefile"
+    assert match.group(1) == _generator_constant("LAB_NET_NAME")
+
+
+def test_worker_compose_declares_lab_net_external():
+    """compose only attaches to lab-net; creating it (with the subnet) is the Makefile's job."""
+    compose = (LAB_DIR / "docker-compose.worker.yml").read_text()
+    assert re.search(r"^\s+lab-net:\n(?:\s+.*\n)*?\s+external:\s*true", compose, flags=re.M)
+    assert "subnet:" not in compose, "the subnet belongs to the Makefile (LAB_SUBNET), not to compose"
 
 
 def test_host_scripts_are_python39_safe():

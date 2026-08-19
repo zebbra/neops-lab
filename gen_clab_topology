@@ -24,6 +24,13 @@ DISCOVER_PARAMS = HERE / "workflow-execution-parameters" / "discover-params.json
 AUTODETECT_PARAMS = HERE / "workflow-execution-parameters" / "discover-params-autodetect.json"
 SUBNET_PARAMS = HERE / "workflow-execution-parameters" / "discover-params-subnet.json"
 
+# The lab management network. containerlab's mgmt block below, the `/24`
+# discovery target and the Makefile's `LAB_SUBNET` (which pre-creates the
+# `lab-net` docker network with exactly this subnet) must all agree;
+# tests/test_gen_clab_topology.py cross-checks the Makefile against this value.
+LAB_NET_NAME = "lab-net"
+LAB_SUBNET = "172.30.0.0/24"
+
 # Reuse the per-device render helpers from the extension-less sibling module.
 _dc_loader = importlib.machinery.SourceFileLoader("gen_device_configs", str(HERE / "gen_device_configs"))
 _dc_spec = importlib.util.spec_from_loader(_dc_loader.name, _dc_loader)
@@ -158,7 +165,7 @@ def render_clab(devices: dict) -> dict:
     return {
         "name": "neops-lab",
         "prefix": "",
-        "mgmt": {"network": "lab-net", "ipv4-subnet": "172.30.0.0/24"},
+        "mgmt": {"network": LAB_NET_NAME, "ipv4-subnet": LAB_SUBNET},
         "topology": {
             "kinds": {
                 "linux": {"image": "neops-lab-frr:latest"},
@@ -198,7 +205,7 @@ def render_subnet_params(devices: dict) -> dict:
     return {
         "subnets": [
             {
-                "cidr": "172.30.0.0/24",
+                "cidr": LAB_SUBNET,
                 "credentials": [
                     {"username": "frr", "password": "frr"},
                     {"username": "admin", "password": "NokiaSrl1!"},

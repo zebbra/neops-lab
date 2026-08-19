@@ -5,6 +5,42 @@ include .make_scripts/project-infrastructure/project-infrastructure-makefile
 # This includes make: sync-infrastructure-assets, github-autodelete-merged-branches, github-set-branch-protections and github-set-default-branch
 include .make_scripts/release-management/release-management-makefile
 # This includes make: tag-major, tag-major-beta, tag-minor, tag-minor-beta, tag-patch, tag-patch-beta, tag-latest-beta, tag-major-minor-ruleset, hard-reset-tags, check-for-releases and sync-release-assets.
+
+# -----------------------------------------------------------------------------
+# Portability knobs. Every recipe below runs unchanged on Linux with the tools
+# the README lists; these variables are what make the same recipes work on macOS
+# (Docker Desktop / OrbStack). Override on the command line or in the
+# environment (`make local-lab-up WAIT_READY_TIMEOUT=600`); `.env` is read by
+# docker compose only.
+# -----------------------------------------------------------------------------
+
+# containerlab launcher. `./containerlab` exec's a native binary when one is on
+# PATH (Linux: exactly today's command) and otherwise, on macOS or with
+# CLAB_IN_DOCKER=1, runs containerlab in container mode (ghcr.io/srl-labs/clab)
+# through the docker socket. See the header of ./containerlab for the why.
+CONTAINERLAB ?= ./containerlab
+
+# The lab management network. containerlab attaches the devices to it at fixed
+# mgmt IPs, the worker joins it to reach them. It is created HERE (target
+# `lab-net`), before the first `docker compose up`, and compose treats it as
+# `external`. Reason: compose creates its auto-subnetted networks (`default`)
+# concurrently, and on a host with many docker networks the next free /16 in
+# docker's pool can be 172.30.0.0/16 — which then blocks this /24 with
+# "Pool overlaps with other one on this address space". Creating the fixed
+# network first makes docker's allocator skip it. The subnet must match
+# LAB_SUBNET in gen_clab_topology (tests cross-check the two).
+LAB_NET := lab-net
+LAB_SUBNET := 172.30.0.0/24
+
+# Wait budgets (seconds). Defaults suit a native Linux host; on a Mac the
+# worker may start under emulation and the SR Linux nodes boot against a shared
+# VM, so a slow first run raises these.
+WAIT_READY_TIMEOUT ?= 180
+WAIT_DEVICES_TIMEOUT ?= 240
+
+# Where a neops-worker-sdk-py checkout lives, for `make build-worker-image`.
+SDK_DIR ?= ../neops-worker-sdk-py
+
 # -----------------------------------------------------------------------------
 # Images built from this repo. Local tags only — nothing here is published to a
 # registry; the lab always builds its two helper images on the machine that runs
@@ -16,6 +52,16 @@ build-docker:
 	docker build -t neops-lab-frr:latest devices/frr
 	# One-shot container that POSTs every workflows/*.yaml to the engine.
 	docker build -t neops-lab-bootstrap:latest bootstrap
+
+# Build the worker image from a local neops-worker-sdk-py checkout and tag it
+# so `NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest` picks it up — the route
+# while the published quay.io/zebbra/neops-worker-sdk image lacks the discovery
+# function block (README "Image compatibility"). Native arch: arm64 on Apple
+# Silicon.
+build-worker-image:
+	@test -f "$(SDK_DIR)/Dockerfile" || { echo "error: no Dockerfile in SDK_DIR=$(SDK_DIR) — point SDK_DIR at a neops-worker-sdk-py checkout"; exit 1; }
+	docker build -t neops-worker-sdk:latest "$(SDK_DIR)"
+	@echo "Built neops-worker-sdk:latest. Run the lab with: NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest make local-lab-up"
 
 lint:
 	uv run ruff format --check .
@@ -31,7 +77,60 @@ typeCheck:
 test:
 	uv run pytest tests
 
-check: lint typeCheck test
+# Shell syntax gate for the bash entry points. Catches parse errors; BSD/GNU
+# tool differences are covered by `make doctor` and a real run.
+shellcheck-syntax:
+	bash -n apply_cms_config
+	bash -n containerlab
+	bash -n doctor
+
+# The host scripts must import under Python 3.9: that is what a stock macOS
+# ships as /usr/bin/python3, and the README promises "nothing but python3".
+# `from __future__ import annotations` in each script is what makes `X | None`
+# annotations legal there — this target is the guard that keeps it true.
+py39-check:
+	uv run --python 3.9 --no-project python -c "import importlib.machinery, importlib.util; \
+	  [importlib.machinery.SourceFileLoader(n, n).exec_module(importlib.util.module_from_spec(importlib.util.spec_from_loader(n, importlib.machinery.SourceFileLoader(n, n)))) \
+	   for n in ('gen_clab_topology', 'gen_device_configs', 'run_workflow', 'wait_ready', 'wait_devices')]; print('host scripts import under', __import__('sys').version.split()[0])"
+
+check: lint typeCheck test shellcheck-syntax py39-check
+
+# Preflight: docker/compose versions, VM resources, ports, subnet overlap,
+# containerlab mode, python/openssl, quay access. Read-only, safe to run any
+# time; fixes are printed next to each failure. See ./doctor.
+doctor:
+	@./doctor
+
+# Verify the images the lab is configured to run actually carry what the lab
+# needs — without deploying anything. Catches the two failures that have bitten
+# in practice: a worker image without the discovery function block (or that
+# cannot start at all), and an engine without the publish route.
+images-check: export COMPOSE_FILE := docker-compose.yml:docker-compose.worker.yml
+images-check:
+	@cfg=$$(docker compose config --format json 2>/dev/null); \
+	worker=$$(printf '%s' "$$cfg" | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["worker"]["image"])'); \
+	engine=$$(printf '%s' "$$cfg" | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["workflow_engine"]["image"])'); \
+	echo "worker image: $$worker"; echo "engine image: $$engine"; \
+	fail=0; \
+	docker image inspect "$$worker" >/dev/null 2>&1 || docker pull "$$worker" >/dev/null 2>&1 || { echo "  ✗ worker image not available locally and not pullable"; fail=1; }; \
+	if [ $$fail -eq 0 ]; then \
+	  docker run --rm --entrypoint sh "$$worker" -c 'test -d /app/neops/fb' >/dev/null 2>&1 \
+	    && echo "  ✓ worker carries /app/neops/fb" \
+	    || { echo "  ✗ worker image has no /app/neops/fb — it cannot run global_discover_network (see README: build the worker locally, make build-worker-image)"; fail=1; }; \
+	  docker run --rm --entrypoint sh "$$worker" -c 'test -x /app/.venv/bin/neops_worker || test -f /app/README.md' >/dev/null 2>&1 \
+	    && echo "  ✓ worker can start (project installed, or README.md present for the start-time build)" \
+	    || { echo "  ✗ worker cannot start: the image neither installs the project nor ships README.md, so 'uv run neops_worker' fails at container start (hatchling: Readme file does not exist)"; fail=1; }; \
+	fi; \
+	docker image inspect "$$engine" >/dev/null 2>&1 || docker pull "$$engine" >/dev/null 2>&1 || { echo "  ✗ engine image not available locally and not pullable"; fail=1; }; \
+	if [ $$fail -eq 0 ]; then \
+	  docker run --rm --entrypoint sh "$$engine" -c 'test -n "$$(find /app/dist -name workflow-publish.controller.js | head -1)"' >/dev/null 2>&1 \
+	    && echo "  ✓ engine has the publish API (POST /workflow-definition/publish)" \
+	    || echo "  ! engine predates the publish API: bootstrap falls back to the legacy POST /workflow-definition"; \
+	  docker run --rm --entrypoint sh "$$engine" -c 'test -n "$$(find /app/dist -name apply-body-limits.js | head -1)"' >/dev/null 2>&1 \
+	    && echo "  ✓ engine has raised per-route body limits (large discovery results)" \
+	    || { echo "  ✗ engine lacks the raised body limits — a 15-device discovery result is rejected with 413. Use >= 0.42.2-beta.3 (NEOPS_WORKFLOW_ENGINE_IMAGE)"; fail=1; }; \
+	fi; \
+	exit $$fail
 
 # Dev-only RSA keypair for the CMS. Newer neops-cms-free images require it for
 # RS256 JWT issuance and crash at startup (token_service check_keys) without it,
@@ -39,17 +138,34 @@ check: lint typeCheck test
 # cannot start the stack until this has run once. Idempotent: an existing
 # keypair is left alone, so re-running never invalidates issued tokens.
 # The keys are git-ignored; they are throwaway lab credentials, never secrets.
+# `genpkey` rather than `genrsa`: both OpenSSL 3 (Linux, Homebrew) and the
+# LibreSSL that stock macOS ships as `openssl` then emit the same PKCS#8 PEM
+# (`genrsa` on LibreSSL emits PKCS#1 instead).
 lab-jwt:
 	@mkdir -p cms/jwt
 	@if [ -f cms/jwt/private.pem ] && [ -f cms/jwt/public.pem ]; then \
 		echo "cms/jwt keypair already present — skipping"; \
 	else \
-		openssl genrsa -out cms/jwt/private.pem 2048 && \
+		openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out cms/jwt/private.pem && \
 		openssl rsa -in cms/jwt/private.pem -pubout -out cms/jwt/public.pem && \
 		echo "generated cms/jwt/{private,public}.pem"; \
 	fi
 
-local-env-init: lab-jwt
+# Create the lab management network with its fixed subnet if it does not exist,
+# and refuse to continue if one exists with a different subnet (containerlab
+# would refuse it later with a far less helpful message). See the LAB_NET
+# comment above for why this runs before any `docker compose up`.
+lab-net:
+	@got=$$(docker network inspect $(LAB_NET) -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null); \
+	if [ -z "$$got" ]; then \
+		docker network create --subnet $(LAB_SUBNET) $(LAB_NET) >/dev/null && echo "created docker network $(LAB_NET) ($(LAB_SUBNET))"; \
+	elif [ "$$got" != "$(LAB_SUBNET)" ]; then \
+		echo "error: docker network $(LAB_NET) exists with subnet $$got, expected $(LAB_SUBNET)."; \
+		echo "       Run 'make local-lab-down' (or 'docker network rm $(LAB_NET)') and retry."; \
+		exit 1; \
+	fi
+
+local-env-init: lab-jwt lab-net
 	touch cms_api_key.env
 	# Refresh the published images. `--ignore-pull-failures` is load-bearing: if
 	# you override a service with a locally-built tag
@@ -64,8 +180,16 @@ local-env-init: lab-jwt
 	# `pull_policy: missing`, so a local image already present is used as-is.
 	docker compose pull --ignore-pull-failures
 	docker compose up -d
-	# generate_api_key prints the key on the last non-empty line (no `api key:` label in current CMS image)
-	echo "NEOPS_CMS_TOKEN=$$(docker compose exec -T cms ./manage.py generate_api_key 1 workflow 2>/dev/null | awk 'NF{l=$$0}END{print l}')" > cms_api_key.env
+	# Mint the engine's CMS API key for the `neops` user. The user's pk is
+	# resolved by name (a re-init over a preserved volume can have a different
+	# pk). generate_api_key prints the key on the last non-empty line (current
+	# CMS images print no `api key:` label); an empty key fails here.
+	@pk=$$(docker compose exec -T cms ./manage.py shell -c "from django.contrib.auth import get_user_model; print('PK=%s' % get_user_model().objects.get(username='neops').pk)" 2>/dev/null | sed -n 's/^PK=//p' | tr -d '\r'); \
+	test -n "$$pk" || { echo "error: could not resolve the CMS user 'neops'"; exit 1; }; \
+	key=$$(docker compose exec -T cms ./manage.py generate_api_key $$pk workflow 2>/dev/null | awk 'NF{l=$$0}END{print l}' | tr -d '\r'); \
+	test -n "$$key" || { echo "error: generate_api_key returned an empty key"; exit 1; }; \
+	echo "NEOPS_CMS_TOKEN=$$key" > cms_api_key.env; \
+	echo "wrote cms_api_key.env (user pk $$pk)"
 	# Apply CMS config (grants the neops user access to the Global scope) BEFORE
 	# recreating the engine. The CMS caches each user's accessible scopes
 	# in-memory for 10 min; if the engine queries the CMS as neops before the
@@ -76,7 +200,7 @@ local-env-init: lab-jwt
 	# env_file changes don't trigger recreate on their own; force it so the engine picks up the new token
 	docker compose up -d --force-recreate workflow_engine
 
-local-env-up: lab-jwt
+local-env-up: lab-jwt lab-net
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make local-env-init' first."; exit 1; fi
 	# See the note in local-env-init about --ignore-pull-failures.
 	docker compose pull --ignore-pull-failures
@@ -91,6 +215,10 @@ local-env-prune:
 	# state across down/up cycles caused `elastic_index --create` to fail
 	# and stale CMS data to confuse re-inits.
 	docker compose down -v
+	# The lab network is external to compose (see `lab-net`) and survives
+	# `down`; a prune drops it too. Tolerated failure: device containers still
+	# attached (run `make local-lab-down` first), or no network to remove.
+	-docker network rm $(LAB_NET) 2>/dev/null
 
 # -----------------------------------------------------------------------------
 # Simple Lab — see README.md
@@ -118,15 +246,23 @@ DISCOVER_PARAMS ?= workflow-execution-parameters/discover-params.json
 # containerlab topology (generated from topology.json by gen_clab_topology).
 CLAB_TOPO := generated/neops-lab.clab.json
 
-local-lab-up: build-docker
+local-lab-up: build-docker lab-net
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
 	# Generate the containerlab topology + per-device configs from topology.json.
 	@./gen_clab_topology
-	# Base stack + worker + bootstrap. This creates the `lab-net` network that
-	# containerlab attaches the devices to, and registers the workflow definitions.
+	# Refresh the worker image. `local-env-init` pulls with the BASE compose file
+	# only, which does not include the worker; with `pull_policy: missing` an
+	# image already present is otherwise used as-is forever. Same
+	# --ignore-pull-failures reasoning as there: a locally-built
+	# NEOPS_WORKER_SDK_IMAGE yields a warning.
+	docker compose pull --ignore-pull-failures worker
+	# Base stack + worker + bootstrap. The worker joins `lab-net` (created by the
+	# `lab-net` prerequisite) that containerlab attaches the devices to, and
+	# registers the workflow definitions.
 	# `up -d` returns once containers are *Started*, not *Completed*; the one-shot
 	# `lab_bootstrap` container registers the workflow definitions (e.g.
-	# simple_lab_discovery) with the engine and then exits.
+	# simple_lab_discovery) with the engine and then exits. `up -d` re-runs it
+	# when it has already exited, so a re-run re-registers (idempotent).
 	docker compose up -d
 	# Without this wait, `local-lab-discover` races ahead and the engine 404s with
 	# "Workflow with ID null not found". `wait` blocks until it exits and
@@ -135,14 +271,16 @@ local-lab-up: build-docker
 	docker compose wait lab_bootstrap
 	# Deploy the 15 devices with REAL point-to-point wiring onto lab-net. SR Linux
 	# boots slowly, so deploy early — before waiting on device SSH below.
+	# `--reconfigure` makes this re-runnable: an interrupted or repeated
+	# `local-lab-up` redeploys an existing lab.
 	@echo "Deploying containerlab devices (real links)..."
-	containerlab deploy -t $(CLAB_TOPO)
+	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO)
 	# The worker registers its function blocks with the engine asynchronously
 	# after its container starts. Block until an online worker exists so the
 	# "Lab is up" banner is honest and `local-lab-discover` won't race the
 	# worker with "Function block ... not found".
 	@echo "Waiting for the worker to register its function blocks..."
-	@./wait_ready $(DISCOVER_FB)
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
 	# Devices (esp. Nokia SR Linux) boot slower than `containerlab deploy` returns.
 	# Poll from *inside* the lab network (the worker is on lab-net), not the host.
 	# On macOS/Docker Desktop the host has no route to the lab-net bridge IPs
@@ -151,7 +289,7 @@ local-lab-up: build-docker
 	# discovery actually uses — works on every platform.
 	# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix here.
 	@echo "Waiting for all devices to accept SSH..."
-	@docker compose exec -T worker python3 lab/wait_devices
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
 	@echo ""
 	@echo "Lab is up (containerlab: 10 FRR + 5 Nokia SR Linux, real links)."
 	@echo "  Web client:   http://localhost:8080/"
@@ -164,14 +302,19 @@ local-lab-up: build-docker
 local-lab-down:
 	# --cleanup removes the per-lab runtime dir (generated/clab-neops-lab); the
 	# leading `-` lets `make` continue if no lab is deployed.
-	-containerlab destroy -t $(CLAB_TOPO) --cleanup
+	-$(CONTAINERLAB) destroy -t $(CLAB_TOPO) --cleanup
 	docker compose down
+	# lab-net is external to compose (created by the `lab-net` target), so
+	# `down` leaves it; remove it here so a full `local-lab-down` leaves no lab
+	# network behind — as it did when compose owned it. Tolerated failure: a
+	# device container still attached (destroy failed above) or nothing to remove.
+	-docker network rm $(LAB_NET) 2>/dev/null
 
 local-lab-discover:
-	@./wait_ready $(DISCOVER_FB)
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB)
 	# Always wait for the known lab devices, not the requested discovery input:
 	# a subnet target also contains unused addresses which must not block readiness.
-	@docker compose exec -T worker python3 lab/wait_devices
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
 	# 15-minute timeout: discovering 15 devices (SSH + fact/interface collection
 	# across 10 FRR + 5 slower Nokia SR Linux nodes) legitimately exceeds the
 	# run_workflow 300s default. Autodetection adds an SSH probe per host, so the
@@ -184,6 +327,7 @@ apply-cms-config:
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
-.PHONY: build-docker lint format typeCheck test check lab-jwt \
+.PHONY: build-docker build-worker-image lint format typeCheck test shellcheck-syntax py39-check check \
+	doctor images-check lab-jwt lab-net \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config
