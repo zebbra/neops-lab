@@ -51,6 +51,12 @@ repo's invariants.
   sudo chown root:root "$(command -v containerlab)"
   sudo chmod 4755 "$(command -v containerlab)" # SUID -> -rwsr-xr-x
   ```
+  `make clab-suid` does the SUID half of that for you (idempotent, prompts for
+  sudo only when the bit is actually missing) and warns if you are not in
+  `clab_admins`. **Re-run it after every containerlab upgrade** — a package
+  upgrade replaces the binary and drops the SUID bit, after which `local-lab-up`
+  fails with `This containerlab command requires root privileges or root via
+  SUID to run`.
   Verify: `ls -l $(command -v containerlab)` shows the `s` bit, and
   `containerlab deploy -t clab/probe.clab.yml` (a 2-node probe) stands up
   without the "requires root privileges" error (`containerlab destroy -t
@@ -186,6 +192,7 @@ skipped for hosts declared as another one.
 
 | Target | What it does |
 |---|---|
+| `make clab-suid` | Sets the SUID bit on the `containerlab` binary so the lab targets can deploy without sudo. Run once after installing containerlab and again after every upgrade (an upgrade drops the bit). Idempotent; needs sudo only when the bit is missing. Not chained into `local-lab-up`, which must never prompt for a password mid-run. |
 | `make lab-jwt` | Mints the dev RSA keypair the CMS needs (`cms/jwt/`). Idempotent; chained into `local-env-init`. |
 | `make local-env-init` | Pull + start the base stack, mint the CMS API key, force-recreate the engine to load it, then chain `apply-cms-config`. One-time per env. |
 | `make build-docker` | Builds the two local-only images: `neops-lab-frr:latest` and `neops-lab-bootstrap:latest`. A prerequisite of `local-lab-up`. |

@@ -35,6 +35,17 @@ sudo chown root:root "$(command -v containerlab)"
 sudo chmod 4755 "$(command -v containerlab)" # SUID -> -rwsr-xr-x
 ```
 
+`make clab-suid` does the SUID half for you: idempotent, it prompts for sudo
+only when the bit is actually missing, and warns if you are not in
+`clab_admins`.
+
+!!! warning "Re-run `make clab-suid` after every containerlab upgrade"
+    A package upgrade replaces the binary and silently drops the SUID bit.
+    The next `make local-lab-up` then fails with *"This containerlab command
+    requires root privileges or root via SUID to run"* — group membership
+    survives the upgrade, so `id` looks fine and only the file mode gives it
+    away.
+
 Verify the SUID bit is set:
 
 ```bash

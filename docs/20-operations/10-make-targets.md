@@ -16,8 +16,9 @@ tags: [operations, reference]
 | `make local-lab-discover` | Waits for the discovery function block and for device SSH, then POSTs a workflow execution and polls to a terminal state (15-minute ceiling). Override `DISCOVER_PARAMS` to change targeting. |
 | `make local-lab-logs` | `docker compose logs -f worker lab_bootstrap`. |
 | `make local-lab-down` | `containerlab destroy --cleanup` (removes the devices and `generated/clab-neops-lab/`), then `docker compose down`. Volumes survive. |
+| `make clab-suid` | Sets the SUID bit on the `containerlab` binary so the other lab targets can deploy without `sudo`. Idempotent — it only prompts for a password when the bit is missing — and warns if you are not in `clab_admins`. Run it once after installing containerlab and again after every upgrade. Deliberately **not** a prerequisite of `local-lab-up`, which must never stop for a password mid-run. See [Prerequisites](../getting-started/10-prerequisites.md#containerlab-and-sudo-less-operation). |
 
-All four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml`, so they see the worker overlay; the `local-env-*` targets do not.
+The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml`, so they see the worker overlay; `clab-suid` touches no containers, and the `local-env-*` targets do not get the overlay either.
 
 ### Variables
 

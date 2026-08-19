@@ -118,6 +118,33 @@ DISCOVER_PARAMS ?= workflow-execution-parameters/discover-params.json
 # containerlab topology (generated from topology.json by gen_clab_topology).
 CLAB_TOPO := generated/neops-lab.clab.json
 
+# containerlab needs root to create netns/veths. Rather than sudo-ing every lab
+# target (which would prompt for a password in the middle of `local-lab-up`),
+# containerlab's supported model is a SUID binary plus membership in the
+# `clab_admins` group — see Prerequisites in README.md.
+# Run this once after installing containerlab, and again after **upgrading** it:
+# a package upgrade replaces the binary and silently drops the SUID bit, which
+# resurfaces as `local-lab-up` failing with "This containerlab command requires
+# root privileges or root via SUID to run, effective UID: 1000 SUID: 1000".
+# Deliberately NOT a prerequisite of local-lab-up: it is the one target that
+# needs sudo, so it stays opt-in. Idempotent — an already-SUID binary is left
+# alone, so re-running costs nothing (and skips the password prompt entirely).
+clab-suid:
+	@CLAB=$$(command -v containerlab) || { echo "Error: containerlab not found in PATH."; exit 1; }; \
+	if [ -u "$$CLAB" ]; then \
+		echo "SUID bit already set on $$CLAB — skipping"; \
+	else \
+		echo "Setting SUID bit on $$CLAB (needs sudo)..."; \
+		sudo chmod u+s "$$CLAB" || exit 1; \
+		echo "done: $$(ls -l "$$CLAB")"; \
+	fi; \
+	if ! id -nG | tr ' ' '\n' | grep -qx clab_admins; then \
+		echo "Warning: $$USER is not in the clab_admins group — privileged containerlab"; \
+		echo "         commands will still be refused. Fix with:"; \
+		echo "           sudo groupadd -r clab_admins && sudo usermod -aG clab_admins $$USER"; \
+		echo "         then re-login for the group to apply."; \
+	fi
+
 local-lab-up: build-docker
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
 	# Generate the containerlab topology + per-device configs from topology.json.
@@ -184,6 +211,6 @@ apply-cms-config:
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
-.PHONY: build-docker lint format typeCheck test check lab-jwt \
+.PHONY: build-docker lint format typeCheck test check lab-jwt clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config

@@ -153,9 +153,15 @@ make apply-cms-config
 
 ## `containerlab deploy` says it requires root privileges
 
-**Cause:** containerlab is not set up for sudo-less operation. The make targets never call `sudo`.
+**Cause:** containerlab is not set up for sudo-less operation. The make targets never call `sudo`. The usual trigger is a **containerlab upgrade**: the new binary is installed without the SUID bit, while your `clab_admins` membership survives — so `id` still looks right and only `ls -l "$(command -v containerlab)"` shows the missing `s`.
 
-**Fix:** see [Prerequisites](../getting-started/10-prerequisites.md#containerlab-and-sudo-less-operation), then confirm with the two-node probe:
+**Fix:**
+
+```bash
+make clab-suid
+```
+
+Idempotent, and it only asks for a password when the bit is actually missing. For the full setup (including the `clab_admins` group) see [Prerequisites](../getting-started/10-prerequisites.md#containerlab-and-sudo-less-operation). Then confirm with the two-node probe:
 
 ```bash
 containerlab deploy  -t clab/probe.clab.yml
