@@ -48,8 +48,55 @@ jobs:
       - name: Run tests
         run: uv run pytest tests
 
+      # The host scripts must import under Python 3.9 (stock macOS python3);
+      # ruff at py312 would happily accept a `X | None` that breaks there.
+      - name: Host scripts import under Python 3.9
+        run: make py39-check
+
+      - name: Shell entry points parse
+        run: make shellcheck-syntax
+
       - name: Summary
-        run: echo "### Ruff/pyrefly/pytest passed ✅" >> $GITHUB_STEP_SUMMARY
+        run: echo "### Ruff/pyrefly/pytest/py39/shell passed ✅" >> $GITHUB_STEP_SUMMARY
+
+  # macOS is a supported host for the lab (see README). This job runs the
+  # hermetic gates on a real Mac — stock /usr/bin/python3 (3.9), BSD userland,
+  # bash 3.2 — so the portability of the host scripts is owned by CI, not by
+  # whoever happens to own a Mac. It stands up no containers.
+  macos:
+    name: macOS host tooling
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies (dev)
+        run: uv sync --group dev --frozen
+
+      - name: Run tests
+        run: uv run pytest tests
+
+      - name: Host scripts import under the stock macOS python3
+        run: |
+          /usr/bin/python3 --version
+          /usr/bin/python3 -c "import importlib.machinery, importlib.util
+          for n in ('gen_clab_topology', 'gen_device_configs', 'run_workflow', 'wait_ready', 'wait_devices'):
+              l = importlib.machinery.SourceFileLoader(n, n)
+              l.exec_module(importlib.util.module_from_spec(importlib.util.spec_from_loader(n, l)))
+          print('ok')"
+
+      - name: Shell entry points parse under bash 3.2
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash -n apply_cms_config && /bin/bash -n containerlab && /bin/bash -n doctor
+
+      - name: Generator reproduces the committed parameter files (BSD userland)
+        run: |
+          /usr/bin/python3 ./gen_clab_topology
+          git diff --exit-code -- workflow-execution-parameters/
 
   docker:
     name: Build lab images (no push)
