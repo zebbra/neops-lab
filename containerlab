@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# containerlab launcher for this repo — one command on Linux and macOS.
+#
+#   ./containerlab deploy  -t generated/neops-lab.clab.json
+#   ./containerlab inspect -t generated/neops-lab.clab.json
+#   ./containerlab destroy -t clab/probe.clab.yml --cleanup
+#
+# Resolution order:
+#   1. A native `containerlab` binary on PATH (the normal Linux install, SUID
+#      sudo-less as the README describes) is exec'd unchanged — on Linux this
+#      script adds nothing to the command that runs.
+#   2. On macOS (Darwin), or anywhere with CLAB_IN_DOCKER=1, containerlab runs
+#      in *container mode*: the official ghcr.io/srl-labs/clab image, started
+#      privileged in the docker daemon's own network + PID namespaces so it can
+#      create the veth pairs between the device containers. containerlab needs
+#      Linux netlink and network namespaces, so there is no macOS binary; on
+#      Docker Desktop / OrbStack the daemon lives in a Linux VM, and this is how
+#      containerlab documents running there.
+#   3. Otherwise (Linux without containerlab) fail like a missing binary, plus a
+#      hint. On Linux container mode is opt-in (CLAB_IN_DOCKER=1): it swaps the
+#      SUID model for docker-socket root, needs `:z` binds under SELinux, and
+#      files it writes under generated/ end up root-owned.
+#
+# Container-mode invariants:
+#   * The repo is mounted at the SAME absolute path inside the container
+#     (`-v "$ROOT:$ROOT" -w "$PWD"`). containerlab resolves the bind paths in
+#     the topology (frr/<host>.iface, ../devices/frr/set-aliases.sh) to absolute
+#     host paths and hands them to the docker daemon; the path inside this
+#     container must equal the path the daemon sees. With the repo mounted at
+#     /work every FRR node gets an empty bind.
+#   * `--pid host` + `--privileged` let containerlab enter the device
+#     containers' network namespaces to wire the links. `--network host` puts it
+#     in the daemon's namespace so the mgmt bridge is visible. On Docker Desktop
+#     "host" is the Linux VM; the beta host-networking toggle is unrelated.
+#   * /etc/hosts and ssh_config.d entries containerlab writes land inside this
+#     ephemeral container. Use `docker exec <node>` / `docker logs <node>`
+#     (bare names: the topology sets prefix "").
+#   * On Docker Desktop the repo must live under a shared path (/Users, /Volumes,
+#     /private, /tmp by default); any other path mounts as an empty directory.
+#     `make doctor` checks that the mount round-trips.
+#
+# Overrides:
+#   CLAB_IMAGE=ghcr.io/srl-labs/clab:<version>   image used in container mode
+#   CLAB_IN_DOCKER=1                              force container mode on Linux
+#   CLAB_NATIVE=/path/to/containerlab             force a specific native binary
+
+set -eu
+
+CLAB_IMAGE=${CLAB_IMAGE:-ghcr.io/srl-labs/clab:0.78.2}
+
+self=$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")
+ROOT=$(cd "$(dirname "$0")" && pwd -P)
+
+# 1. native binary (never this script itself, even if the repo root is on PATH)
+if [ -n "${CLAB_NATIVE:-}" ]; then
+    exec "$CLAB_NATIVE" "$@"
+fi
+if [ "${CLAB_IN_DOCKER:-0}" != "1" ]; then
+    # `type -aP` lists every match on PATH (bash 3.2 has it); skip ourselves.
+    for candidate in $(type -aP containerlab 2>/dev/null || true); do
+        resolved=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P)/$(basename "$candidate")
+        if [ "$resolved" != "$self" ]; then
+            exec "$candidate" "$@"
+        fi
+    done
+fi
+
+# 2. container mode: macOS, or explicitly requested
+if [ "$(uname -s)" != "Darwin" ] && [ "${CLAB_IN_DOCKER:-0}" != "1" ]; then
+    echo "containerlab: command not found" >&2
+    echo "  Install containerlab natively (https://containerlab.dev/install/) — see README.md," >&2
+    echo "  or set CLAB_IN_DOCKER=1 to run it in a container (${CLAB_IMAGE}) via the docker socket." >&2
+    exit 127
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+    echo "containerlab: container mode needs the docker CLI on PATH" >&2
+    exit 127
+fi
+case "$ROOT$PWD" in
+    *' '*) echo "containerlab: container mode cannot bind-mount a path containing spaces: $ROOT / $PWD" >&2; exit 2 ;;
+esac
+
+# Working directory: the repo root is always mounted; if invoked from elsewhere,
+# mount that directory too so relative -t paths keep working. (No bash arrays:
+# macOS ships bash 3.2, where an empty array trips `set -u`.)
+extra_mount=""
+case "$PWD/" in
+    "$ROOT"/*) ;;
+    *) extra_mount="$PWD" ;;
+esac
+tty_flag=""
+if [ -t 0 ] && [ -t 1 ]; then
+    tty_flag="-t"
+fi
+
+exec docker run --rm -i ${tty_flag:+"$tty_flag"} --privileged --network host --pid host \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /var/run/netns:/var/run/netns \
+    -v "$ROOT:$ROOT" ${extra_mount:+-v "$extra_mount:$extra_mount"} -w "$PWD" \
+    "$CLAB_IMAGE" containerlab "$@"
