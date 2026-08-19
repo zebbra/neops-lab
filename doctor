@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# Preflight for the lab: checks the host the way the make targets will use it,
+# and prints the fix next to each failure. Read-only. Linux and macOS.
+#
+#   make doctor        (or ./doctor)
+#
+# Exit code 1 if anything is marked FAIL; warnings keep exit code 0. Each
+# check corresponds to a bring-up failure seen in practice: ports held by
+# another stack, a docker network overlapping lab-net, an 8 GB Docker Desktop
+# VM, no containerlab, an image that cannot start.
+
+set -u
+cd "$(dirname "$0")"
+
+LAB_SUBNET=${LAB_SUBNET:-172.30.0.0/24}
+LAB_NET=${LAB_NET:-lab-net}
+PORTS=${PORTS:-"8001 3030 3031 8080"}
+MIN_VM_MEM_GIB=${MIN_VM_MEM_GIB:-14}
+MIN_COMPOSE="2.20"
+
+fails=0
+ok()   { printf '  [ ok ] %s\n' "$1"; }
+warn() { printf '  [warn] %s\n' "$1"; [ -n "${2:-}" ] && printf '         -> %s\n' "$2"; }
+fail() { printf '  [FAIL] %s\n' "$1"; [ -n "${2:-}" ] && printf '         -> %s\n' "$2"; fails=$((fails+1)); }
+
+os=$(uname -s); arch=$(uname -m)
+echo "neops-lab doctor — $os $arch, $(pwd)"
+echo
+
+echo "Docker"
+if ! command -v docker >/dev/null 2>&1; then
+    fail "docker CLI not found" "install Docker (Linux: docker-ce; macOS: Docker Desktop or OrbStack)"
+else
+    if ! docker info >/dev/null 2>&1; then
+        fail "docker daemon not reachable" "start Docker (Desktop) / the docker service"
+    else
+        ok "docker $(docker version -f '{{.Server.Version}}' 2>/dev/null) ($(docker info -f '{{.OperatingSystem}}' 2>/dev/null))"
+        host=$(docker context inspect -f '{{(index .Endpoints "docker").Host}}' 2>/dev/null || true)
+        case "$host" in
+            unix://*|"") ok "docker endpoint is a local socket (${host:-default})" ;;
+            *) fail "docker endpoint is remote ($host)" "the lab bind-mounts the repo and needs a local daemon (containerlab container mode, worker mount)" ;;
+        esac
+        cv=$(docker compose version --short 2>/dev/null | sed 's/^v//')
+        if [ -z "$cv" ]; then
+            fail "docker compose v2 plugin not found" "install docker-compose-plugin (>= $MIN_COMPOSE; the Makefile uses 'docker compose wait')"
+        else
+            if printf '%s\n%s\n' "$MIN_COMPOSE" "$cv" | sort -t. -k1,1n -k2,2n -k3,3n | head -1 | grep -qx "$MIN_COMPOSE"; then
+                ok "docker compose $cv (>= $MIN_COMPOSE)"
+            else
+                fail "docker compose $cv is older than $MIN_COMPOSE" "'docker compose wait' (used by local-lab-up) needs >= $MIN_COMPOSE"
+            fi
+        fi
+        mem=$(docker info -f '{{.MemTotal}}' 2>/dev/null || echo 0)
+        gib=$(( mem / 1024 / 1024 / 1024 ))
+        ncpu=$(docker info -f '{{.NCPU}}' 2>/dev/null || echo 0)
+        if [ "$gib" -ge "$MIN_VM_MEM_GIB" ]; then
+            ok "docker has ${gib} GiB RAM, ${ncpu} CPUs available"
+        else
+            hint="the full lab (5 SR Linux + ES + control plane) needs about ${MIN_VM_MEM_GIB} GiB"
+            [ "$os" = "Darwin" ] && hint="$hint — Docker Desktop: Settings > Resources > Memory (default 8 GB is too small), then Apply & restart"
+            fail "docker has only ${gib} GiB RAM (${ncpu} CPUs)" "$hint"
+        fi
+        if [ "$os" = "Darwin" ] && [ "$arch" = "arm64" ]; then
+            if docker run --rm --platform linux/amd64 busybox uname -m >/dev/null 2>&1; then
+                ok "amd64 emulation works (the published quay.io/zebbra images are amd64-only)"
+                warn "on Apple Silicon make sure Docker Desktop's 'Use Rosetta for x86_64/amd64 emulation' is ON" "Settings > General; without it the amd64 CMS/engine/web-client run under QEMU (much slower)"
+            else
+                fail "cannot run amd64 images" "enable Rosetta / QEMU emulation in Docker Desktop (Settings > General)"
+            fi
+        fi
+    fi
+fi
+echo
+
+echo "Repository path"
+root=$(pwd -P)
+case "$root" in
+    *' '*) fail "repo path contains spaces: $root" "container-mode containerlab bind-mounts this path; move the checkout" ;;
+    *) ok "no spaces in $root" ;;
+esac
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if docker run --rm -v "$root:$root" -w "$root" busybox test -f Makefile >/dev/null 2>&1; then
+        ok "repo is visible to containers at the same path (bind mount round-trips)"
+    else
+        hint="on Docker Desktop the checkout must live under a shared path (Settings > Resources > File sharing; default /Users, /Volumes, /private, /tmp)"
+        fail "bind-mounting $root into a container does not show the repo" "$hint"
+    fi
+fi
+echo
+
+echo "containerlab"
+if [ -x ./containerlab ]; then
+    native=""
+    for c in $(type -aP containerlab 2>/dev/null || true); do
+        r=$(cd "$(dirname "$c")" 2>/dev/null && pwd -P)/$(basename "$c")
+        [ "$r" != "$root/containerlab" ] && { native="$c"; break; }
+    done
+    if [ -n "$native" ] && [ "${CLAB_IN_DOCKER:-0}" != "1" ]; then
+        v=$("$native" version 2>/dev/null | sed -n 's/^ *version: *//p' | head -1)
+        ok "native containerlab ${v:-?} at $native (Linux path; ./containerlab exec's it)"
+        if [ "$os" = "Linux" ] && [ -u "$native" ]; then ok "SUID bit set (sudo-less deploy)"; elif [ "$os" = "Linux" ]; then warn "no SUID bit on $native" "see README: usermod -aG clab_admins, chown root:root, chmod 4755 — or run make with sudo"; fi
+    elif [ "$os" = "Darwin" ] || [ "${CLAB_IN_DOCKER:-0}" = "1" ]; then
+        img=${CLAB_IMAGE:-ghcr.io/srl-labs/clab:0.78.2}
+        if docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null 2>&1; then
+            ok "container mode: $img (no native binary on macOS; ./containerlab runs it privileged in the docker VM)"
+        else
+            fail "container mode image $img not available" "docker pull $img (or set CLAB_IMAGE)"
+        fi
+    else
+        fail "no containerlab on PATH" "Linux: install natively (https://containerlab.dev/install/) and set it up sudo-less (README); or CLAB_IN_DOCKER=1 for container mode"
+    fi
+else
+    fail "./containerlab shim missing or not executable" "git checkout ./containerlab; chmod +x containerlab"
+fi
+echo
+
+echo "Host tools"
+if command -v python3 >/dev/null 2>&1; then
+    pv=$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)
+    if python3 - <<'PY' >/dev/null 2>&1
+import importlib.machinery, importlib.util
+for n in ("gen_clab_topology", "gen_device_configs", "run_workflow", "wait_ready", "wait_devices"):
+    l = importlib.machinery.SourceFileLoader(n, n)
+    l.exec_module(importlib.util.module_from_spec(importlib.util.spec_from_loader(n, l)))
+PY
+    then ok "python3 $pv imports the host scripts"
+    else fail "python3 $pv cannot import the host scripts" "python3 >= 3.9 is required (macOS: xcode-select --install, or brew install python)"; fi
+else
+    fail "python3 not found" "macOS: xcode-select --install (or brew install python); Linux: apt/dnf install python3"
+fi
+if command -v openssl >/dev/null 2>&1; then ok "openssl: $(openssl version 2>/dev/null | head -1)"; else fail "openssl not found" "needed by make lab-jwt"; fi
+if command -v uv >/dev/null 2>&1; then ok "uv $(uv --version 2>/dev/null | awk '{print $2}') (dev tooling)"; else warn "uv not found" "only needed for make test/lint/check and the docs (https://docs.astral.sh/uv/)"; fi
+if [ "$os" = "Darwin" ] && ! xcode-select -p >/dev/null 2>&1; then warn "Xcode Command Line Tools not installed" "xcode-select --install (provides /usr/bin/python3, git, make)"; fi
+echo
+
+echo "Ports"
+project=${COMPOSE_PROJECT_NAME:-$(basename "$root")}
+own_ports=$(docker ps --filter "label=com.docker.compose.project=$project" --format '{{.Ports}}' 2>/dev/null | tr ',' '\n' | sed -n 's/.*:\([0-9]*\)->.*/\1/p' | sort -u | tr '\n' ' ')
+for p in $PORTS; do
+    holder=""
+    case " $own_ports " in *" $p "*) ok "port $p is published by this lab's own stack ($project)"; continue;; esac
+    if command -v lsof >/dev/null 2>&1; then
+        holder=$(lsof -nP -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $1"("$2")"}' | sort -u | tr '\n' ' ')
+    elif command -v ss >/dev/null 2>&1; then
+        holder=$(ss -ltnH "sport = :$p" 2>/dev/null | awk '{print $4}' | tr '\n' ' ')
+    fi
+    if [ -n "$holder" ]; then fail "port $p is in use by $holder" "the lab publishes 8001 (CMS), 3030 (engine), 3031 (monitor app), 8080 (web client); stop the other stack"; else ok "port $p free"; fi
+done
+echo
+
+echo "Docker networks vs $LAB_NET ($LAB_SUBNET)"
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    docker network ls -q | xargs docker network inspect -f '{{.Name}}|{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null \
+    | LAB_SUBNET="$LAB_SUBNET" LAB_NET="$LAB_NET" python3 -c '
+import ipaddress, os, sys
+lab = ipaddress.ip_network(os.environ["LAB_SUBNET"]); name = os.environ["LAB_NET"]
+overlaps = []; used16 = set(); pool = ipaddress.ip_network("172.16.0.0/12"); existing = None
+for line in sys.stdin:
+    n, _, subs = line.strip().partition("|")
+    for s in subs.split():
+        try: net = ipaddress.ip_network(s)
+        except ValueError: continue
+        if net.version != 4: continue
+        if n == name:
+            existing = net; continue
+        if net.overlaps(lab): overlaps.append(f"{n} ({net})")
+        if net.subnet_of(pool): used16.add(net.supernet(new_prefix=16) if net.prefixlen >= 16 else net)
+if existing is not None and existing != lab:
+    print(f"FAIL|{name} exists with subnet {existing}, expected {lab}|make local-lab-down (or docker network rm {name})")
+elif existing is not None:
+    print(f"OK|{name} exists with the expected subnet {existing}")
+if overlaps:
+    print("FAIL|" + ", ".join(overlaps) + f" overlap {lab}|remove or reconfigure that network (docker network rm <name> if unused)")
+elif existing is None:
+    print(f"OK|no docker network overlaps {lab}")
+if len(used16) >= 12:
+    print(f"WARN|{len(used16)} of the 16 /16 blocks in docker'"'"'s default pool (172.16/12) are taken|docker network prune removes unused ones; a busy host is why the Makefile pre-creates {name}")
+' | while IFS='|' read -r kind msg fix; do
+        case "$kind" in OK) ok "$msg";; WARN) warn "$msg" "$fix";; FAIL) fail "$msg" "$fix";; esac
+    done
+fi
+echo
+
+echo "Registry"
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if docker manifest inspect quay.io/zebbra/neops-cms-free:develop >/dev/null 2>&1; then
+        ok "quay.io/zebbra is reachable with your credentials"
+    else
+        fail "cannot read quay.io/zebbra/neops-cms-free:develop" "docker login quay.io (the zebbra org is private)"
+    fi
+fi
+echo
+
+if [ "$fails" -gt 0 ]; then
+    echo "$fails check(s) FAILED — fix the items above, then re-run 'make doctor'."
+    exit 1
+fi
+echo "All checks passed. Next: make local-env-init local-lab-up local-lab-discover"
