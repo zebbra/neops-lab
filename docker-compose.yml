@@ -11,7 +11,10 @@ services:
         condition: service_healthy
 
   cms:
-    image: quay.io/zebbra/neops-cms-free:develop
+    # Override via NEOPS_CMS_IMAGE (e.g. a locally-built neops-cms-free:latest);
+    # defaults to the published develop image.
+    image: ${NEOPS_CMS_IMAGE:-quay.io/zebbra/neops-cms-free:develop}
+    pull_policy: ${NEOPS_CMS_PULL_POLICY:-missing}
     environment:
       - DEBUG=True
       - DJANGO_SETTINGS_MODULE=neopsapp.settings
@@ -22,7 +25,13 @@ services:
       - CORS_ORIGIN_ALLOW_ALL=True
       - NEOPS_PLUGINS=neops_auth_static_api_key neops_auth_django neops_permissions_simple
       - DJANGO_ALLOW_ASYNC_UNSAFE=True
-      - AUTH_PROVIDERS_CONFIG_PATH="./auth_providers_with_secret.json"
+      # No quotes: in compose list form they would become part of the value.
+      - AUTH_PROVIDERS_CONFIG_PATH=./auth_providers_with_secret.json
+      # Redis is the CMS's channel layer (GraphQL subscriptions / websocket
+      # pushes to the web client), Django cache and Celery broker, as in the
+      # production compose file and the Helm chart. neops-core configures a
+      # channel layer only when REDIS_URL is set.
+      - REDIS_URL=redis://redis:6379
       # The web client's GraphQL `appSettings.oidcConfig` query reads this file via the CMS resolver
       # (neops/core/schema.py: open(settings.OIDC_CONFIG_PATH)). When the file is missing the field
       # returns null; the web client's Angular bootstrap (APP_INITIALIZER -> OidcSecurityService.checkAuth())
@@ -43,6 +52,8 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     command: >
       bash -c "
         python manage.py migrate &&
@@ -58,14 +69,24 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s # Gives time for migrations to run before checking
+      # Migrations + the ES index build run before the server listens. On a
+      # native Linux host that is well under a minute; under amd64 emulation on
+      # Apple Silicon (the published image is amd64-only) it has been measured
+      # at ~2 minutes on a loaded machine. Failures only start counting after
+      # start_period, so a generous value costs nothing on a fast host.
+      start_period: 150s
 
   workflow_engine:
     # Override via NEOPS_WORKFLOW_ENGINE_IMAGE (e.g. a locally-built
-    # neops-workflow-engine:latest); defaults to the published develop image.
+    # neops-workflow-engine:latest). Defaults to a pinned published tag: the lab
+    # needs the raised per-route body limits (a 15-device discovery result is
+    # rejected with 413 without them) and the engine's
+    # `POST /workflow-definition/publish` route; 0.42.2-beta.3 is the first tag
+    # on develop with both. See README "Image compatibility" before changing
+    # this.
     # `missing` means a local image that is already present is used as-is, with
     # no registry call. Force with NEOPS_WORKFLOW_ENGINE_PULL_POLICY.
-    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:develop}
+    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:0.42.2-beta.3}
     pull_policy: ${NEOPS_WORKFLOW_ENGINE_PULL_POLICY:-missing}
     environment:
       - DEBUG=True
@@ -89,10 +110,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      # Node startup + DB migrations; slower under emulation (see cms above).
+      start_period: 60s
 
   workflow-engine-client:
-    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:develop}
+    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:0.42.2-beta.3}
     pull_policy: ${NEOPS_WORKFLOW_ENGINE_PULL_POLICY:-missing}
     ports:
       - "3031:5173"
@@ -146,9 +168,9 @@ services:
       retries: 5
 
   redis:
-    image: redis:5-alpine
-    networks:
-      - redis-net
+    # Same major as the production compose file / Helm chart. On the default
+    # network like every other service (the CMS reaches it as `redis`).
+    image: redis:7-alpine
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
@@ -170,8 +192,12 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    # The heap is fixed at 2g above (-Xms2g -Xmx2g); 4g leaves headroom for the
+    # JVM's off-heap use and the OS page cache without claiming half a laptop —
+    # on Docker Desktop this limit competes with the 5 SR Linux nodes for the
+    # VM's RAM (see README "Host resources").
     cpus: 2
-    mem_limit: 8g
+    mem_limit: 4g
     volumes:
       - elasticsearch:/usr/share/elasticsearch/data
     healthcheck:
@@ -179,13 +205,14 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+      # A cold ES 8 JVM takes ~60 s to start on a loaded host (longer under
+      # emulation); without a grace period the 5 retries above are used up
+      # before it listens, compose marks it unhealthy and aborts every
+      # dependent service ("dependency elasticsearch failed to start").
+      start_period: 90s
 
 volumes:
   elasticsearch:
     driver: local
   postgres_data:
     driver: local
-
-networks:
-  redis-net:
-    driver: "bridge"

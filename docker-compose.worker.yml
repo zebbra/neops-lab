@@ -46,9 +46,15 @@ services:
     restart: "no"
 
 networks:
+  # The lab management network is created by the Makefile (`make lab-net`,
+  # a prerequisite of every *-up target) with the fixed subnet 172.30.0.0/24
+  # (LAB_SUBNET there and in gen_clab_topology), BEFORE the first `docker
+  # compose up`, and is `external` here so compose only attaches to it. Reason:
+  # compose creates its auto-subnetted networks concurrently, and on a host with
+  # many docker networks the next free /16 in docker's pool can be
+  # 172.30.0.0/16 — which then blocks this /24 with "Pool overlaps". Creating
+  # the fixed network first makes docker's allocator skip it. `make
+  # local-lab-down` / `local-env-prune` remove it again.
   lab-net:
     name: lab-net
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.30.0.0/24
+    external: true
