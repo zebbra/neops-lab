@@ -12,10 +12,10 @@ tags: [operations, reference]
 
 | Target | What it does |
 |---|---|
-| `make local-lab-up` | Depends on `build-docker`. Generates the containerlab topology + device configs from `topology.json`, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `containerlab deploy`s the 15 devices, waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`. |
+| `make local-lab-up` | Depends on `build-docker` and `lab-net`. Generates the containerlab topology + device configs from `topology.json`, refreshes the worker image, brings up the base stack **plus** the worker and `lab_bootstrap` on `lab-net`, waits for workflow registration, `./containerlab deploy --reconfigure`s the 15 devices (re-runnable), waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`. |
 | `make local-lab-discover` | Waits for the discovery function block and for device SSH, then POSTs a workflow execution and polls to a terminal state (15-minute ceiling). Override `DISCOVER_PARAMS` to change targeting. |
 | `make local-lab-logs` | `docker compose logs -f worker lab_bootstrap`. |
-| `make local-lab-down` | `containerlab destroy --cleanup` (removes the devices and `generated/clab-neops-lab/`), then `docker compose down`. Volumes survive. |
+| `make local-lab-down` | `./containerlab destroy --cleanup` (removes the devices and `generated/clab-neops-lab/`), then `docker compose down`, then removes `lab-net`. Volumes survive. |
 
 All four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml`, so they see the worker overlay; the `local-env-*` targets do not.
 
@@ -26,6 +26,18 @@ All four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml`, so 
 | `DISCOVER_PARAMS` | `workflow-execution-parameters/discover-params.json` | Which parameter file `local-lab-discover` sends |
 | `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.1.0` | The function block `wait_ready` blocks on |
 | `CLAB_TOPO` | `generated/neops-lab.clab.json` | The generated containerlab topology |
+| `CONTAINERLAB` | `./containerlab` | The containerlab launcher (native binary on Linux, container mode on macOS) |
+| `CLAB_IMAGE` (env) | `ghcr.io/srl-labs/clab:0.78.2` | Image used by container mode |
+| `WAIT_READY_TIMEOUT` | `180` | Seconds `wait_ready` waits for an online worker |
+| `WAIT_DEVICES_TIMEOUT` | `240` | Seconds `wait_devices` waits for every device's SSH |
+| `LAB_NET` / `LAB_SUBNET` | `lab-net` / `172.30.0.0/24` | The lab network the Makefile creates (must match `gen_clab_topology`; a test cross-checks) |
+| `SDK_DIR` | `../neops-worker-sdk-py` | Checkout `build-worker-image` builds from |
+
+These are make variables / environment variables — the Makefile does **not** read `.env` (only docker compose does):
+
+```bash
+make local-lab-up WAIT_READY_TIMEOUT=600 WAIT_DEVICES_TIMEOUT=600
+```
 
 ```bash
 make local-lab-discover \
@@ -36,11 +48,14 @@ make local-lab-discover \
 
 | Target | What it does |
 |---|---|
-| `make lab-jwt` | Mints `cms/jwt/{private,public}.pem` with `openssl` if absent. Idempotent. A prerequisite of both `local-env-init` and `local-env-up`. |
-| `make local-env-init` | One-time per environment: pull + start the base stack, mint the CMS API key into `cms_api_key.env`, run `apply_cms_config`, then force-recreate the engine so it picks up the token. |
+| `make doctor` | Host preflight (`./doctor`): docker/compose versions, RAM/CPUs docker has, amd64 emulation on Apple Silicon, repo path + bind-mount round-trip, containerlab mode, `python3`/`openssl`, free ports, docker networks overlapping `lab-net`, Quay access. Read-only; prints the fix per failure. |
+| `make images-check` | The configured worker image carries `/app/neops/fb` and can start; the engine has the publish API and the raised body limits. Nothing is deployed. |
+| `make lab-jwt` | Mints `cms/jwt/{private,public}.pem` with `openssl genpkey` if absent. Idempotent. A prerequisite of both `local-env-init` and `local-env-up`. |
+| `make lab-net` | Creates the `lab-net` docker network with `LAB_SUBNET` if absent; refuses one with a different subnet. A prerequisite of every `*-up` target — see [Architecture → Networks](../10-concepts/10-architecture.md#networks). |
+| `make local-env-init` | One-time per environment: pull + start the base stack, mint the CMS API key into `cms_api_key.env` (fails fast on an empty key), run `apply_cms_config`, then force-recreate the engine so it picks up the token. |
 | `make local-env-up` | Start the base stack again later. Fails with a clear message if `cms_api_key.env` is missing. |
 | `make local-env-down` | `docker compose down` — stops the base stack, keeps the volumes. |
-| `make local-env-prune` | `docker compose down -v` — the true reset; drops the Elasticsearch and Postgres volumes. |
+| `make local-env-prune` | `docker compose down -v` — the true reset; drops the Elasticsearch and Postgres volumes and `lab-net`. |
 | `make apply-cms-config` | Runs `./apply_cms_config` on its own. Idempotent, and worth re-running after a CMS restart (see below). |
 
 !!! warning "Re-run `apply-cms-config` after a CMS restart"
@@ -63,6 +78,7 @@ If you reorder anything in that script, read its header comment first.
 | Target | What it does |
 |---|---|
 | `make build-docker` | Builds `neops-lab-frr:latest` from `devices/frr/` and `neops-lab-bootstrap:latest` from `bootstrap/`. Local tags only — nothing is pushed. A prerequisite of `local-lab-up`. |
+| `make build-worker-image` | Builds `neops-worker-sdk:latest` from `SDK_DIR` (a `neops-worker-sdk-py` checkout that carries the discovery function block), for `NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest`. Native arch — arm64 on Apple Silicon. |
 
 See [Images](20-images.md).
 
@@ -73,8 +89,10 @@ See [Images](20-images.md).
 | `make lint` | `ruff format --check .` then `ruff check .` |
 | `make format` | `ruff format .` then `ruff check --fix .` |
 | `make typeCheck` | `pyrefly check` |
-| `make test` | `pytest tests` — the generator unit tests |
-| `make check` | `lint typeCheck test` — the one to run before pushing |
+| `make test` | `pytest tests` — the generator unit tests + repo invariants (`lab-net` subnet, Python-3.9 rule) |
+| `make shellcheck-syntax` | `bash -n` over `apply_cms_config`, `containerlab`, `doctor` |
+| `make py39-check` | Imports the five host scripts under Python 3.9 (what a stock macOS ships) via `uv run --python 3.9` |
+| `make check` | `lint typeCheck test shellcheck-syntax py39-check` — the one to run before pushing |
 
 ## Documentation
 

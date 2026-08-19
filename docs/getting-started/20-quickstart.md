@@ -10,9 +10,22 @@ tags: [tutorial]
 
 !!! warning "Do not run this casually"
     `make local-lab-up` builds two images, pulls the whole NeOps stack and
-    deploys 15 device containers. The SR Linux nodes alone want a few GB of
+    deploys 15 device containers. The SR Linux nodes alone want several GB of
     RAM, and the first run takes a couple of minutes. Make sure you have been
-    through [Prerequisites](10-prerequisites.md).
+    through [Prerequisites](10-prerequisites.md) — and run `make doctor`
+    first; it checks the host the way these targets will use it.
+
+## 0. Preflight and images
+
+```bash
+make doctor          # host: docker/compose, RAM, ports, subnet, containerlab mode, python, quay
+make images-check    # the configured worker/engine images can actually run the lab
+```
+
+`images-check` matters today: no published worker image carries the discovery
+function block yet, so you need `NEOPS_WORKER_SDK_IMAGE` pointed at a local
+build (`make build-worker-image SDK_DIR=../neops-worker-sdk-py`). See
+[Images → Image compatibility](../20-operations/20-images.md#image-compatibility).
 
 ## 1. Mint the CMS keypair
 
@@ -20,9 +33,9 @@ tags: [tutorial]
 make lab-jwt
 ```
 
-Writes `cms/jwt/{private,public}.pem` with `openssl` if they are not already there. The CMS mounts them read-only and refuses to start without them. Idempotent — an existing keypair is left alone.
+Writes `cms/jwt/{private,public}.pem` with `openssl genpkey` if they are not already there. The CMS mounts them read-only and refuses to start without them. Idempotent — an existing keypair is left alone.
 
-You rarely run this directly: `local-env-init` depends on it.
+You rarely run this directly: `local-env-init` depends on it (and on `lab-net`, which creates the `172.30.0.0/24` lab network *before* the first `docker compose up` — see [Architecture → Networks](../10-concepts/10-architecture.md#networks) for why the order matters).
 
 ## 2. Bring up the control plane
 
@@ -33,8 +46,8 @@ make local-env-init
 This is the one-time-per-environment step. In order, it:
 
 1. `touch cms_api_key.env` — the engine's `env_file` must exist before compose reads it.
-2. `docker compose pull` then `docker compose up -d` — the base stack (`docker-compose.yml`): CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis. A `wait_health` service makes `up -d` block until CMS, engine and web client report healthy.
-3. Mints a CMS API key via `manage.py generate_api_key` and writes it into `cms_api_key.env`.
+2. `docker compose pull` then `docker compose up -d` — the base stack (`docker-compose.yml`): CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis (the CMS's channel layer and cache). A `wait_health` service makes `up -d` block until CMS, engine and web client report healthy.
+3. Resolves the `neops` user's id, mints a CMS API key via `manage.py generate_api_key` and writes it into `cms_api_key.env` (an empty key fails here, not later).
 4. Runs `./apply_cms_config` — grants the `neops` user a full-permission role (`lab-admin`, `default_permission=7`) and configures the `Global` scope's columns, drill-down and dashboard.
 5. `docker compose up -d --force-recreate workflow_engine` — `env_file` changes do not trigger a recreate on their own, so the engine is restarted to pick up the new token.
 
@@ -54,13 +67,14 @@ make local-lab-up
 The long one. It depends on `build-docker`, then:
 
 1. **`./gen_clab_topology`** — renders `generated/neops-lab.clab.json`, the per-device FRR/SR&nbsp;Linux configs, and three of the four discovery parameter files from [`topology.json`](../10-concepts/20-topology.md).
-2. **`docker compose up -d`** with the worker overlay — adds the `worker` and the one-shot `lab_bootstrap` containers and creates the `lab-net` bridge (`172.30.0.0/24`) that containerlab attaches the devices to.
-3. **`docker compose wait lab_bootstrap`** — blocks until the one-shot container that POSTs every `workflows/*.yaml` to the engine has *exited*, and propagates its exit code.
-4. **`containerlab deploy`** — the 15 devices with real point-to-point links. Deployed early on purpose: SR Linux boots slowly, so it overlaps with the waits below.
-5. **`./wait_ready fb.base.neops.io/global_discover_network:0.1.0`** — the worker registers its function blocks with the engine *asynchronously* after its container starts; this polls the engine's per-function-block worker registry until an online worker exists.
-6. **`docker compose exec -T worker python3 lab/wait_devices`** — polls TCP 22 on every device's management IP, **from inside the lab network**.
+2. **`docker compose pull worker`** — refreshes the worker image (the base-stack pull in step 2 above never sees it).
+3. **`docker compose up -d`** with the worker overlay — adds the `worker` and the one-shot `lab_bootstrap` containers, both attached to the `lab-net` bridge (`172.30.0.0/24`) that `make lab-net` created and that containerlab attaches the devices to.
+4. **`docker compose wait lab_bootstrap`** — blocks until the one-shot container that publishes every `workflows/*.yaml` to the engine has *exited*, and propagates its exit code (`up -d` re-runs it if it had already exited, so re-runs re-publish idempotently).
+5. **`./containerlab deploy --reconfigure`** — the 15 devices with real point-to-point links. Deployed early on purpose: SR Linux boots slowly, so it overlaps with the waits below. `--reconfigure` makes an interrupted or repeated `local-lab-up` redeploy instead of refusing an existing lab.
+6. **`./wait_ready fb.base.neops.io/global_discover_network:0.1.0`** — the worker registers its function blocks with the engine *asynchronously* after its container starts; this polls the engine's per-function-block worker registry until an online worker exists (`WAIT_READY_TIMEOUT`, default 180 s).
+7. **`docker compose exec -T worker python3 lab/wait_devices`** — polls TCP 22 on every device's management IP, **from inside the lab network** (`WAIT_DEVICES_TIMEOUT`, default 240 s).
 
-Each of those waits exists because of a real, reproduced failure. See [Troubleshooting](../20-operations/40-troubleshooting.md) for the symptom each one prevents, and [The `/app/lab` mount](../10-concepts/40-container-paths.md) for why step 6 has a `lab/` prefix that host commands do not.
+Each of those waits exists because of a real, reproduced failure. See [Troubleshooting](../20-operations/40-troubleshooting.md) for the symptom each one prevents, and [The `/app/lab` mount](../10-concepts/40-container-paths.md) for why step 7 has a `lab/` prefix that host commands do not. On a slow first run raise the budgets — `make local-lab-up WAIT_READY_TIMEOUT=600 WAIT_DEVICES_TIMEOUT=600` — rather than removing a wait.
 
 When it finishes you get a banner:
 
@@ -94,8 +108,8 @@ Runs the discovery workflow and waits for a terminal state. Covered in detail on
 ## Shutting down
 
 ```bash
-make local-lab-down     # destroy the devices, stop the stack, KEEP the volumes
-make local-env-prune    # docker compose down -v — the true reset, drops ES + Postgres
+make local-lab-down     # destroy the devices, stop the stack, remove lab-net, KEEP the volumes
+make local-env-prune    # docker compose down -v — the true reset, drops ES + Postgres (+ lab-net)
 ```
 
 Full reset from scratch:

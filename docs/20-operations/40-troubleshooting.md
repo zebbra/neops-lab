@@ -11,14 +11,30 @@ tags: [operations, debugging]
 ## Start here
 
 ```bash
+make doctor                       # host preflight — ports, RAM, subnet overlap, containerlab mode, quay
+make images-check                 # do the configured worker/engine images carry what the lab needs?
 export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 docker compose ps                 # what is running, what exited
 make local-lab-logs               # worker + lab_bootstrap, followed
 docker compose logs cms           # CMS startup crashes land here
-containerlab inspect -t generated/neops-lab.clab.json
+./containerlab inspect -t generated/neops-lab.clab.json
 ```
 
-Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the `worker` or `lab_bootstrap` services — the base compose file does not declare them. The make targets set it themselves.
+Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the `worker` or `lab_bootstrap` services — the base compose file does not declare them. The make targets set it themselves. Note that a hand-run `docker compose up` also needs the `lab-net` network to exist (`make lab-net`) — it is external to compose.
+
+---
+
+## `network lab-net declared as external, but could not be found` / `Pool overlaps with other one on this address space`
+
+**Where:** `docker compose up`, either from a make target or by hand.
+
+**Cause (external, could not be found):** `lab-net` is created by the Makefile (`make lab-net`, a prerequisite of every `*-up` target), not by compose. A hand-run `docker compose up` after `local-lab-down`/`local-env-prune` removed it hits this.
+
+**Fix:** `make lab-net`, or use the make targets.
+
+**Cause (Pool overlaps):** another docker network already covers `172.30.0.0/24`. On a host with many compose projects docker's auto-assigned `172.x.0.0/16` blocks run out and `172.30.0.0/16` gets handed to some other project's `default` network — which is exactly why the Makefile creates `lab-net` with its fixed subnet *before* compose creates anything. If it happens anyway, `make doctor` names the overlapping network; remove it if it is unused (`docker network rm <name>` — compose recreates such networks on the next `up` of that project) or `docker network prune`.
+
+**Cause (`lab-net exists with subnet …, expected 172.30.0.0/24`):** a stale `lab-net` from an older checkout. `make local-lab-down` (or `docker network rm lab-net`) and retry.
 
 ---
 
@@ -36,7 +52,7 @@ Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the 
 docker compose logs lab_bootstrap
 ```
 
-A `409` or an "already exists" body is treated as success, so a real failure here means the engine rejected the definition.
+`register.py` publishes through `POST /workflow-definition/publish`: `200 unchanged` is the idempotent re-run, **`409` is a real conflict** — the version in the YAML already exists with *different* content, so bump `patchVersion`/`minorVersion` (the log prints the engine's `suggestedVersion`); `422` means the bump is smaller than the change warrants. A `404` on the publish route means an engine older than `0.42.2-beta.3`; `register.py` then falls back to the legacy route automatically.
 
 ---
 
@@ -48,13 +64,27 @@ A `409` or an "already exists" body is treated as success, so a real failure her
 
 1. **You raced the worker.** The worker registers its function blocks with the engine *asynchronously* after its container starts. `make local-lab-up` and `make local-lab-discover` both run `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` first, which polls the engine's per-function-block worker registry until an online worker exists. Run the make target rather than `run_workflow` directly.
 
-2. **The image does not carry the block.** `neops/fb` ships *inside* the published `neops-worker-sdk` image; it is not mounted from this repo. If you pinned `NEOPS_WORKER_SDK_IMAGE` at a local or older build, check it:
+2. **The image does not carry the block.** `neops/fb` ships *inside* the worker image; it is not mounted from this repo. As of August 2026 **no published `neops-worker-sdk` tag carries it** (and the `develop` image cannot even start — it exits during `uv run`'s project rebuild with `Readme file does not exist`). Check with `make images-check`, and build one locally: `make build-worker-image SDK_DIR=../neops-worker-sdk-py`, then `NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest make local-lab-up`.
 
     ```bash
-    docker compose exec worker ls /app/neops/fb
+    make images-check
+    docker compose ps worker                    # Exited (1)? it is crash-looping
+    docker compose logs --tail 30 worker
     ```
 
-See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10-concepts/40-container-paths.md).
+    `wait_ready` cannot tell these apart from "the worker is still starting" — the engine only learns about a function block when a worker registers it — which is why it prints this list of causes when it times out.
+
+See [Discovery](../10-concepts/30-discovery.md), [Images → Image compatibility](20-images.md#image-compatibility) and [The `/app/lab` mount](../10-concepts/40-container-paths.md).
+
+---
+
+## The execution stays `running`, then times out; the worker log says `413 Payload Too Large`
+
+**Where:** `make local-lab-discover` after a run that, in the worker log, discovered every device fine (`Generated 448 db update(s)`) and then `Failed to push job result … (413)`.
+
+**Cause:** the engine image predates the raised per-route body limits (anything older than `0.42.2-beta.3`, including the `develop` tag on quay as of mid-2026). Discovery returns a few hundred `Interface` rows in one job result and the engine's default body limit rejects it; the engine re-dispatches the job and the same happens again.
+
+**Fix:** run the pinned default (`quay.io/zebbra/neops-workflow-engine:0.42.2-beta.3`) — do not override `NEOPS_WORKFLOW_ENGINE_IMAGE` with an older tag. `make images-check` reports the engine's status.
 
 ---
 
@@ -80,11 +110,11 @@ See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10
     This is also why the command carries a `lab/` prefix: the repo is mounted
     at `/app/lab` inside the worker.
 
-**Fix:** give it more time (`./wait_devices --timeout 600` from inside the worker), or check the device itself:
+**Fix:** give it more time — `make local-lab-up WAIT_DEVICES_TIMEOUT=600` (a Docker Desktop VM booting 5 SR Linux nodes can genuinely need it) — or check the device itself:
 
 ```bash
 docker logs spine-01
-containerlab inspect -t generated/neops-lab.clab.json
+./containerlab inspect -t generated/neops-lab.clab.json
 ```
 
 !!! warning "Never replace a wait with a `sleep`"
@@ -151,16 +181,22 @@ make apply-cms-config
 
 ---
 
-## `containerlab deploy` says it requires root privileges
+## `containerlab deploy` says it requires root privileges (Linux)
 
-**Cause:** containerlab is not set up for sudo-less operation. The make targets never call `sudo`.
+**Cause:** the native containerlab is not set up for sudo-less operation. The make targets never call `sudo`.
 
-**Fix:** see [Prerequisites](../getting-started/10-prerequisites.md#containerlab-and-sudo-less-operation), then confirm with the two-node probe:
+**Fix:** see [Prerequisites](../getting-started/10-prerequisites.md#linux-sudo-less-operation), then confirm with the two-node probe:
 
 ```bash
-containerlab deploy  -t clab/probe.clab.yml
-containerlab destroy -t clab/probe.clab.yml
+./containerlab deploy  -t clab/probe.clab.yml
+./containerlab destroy -t clab/probe.clab.yml --cleanup
 ```
+
+---
+
+## `containerlab: command not found` (Linux) / container mode questions (macOS)
+
+Everything calls `./containerlab`, the repo's launcher. On **Linux** it exec's a native binary and fails like this when there is none — install containerlab natively ([Prerequisites](../getting-started/10-prerequisites.md#containerlab-one-command-on-both-hosts)); `CLAB_IN_DOCKER=1` forces container mode if you really want it (root-owned files under `generated/`, SELinux `:z` caveats). On **macOS** it always uses container mode (`ghcr.io/srl-labs/clab`, pinned via `CLAB_IMAGE`). If a deploy fails with an empty `.iface` bind or "topology file not found" on a Mac, the checkout is outside Docker Desktop's shared paths or its path contains spaces — `make doctor` catches both. Device access on a Mac is `docker exec <node>`; the host has no route to `172.30.0.0/24` and containerlab's `/etc/hosts`/ssh-config entries stay inside the ephemeral clab container.
 
 ---
 
@@ -184,4 +220,4 @@ make local-lab-down local-env-prune
 make local-env-init && make local-lab-up && make local-lab-discover
 ```
 
-`local-lab-down` tolerates there being no deployed lab (the `containerlab destroy` line is prefixed with `-`, so `make` continues on failure). `local-env-prune` drops the Elasticsearch and Postgres volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.
+`local-lab-down` tolerates there being no deployed lab (the `./containerlab destroy` line is prefixed with `-`, so `make` continues on failure) and removes `lab-net`. `local-env-prune` drops the Elasticsearch and Postgres volumes (and `lab-net`) — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.

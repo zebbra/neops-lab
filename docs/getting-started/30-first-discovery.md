@@ -16,8 +16,8 @@ make local-lab-discover
 
 The target does three things:
 
-1. `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` — confirm an online worker is registered for the discovery function block.
-2. `docker compose exec -T worker python3 lab/wait_devices` — confirm every device in `topology.json` accepts SSH.
+1. `./wait_ready --timeout $(WAIT_READY_TIMEOUT) fb.base.neops.io/global_discover_network:0.1.0` — confirm an online worker is registered for the discovery function block.
+2. `docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)` — confirm every device in `topology.json` accepts SSH.
 3. `./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @workflow-execution-parameters/discover-params.json`
 
 `run_workflow` POSTs to `/workflow-execution`, prints the execution UUID, then polls until the execution reaches a terminal state:

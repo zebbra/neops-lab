@@ -49,20 +49,47 @@ Interface *descriptions* are not baked into the image: containerlab `exec`s `dev
 
 ### `neops-lab-bootstrap`
 
-A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, POSTs every `workflows/*.yaml` to the engine's `/workflow-definition`, and exits. `docker compose wait lab_bootstrap` in `local-lab-up` blocks on that exit and propagates the code.
+A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, publishes every `workflows/*.yaml` to the engine through `POST /workflow-definition/publish`, and exits. `docker compose wait lab_bootstrap` in `local-lab-up` blocks on that exit and propagates the code.
+
+!!! info "Publish semantics — 200 is idempotent, 409 is a real conflict"
+    Under the engine's publish API a `200 unchanged` means this exact document
+    is already published at the version it declares — the idempotent re-run.
+    A **409** means that version already exists *with different content*:
+    someone edited the YAML without bumping its version. `register.py` treats
+    that as a hard failure and prints the engine's `suggestedVersion`, because
+    skipping it would silently run the old definition. A **422** means the
+    bump is smaller than the change warrants. Engines older than
+    `0.42.2-beta.3` answer 404 for the publish route; `register.py` then falls
+    back to the legacy `POST /workflow-definition`, where 409 *is* the
+    idempotent case.
 
 ## Pulled — the NeOps control plane
 
 | Service | Default image | Override with |
 |---|---|---|
-| `cms` | `quay.io/zebbra/neops-cms-free:develop` | — (not overridable) |
-| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine:develop` | `NEOPS_WORKFLOW_ENGINE_IMAGE` |
+| `cms` | `quay.io/zebbra/neops-cms-free:develop` | `NEOPS_CMS_IMAGE` |
+| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine:0.42.2-beta.3` (**pinned**) | `NEOPS_WORKFLOW_ENGINE_IMAGE` |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
-| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | `NEOPS_WORKER_SDK_IMAGE` |
+| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` (**does not run the lab today** — see below) | `NEOPS_WORKER_SDK_IMAGE` |
 
-Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:5-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
+Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:7-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices, and `ghcr.io/srl-labs/clab` for container-mode containerlab on macOS.
 
-`quay.io/zebbra` is private — `docker login quay.io` first.
+`quay.io/zebbra` is private — `docker login quay.io` first. All four `quay.io/zebbra` images are amd64-only; on Apple Silicon they run under Rosetta.
+
+## Image compatibility
+
+The lab needs specific features from two of the published images. **`make images-check`** verifies the images you are configured to run — without deploying anything — and the defaults are chosen accordingly:
+
+| Image | Needs | Default |
+|---|---|---|
+| **Workflow engine** | the raised per-route body limits — discovery emits a few hundred `Interface` rows in one job result and older engines reject it with **413**; and `POST /workflow-definition/publish` (the legacy `POST /workflow-definition` was removed from the engine on 2026-07-30 — `register.py` still falls back to it on 404) | `0.42.2-beta.3`, the first published tag with both. Quay's `develop` tag has lagged the branch by weeks, which is why the lab does not float on it. |
+| **Worker** | `/app/neops/fb` with `fb.base.neops.io/global_discover_network:0.1.0`, and an image that can start | **No published tag qualifies as of August 2026.** The discovery block is only on unmerged `neops-worker-sdk-py` branches and the current `develop` image cannot start (`uv run` at container start rebuilds the project and fails on a missing `README.md`). Build one from a checkout that has it: `make build-worker-image SDK_DIR=../neops-worker-sdk-py`, then `NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest`. |
+| CMS, web client | — | `develop` works as published. |
+
+!!! warning "The worker image is refreshed by `local-lab-up`, not by `local-env-init`"
+    `local-env-init` / `local-env-up` pull with the *base* compose file, which
+    does not know the worker. `local-lab-up` runs `docker compose pull worker`
+    (with `--ignore-pull-failures`, so a local tag is a warning) before `up`.
 
 ## Running a locally-built image
 
@@ -75,18 +102,18 @@ make local-lab-up
 
 Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}`. `missing` means an image already present locally is used as-is, with no registry call — which is exactly what makes a local tag work.
 
-!!! warning "`docker compose pull` fails on a local tag"
+!!! note "`docker compose pull` warns on a local tag"
     A tag with no registry host resolves as `docker.io/library/…`, which does
-    not exist. The explicit `docker compose pull` inside `make local-env-init`
-    and `make local-env-up` therefore fails. Run that step yourself with
-    `--ignore-pull-failures` when you override an image this way; `up -d` is
-    unaffected.
+    not exist. The explicit `docker compose pull` steps inside
+    `local-env-init`, `local-env-up` and `local-lab-up` all run with
+    `--ignore-pull-failures`, so an override like this is a warning, not an
+    error; `up -d` uses the local image (`pull_policy: missing`).
 
 ### Why you would
 
-- **Worker SDK** — the most common case. The lab depends on `fb.base.neops.io/global_discover_network:0.1.0` shipping inside the worker image; point `NEOPS_WORKER_SDK_IMAGE` at a local build to exercise a function-block change before it is released.
-- **Workflow engine** — discovery emits a few hundred `Interface` rows in one job result, so it needs an engine with the large-payload and reference-resolution fixes. If the published `develop` tag lags, run a local build.
-- **Web client** — to preview UI changes against a populated CMS.
+- **Worker SDK** — required today (see above), and the usual way to exercise a function-block change before it is released. `make build-worker-image` builds it from a local checkout.
+- **Workflow engine** — to try an engine change before it is tagged; the pinned default already has the large-payload fix and the publish API.
+- **CMS / web client** — to preview backend or UI changes against a populated CMS.
 
 ## Verifying what you are running
 

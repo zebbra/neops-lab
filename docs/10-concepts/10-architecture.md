@@ -15,7 +15,7 @@ The lab is declared in two files:
 | File | Declares |
 |---|---|
 | `docker-compose.yml` | The **base stack**: CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis, plus a `wait_health` helper |
-| `docker-compose.worker.yml` | The **worker overlay**: the `worker`, the one-shot `lab_bootstrap`, and the `lab-net` network definition |
+| `docker-compose.worker.yml` | The **worker overlay**: the `worker`, the one-shot `lab_bootstrap`, and the (external) `lab-net` network they attach to |
 
 They are combined through docker compose's `COMPOSE_FILE` environment variable, exported only for the lab targets in the `Makefile`:
 
@@ -39,18 +39,18 @@ The scoping is deliberate: `local-env-*` targets keep using the base `docker-com
 
 | Service | Image | Published port | Notes |
 |---|---|---|---|
-| `cms` | `quay.io/zebbra/neops-cms-free:develop` | `8001` → 8000 | Django CMS + GraphQL. Runs `migrate`, creates the `neops` superuser, builds the ES index, then `runserver` |
-| `workflow_engine` | `quay.io/zebbra/neops-workflow-engine:develop` | `3030` | Reads the CMS token from `cms_api_key.env` |
+| `cms` | `quay.io/zebbra/neops-cms-free:develop` | `8001` → 8000 | Django CMS + GraphQL. Runs `migrate`, creates the `neops` superuser, builds the ES index, then `runserver`. `REDIS_URL` points it at `redis` |
+| `workflow_engine` | `quay.io/zebbra/neops-workflow-engine:0.42.2-beta.3` (pinned) | `3030` | Reads the CMS token from `cms_api_key.env` |
 | `workflow-engine-client` | same image as the engine | `3031` → 5173 | The **monitor app**, run in dev mode (`npm install && npm run dev`) out of `/app/rest/monitor-app` |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `8080` | `FRONTEND_*` env vars are browser-relative, so they point at host ports |
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | — | On **both** networks; polls the engine's blackboard and drives the devices |
-| `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: POSTs every `workflows/*.yaml` to the engine, then exits |
+| `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: publishes every `workflows/*.yaml` to the engine (`POST /workflow-definition/publish`), then exits |
 | `postgres` | `postgres:15-alpine` | — | Volume `postgres_data` |
-| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.9.2` | — | Volume `elasticsearch`; 2 CPU / 8 GB limits |
-| `redis` | `redis:5-alpine` | — | On its own `redis-net` bridge |
+| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.9.2` | — | Volume `elasticsearch`; 2 CPU / 4 GB limits (2 GB heap) |
+| `redis` | `redis:7-alpine` | — | The CMS's channel layer (GraphQL subscriptions), Django cache and Celery broker — as in production |
 | `wait_health` | `busybox` | — | Depends on CMS + engine + web client being *healthy*, so `up -d` blocks until they are |
 
-The three overridable images (`workflow_engine`/`workflow-engine-client`, `web_client`, `worker`) each read a `NEOPS_*_IMAGE` variable and set `pull_policy: missing` — see [Images](../20-operations/20-images.md).
+Every published image (`cms`, `workflow_engine`/`workflow-engine-client`, `web_client`, `worker`) reads a `NEOPS_*_IMAGE` variable and sets `pull_policy: missing` — see [Images](../20-operations/20-images.md), including why the engine is pinned and why the worker currently needs a local build.
 
 ## Networks
 
@@ -75,15 +75,25 @@ graph LR
   worker -- "URL_BLACKBOARD<br/>http://workflow_engine:3030" --> engine
   worker -- "SSH 22" --> dev1
   worker -- "SSH 22" --> dev2
-  boot -- "POST /workflow-definition" --> engine
+  boot -- "POST /workflow-definition/publish" --> engine
 ```
 
-`lab-net` is declared by `docker-compose.worker.yml` with an explicit IPAM subnet of `172.30.0.0/24`, and containerlab's topology sets `mgmt.network: lab-net` with the same subnet. That is the join: compose creates the bridge, containerlab attaches the devices to it at their fixed `mgmt-ipv4`, and the worker — a member of both networks — can reach the engine by service name *and* the devices by IP.
+`lab-net` is created by the **Makefile** — `make lab-net`, a prerequisite of every `*-up` target — with the fixed subnet `172.30.0.0/24` (`LAB_SUBNET`, single-sourced with `gen_clab_topology` and cross-checked by a test), and `docker-compose.worker.yml` declares it `external: true`. containerlab's topology sets `mgmt.network: lab-net` with the same subnet. That is the join: the Makefile creates the bridge, compose attaches the worker and the bootstrap container, containerlab attaches the devices at their fixed `mgmt-ipv4`, and the worker — a member of both networks — reaches the engine by service name *and* the devices by IP.
+
+!!! note "Why the Makefile creates it, and why before compose"
+    Compose creates its auto-subnetted networks (`default`) concurrently. On a
+    host with many docker networks the next free `/16` in docker's pool can be
+    `172.30.0.0/16` — which then blocks the lab's `/24` with "Pool overlaps
+    with other one on this address space". Creating the fixed network *first*
+    makes docker's allocator skip it. `local-lab-down` and `local-env-prune`
+    remove it again, and `make lab-net` refuses a stale `lab-net` with a
+    different subnet.
 
 !!! note "Ordering matters"
     `make local-lab-up` runs `docker compose up -d` **before**
-    `containerlab deploy`, because compose is what creates `lab-net`. Deploying
-    containerlab first would fail to find the network.
+    `./containerlab deploy` so that workflow registration and the worker's
+    start overlap the slow SR Linux boot; `lab-net` itself already exists by
+    then.
 
 ## The devices
 

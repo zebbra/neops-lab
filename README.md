@@ -42,36 +42,88 @@ repo's invariants.
 
 ## Prerequisites
 
-- **Docker** + docker compose.
-- **containerlab** (Linux host — it wires real veths via network namespaces).
-  Sudo-less operation is required so the make targets can `containerlab deploy`
-  without a password:
-  ```bash
-  sudo usermod -aG clab_admins $USER          # then re-login for the group to apply
-  sudo chown root:root "$(command -v containerlab)"
-  sudo chmod 4755 "$(command -v containerlab)" # SUID -> -rwsr-xr-x
-  ```
-  Verify: `ls -l $(command -v containerlab)` shows the `s` bit, and
-  `containerlab deploy -t clab/probe.clab.yml` (a 2-node probe) stands up
-  without the "requires root privileges" error (`containerlab destroy -t
-  clab/probe.clab.yml` to clean up).
+Supported hosts: **Linux** (native containerlab) and **macOS** (Docker Desktop or
+OrbStack; containerlab runs in a container). Run the preflight first — it checks
+everything below and prints the fix next to each failure:
+
+```bash
+make doctor
+```
+
+- **Docker** + `docker compose` **≥ 2.20** (`docker compose wait` is used).
+  `quay.io/zebbra` is private: `docker login quay.io`.
+- **containerlab**, through the repo's `./containerlab` launcher — the Makefile
+  and every command in the docs use it, so it is one command on both OSes:
+  - **Linux:** install containerlab natively
+    ([containerlab.dev/install](https://containerlab.dev/install/)); `./containerlab`
+    exec's it unchanged. Sudo-less operation is required so the make targets can
+    deploy without a password:
+    ```bash
+    sudo usermod -aG clab_admins $USER          # then re-login for the group to apply
+    sudo chown root:root "$(command -v containerlab)"
+    sudo chmod 4755 "$(command -v containerlab)" # SUID -> -rwsr-xr-x
+    ```
+  - **macOS:** nothing to install. There is no containerlab binary for macOS
+    (it needs Linux netlink + network namespaces); `./containerlab` runs the
+    official `ghcr.io/srl-labs/clab` image privileged inside the Docker Desktop
+    / OrbStack Linux VM, which is how containerlab documents running there.
+    Pin a different version with `CLAB_IMAGE=ghcr.io/srl-labs/clab:<version>`.
+  - Verify either way with the 2-node probe:
+    `./containerlab deploy -t clab/probe.clab.yml` stands up without a
+    "requires root privileges" error; `./containerlab destroy -t clab/probe.clab.yml --cleanup`.
 - **`openssl`** — `make lab-jwt` mints the dev RSA keypair under `cms/jwt/` that
   the CMS image requires for RS256 JWT issuance. Without it the CMS crashes at
-  startup (`token_service check_keys`) and nothing else comes up. It is chained
-  into `make local-env-init`, and is idempotent, so you rarely run it directly.
-  The keypair is git-ignored: it is a throwaway lab credential, not a secret.
-- **`uv`** — only for `make test` / `make lint`; the lab itself needs nothing
-  but `python3` (all host scripts are stdlib-only).
+  startup (`token_service check_keys`) and nothing else comes up. Chained into
+  `make local-env-init`, idempotent. Both OpenSSL 3 and the LibreSSL a stock
+  macOS ships work. The keypair is git-ignored: a throwaway lab credential.
+- **`python3`** ≥ 3.9 — the lab itself needs nothing else (all host scripts are
+  stdlib-only and import under the `/usr/bin/python3` a stock macOS ships).
+- **`uv`** — only for `make test` / `make lint` / `make check` and the docs.
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
-- **A workflow-engine image with the large-payload + reference-resolution fixes.**
-  Discovery emits a few hundred `Interface` rows in one job result. To run a
-  locally-built engine instead of the published `develop` image, set
-  `NEOPS_WORKFLOW_ENGINE_IMAGE` (e.g. `export NEOPS_WORKFLOW_ENGINE_IMAGE=neops-workflow-engine:latest`)
-  before `make local-lab-up`. Unset, it defaults to the published engine.
-  `NEOPS_WEB_CLIENT_IMAGE` and `NEOPS_WORKER_SDK_IMAGE` work the same way — see
-  `.env.example`.
-- Host resources: the 5 SR Linux nodes are RAM/CPU-hungry (budget a few GB) and
-  boot slower than FRR, so the first `make local-lab-up` takes a couple of minutes.
+- **Images that can run the lab** — see [Image compatibility](#image-compatibility)
+  below; `make images-check` verifies the configured ones.
+- **Host resources.** The 5 SR Linux nodes are RAM/CPU-hungry (≈1.5–2 GB
+  each) and boot slower than FRR; with Elasticsearch and the control plane the
+  full lab wants roughly **14–16 GB** for containers. On macOS that is the
+  Docker Desktop **VM** budget (Settings → Resources → Memory — the 8 GB
+  default cannot hold the lab; `make doctor` checks). The first
+  `make local-lab-up` takes a couple of minutes.
+
+### macOS notes
+
+- **Apple Silicon:** the four `quay.io/zebbra` images are amd64-only and run
+  under Rosetta — turn on *Use Rosetta for x86_64/amd64 emulation* in Docker
+  Desktop (Settings → General); without it they run under QEMU and are much
+  slower. containerlab, FRR and SR Linux are native arm64.
+- **File sharing:** the repo must live under a Docker Desktop shared path
+  (`/Users`, `/Volumes`, `/private`, `/tmp` by default) and its path must not
+  contain spaces — container-mode containerlab bind-mounts the checkout at the
+  same absolute path.
+- **No route from the Mac to `lab-net`** (`172.30.0.0/24`): the make targets
+  already poll device readiness from inside the worker, and the docs never ask
+  you to reach a device from the host. Use `docker exec <node>` / `docker logs
+  <node>` (bare names — the topology sets `prefix: ""`); the `/etc/hosts` and
+  `ssh_config.d` entries containerlab writes stay inside the ephemeral clab
+  container.
+- **Slow first run?** Raise the wait budgets instead of removing the waits:
+  `make local-lab-up WAIT_READY_TIMEOUT=600 WAIT_DEVICES_TIMEOUT=600`.
+
+## Image compatibility
+
+The lab is a consumer of published images, and it needs specific features from
+two of them. `make images-check` tells you whether the images you are
+configured to run carry them; the defaults are chosen accordingly.
+
+| Image | Default | Why |
+|---|---|---|
+| Workflow engine | `quay.io/zebbra/neops-workflow-engine:0.42.2-beta.3` (**pinned**) | Discovery emits a few hundred `Interface` rows in one job result — the engine needs the raised per-route body limits (otherwise **413**). The lab registers workflows through `POST /workflow-definition/publish`; older engines get the legacy route as a fallback. `0.42.2-beta.3` is the first published tag with both, and quay's `develop` tag has lagged the branch by weeks. |
+| Worker | `quay.io/zebbra/neops-worker-sdk:develop` | **No published tag runs the lab today** (August 2026): `fb.base.neops.io/global_discover_network` is not yet in a released image, and the current `develop` image cannot start. Build one from a checkout that has it — `make build-worker-image SDK_DIR=../neops-worker-sdk-py` — and run with `NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest`. |
+| CMS, web client | `…:develop` | Work as published. |
+
+Override any of them with `NEOPS_CMS_IMAGE`, `NEOPS_WORKFLOW_ENGINE_IMAGE`,
+`NEOPS_WEB_CLIENT_IMAGE`, `NEOPS_WORKER_SDK_IMAGE` (see `.env.example`); every
+service uses `pull_policy: missing`, so a local tag already present is used
+without a registry call.
 
 ## Devices
 
@@ -149,19 +201,25 @@ scope/Global/           # table columns, drill-down and dashboard applied by app
 workflows/              # workflow YAMLs registered by the bootstrap container
 function_blocks/        # lab-local function blocks, auto-discovered by the worker
 bootstrap/              # one-shot container that POSTs every workflow YAML
+containerlab            # containerlab launcher: native binary on Linux, container mode on macOS
+doctor                  # host preflight (docker/compose/RAM/ports/subnet/containerlab/python/quay)
 apply_cms_config        # seeds the neops role + Global scope in the CMS
 run_workflow            # triggers a workflow execution and waits for a terminal state
 wait_ready              # blocks until the worker's function block has an online worker
 wait_devices            # blocks until every lab device (topology.json) accepts SSH
 workflow-execution-parameters/   # generated discovery inputs
 docker-compose.yml               # base stack (CMS, engine, monitor app, web client, postgres, ES, redis)
-docker-compose.worker.yml        # worker + lab_bootstrap + the lab-net network definition
+docker-compose.worker.yml        # worker + lab_bootstrap; attaches to the (external) lab-net network
 tests/                  # unit tests for the two generators
 ```
 
 The base stack + worker compose files are combined via docker compose's
-`COMPOSE_FILE` (target-scoped in the `Makefile`); containerlab provisions the
-devices onto the `lab-net` that the worker compose defines.
+`COMPOSE_FILE` (target-scoped in the `Makefile`). The `lab-net` bridge
+(`172.30.0.0/24`) is created by the Makefile (`make lab-net`, a prerequisite of
+every `*-up` target) *before* the first `docker compose up` and is `external`
+to compose — on a host with many docker networks, letting compose create it
+concurrently with its auto-subnetted networks can collide ("Pool overlaps").
+containerlab provisions the devices onto it.
 
 The whole repo is bind-mounted **read-only into the worker at `/app/lab`**, which
 is why in-container paths keep a `lab/` prefix (`DIR_FUNCTION_BLOCKS:
@@ -186,17 +244,21 @@ skipped for hosts declared as another one.
 
 | Target | What it does |
 |---|---|
+| `make doctor` | Preflight: docker/compose versions, VM RAM, amd64 emulation, repo path/mount, containerlab mode, python/openssl, free ports, `lab-net` subnet overlap, quay access. Read-only; prints the fix per failure. |
+| `make images-check` | Verifies the configured worker image carries `/app/neops/fb` and can start, and the engine has the publish API + raised body limits — without deploying anything. |
+| `make build-worker-image` | Builds `neops-worker-sdk:latest` from `SDK_DIR` (default `../neops-worker-sdk-py`) for `NEOPS_WORKER_SDK_IMAGE`. Native arch (arm64 on Apple Silicon). |
 | `make lab-jwt` | Mints the dev RSA keypair the CMS needs (`cms/jwt/`). Idempotent; chained into `local-env-init`. |
+| `make lab-net` | Creates the `lab-net` docker network (`172.30.0.0/24`) if absent, refuses one with a different subnet. Prerequisite of every `*-up` target. |
 | `make local-env-init` | Pull + start the base stack, mint the CMS API key, force-recreate the engine to load it, then chain `apply-cms-config`. One-time per env. |
 | `make build-docker` | Builds the two local-only images: `neops-lab-frr:latest` and `neops-lab-bootstrap:latest`. A prerequisite of `local-lab-up`. |
-| `make local-lab-up` | Generates the containerlab topology + configs from `topology.json`, builds the lab images, brings up the base stack + worker + bootstrap (creating `lab-net`), then `containerlab deploy`s the 15 devices with real links. Waits for workflow registration, the worker's function blocks, and every device's SSH. |
+| `make local-lab-up` | Generates the containerlab topology + configs from `topology.json`, builds the lab images, refreshes the worker image, brings up the base stack + worker + bootstrap on `lab-net`, then `./containerlab deploy --reconfigure`s the 15 devices with real links (re-runnable). Waits for workflow registration, the worker's function blocks, and every device's SSH (`WAIT_READY_TIMEOUT`, `WAIT_DEVICES_TIMEOUT`). |
 | `make apply-cms-config` | Grants the `neops` user a full-permission role (`lab-admin`, default_permission=7) + creates the `Global` scope so the web client can see all entities. Idempotent. Chained into `local-env-init`. |
 | `make local-lab-discover` | POSTs an execution of the discovery workflow; all 15 devices **and their interfaces** appear in the CMS. Override `DISCOVER_PARAMS` to exercise explicit hosts, autodetection, or subnet expansion. Devices are keyed by IP (re-running skips existing devices); interfaces are always recorded, so run discovery against a **fresh** CMS to avoid duplicate interface rows. |
 | `make local-lab-logs` | Tails worker + bootstrap logs. |
-| `make local-lab-down` | `containerlab destroy --cleanup` (removes devices + runtime dir) then `docker compose down` (preserves volumes). |
-| `make local-env-prune` | `docker compose down -v` — the true reset, drops the ES + postgres volumes. |
+| `make local-lab-down` | `./containerlab destroy --cleanup` (removes devices + runtime dir), `docker compose down` (preserves volumes), removes `lab-net`. |
+| `make local-env-prune` | `docker compose down -v` — the true reset, drops the ES + postgres volumes and `lab-net`. |
 | `make test` | `pytest tests` — unit tests for the two generators, incl. that they still reproduce the committed `workflow-execution-parameters/*.json`. |
-| `make lint` / `make format` / `make typeCheck` / `make check` | ruff / pyrefly over the repo, including the extension-less host scripts. |
+| `make lint` / `make format` / `make typeCheck` / `make check` | ruff / pyrefly over the repo, including the extension-less host scripts; `check` also runs `shellcheck-syntax` (bash -n) and `py39-check` (the host scripts import under Python 3.9). |
 
 Full reset from scratch:
 `make local-lab-down local-env-prune && make local-env-init && make local-lab-up && make local-lab-discover`.

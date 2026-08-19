@@ -65,7 +65,7 @@ Used by three things in this repo:
 
 | Caller | Endpoints |
 |---|---|
-| `bootstrap/register.py` | `GET /health`, `POST /workflow-definition` |
+| `bootstrap/register.py` | `GET /health`, `POST /workflow-definition/publish` (legacy `POST /workflow-definition` fallback on 404) |
 | `wait_ready` | `GET /function-blocks/{pkg}/{name}/{version}/workers` |
 | `run_workflow` | `POST /workflow-execution`, `GET /workflow-execution/id/{uuid}` |
 

@@ -13,7 +13,7 @@ CMS
 :   The NeOps network content-management system — the Django monolith (`neops-core`, shipped here as `quay.io/zebbra/neops-cms-free`) that owns entities such as `Device` and `Interface` and serves the platform GraphQL API. Reachable at <http://localhost:8001>.
 
 containerlab
-:   The tool that runs the device containers and wires real `veth` links between them via Linux network namespaces. Driven by the generated `generated/neops-lab.clab.json`. See [containerlab.dev](https://containerlab.dev).
+:   The tool that runs the device containers and wires real `veth` links between them via Linux network namespaces. Driven by the generated `generated/neops-lab.clab.json`. Always invoked as `./containerlab` here — the repo's launcher, which exec's a native binary on Linux and runs the official `ghcr.io/srl-labs/clab` image in container mode on macOS. See [containerlab.dev](https://containerlab.dev).
 
 Control plane
 :   In this repo's vocabulary, the NeOps services on docker compose — CMS, workflow engine, monitor app, web client, worker — as opposed to the 15 device containers.
@@ -31,7 +31,7 @@ FRR / FRRouting
 :   The open-source routing stack behind the 10 `frr` nodes. Run here as `kind: linux` from the locally built `neops-lab-frr:latest`. Vendor string in the CMS: `FRRouting`.
 
 `lab-net`
-:   The docker bridge network (`172.30.0.0/24`) declared by `docker-compose.worker.yml` and used by containerlab as the devices' management network. The worker sits on it *and* on the compose default network, which is how it reaches both the engine and the devices.
+:   The docker bridge network (`172.30.0.0/24`) created by the Makefile (`make lab-net`) before the first `docker compose up`, declared `external` in `docker-compose.worker.yml`, and used by containerlab as the devices' management network. The worker sits on it *and* on the compose default network, which is how it reaches both the engine and the devices.
 
 Monitor app
 :   The SvelteKit UI shipped inside the workflow-engine image (`/app/rest/monitor-app`), run here as the `workflow-engine-client` service on <http://localhost:3031>. Today the primary UI for workflow authoring and execution monitoring; explicitly temporary — the functionality is planned to move into the NeOps web client.

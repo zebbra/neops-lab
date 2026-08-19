@@ -10,9 +10,15 @@ this repo's root** — there is no `lab/` subdirectory here. Host-side paths
 therefore have no `lab/` prefix; in-container ones still do (see Invariants).
 
 Branch from `develop`. CI (`.github/workflows/ci.yml`) runs ruff, pyrefly,
-`pytest tests`, and `make build-docker`. Read `README.md` first — it is the
-operator-facing doc and covers prerequisites, the device table and the make
-targets.
+`pytest tests`, the Python-3.9 import check and `bash -n` on the shell entry
+points (Linux **and** macOS jobs), and `make build-docker`. Read `README.md`
+first — it is the operator-facing doc and covers prerequisites, the device
+table, image compatibility and the make targets.
+
+**Supported hosts are Linux and macOS.** Linux runs containerlab natively; on
+macOS `./containerlab` runs it in container mode. Every recipe and every
+documented command must keep working on both — `make doctor` is the preflight,
+and the CI macOS job runs the hermetic gates on a real Mac.
 
 **This is not a distributable package.** Nothing here is published: no wheel, no
 npm package, no registry image. `pyproject.toml` exists only to configure
@@ -20,12 +26,20 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
 
 ## Conventions
 
-- Ruff: line length 120, target Python 3.12. Pyrefly for types.
-- **Host scripts are stdlib-only** (`gen_clab_topology`, `gen_device_configs`,
-  `run_workflow`, `wait_ready`, `wait_devices`). They run on a bare host before
-  any virtualenv exists — do not add a third-party import to them.
-- `apply_cms_config` is bash, not Python; it is deliberately absent from ruff's
-  `extend-include`.
+- Ruff: line length 120, target Python 3.12 (dev tooling). Pyrefly for types.
+- **Host scripts are stdlib-only AND Python-3.9-safe** (`gen_clab_topology`,
+  `gen_device_configs`, `run_workflow`, `wait_ready`, `wait_devices`). They run
+  on a bare host before any virtualenv exists — do not add a third-party import
+  to them — and a stock macOS `/usr/bin/python3` is 3.9, so each starts with
+  `from __future__ import annotations` (PEP 604 `X | None` annotations otherwise
+  fail at import time). `make py39-check` and `tests/test_host_invariants.py`
+  enforce it; ruff at `py312` will not warn you.
+- `apply_cms_config`, `containerlab` and `doctor` are bash, not Python; they are
+  deliberately absent from ruff's `extend-include`. Keep them **bash 3.2**
+  compatible (macOS): no arrays under `set -u`, no `mapfile`, no `${var,,}`;
+  and BSD-userland compatible: no `grep -P`, no `base64 FILE`/`-w0`, no
+  `sed -i` without a suffix, no `readlink -f`. `make shellcheck-syntax`
+  parses them; `make doctor` and a real macOS run cover the rest.
 - Example/lab function block package: `fb.lab.neops.io`; the workflow package is
   `wf.lab.neops.io`. The discovery block itself is `fb.base.neops.io/global_discover_network`
   and lives in **neops-worker-sdk-py**, not here.
@@ -100,12 +114,64 @@ Load-bearing and usually not obvious from the code:
   name; Postgres name uniqueness is case-sensitive, so a lowercase `global` would
   create a silent duplicate.
 - **Race ordering in `local-lab-up` is deliberate**: `docker compose wait
-  lab_bootstrap` (workflow registration) → `containerlab deploy` (SR Linux boots
-  slowly, so start it early) → `wait_ready` (the worker registers its function
-  blocks asynchronously) → `wait_devices` **from inside the worker container**
-  (on macOS/Docker Desktop the host has no route to the `172.30.0.0/24` bridge,
-  so a host-side poll always times out). Each wait exists because of a real,
-  reproduced failure; do not replace one with a `sleep`.
+  lab_bootstrap` (workflow registration) → `./containerlab deploy --reconfigure`
+  (SR Linux boots slowly, so start it early; `--reconfigure` makes the target
+  re-runnable) → `wait_ready` (the worker registers its function blocks
+  asynchronously) → `wait_devices` **from inside the worker container** (on
+  macOS/Docker Desktop the host has no route to the `172.30.0.0/24` bridge, so a
+  host-side poll always times out). Each wait exists because of a real,
+  reproduced failure; do not replace one with a `sleep`. Their budgets are
+  `WAIT_READY_TIMEOUT` / `WAIT_DEVICES_TIMEOUT` — raise those, never remove a wait.
+- **containerlab is only ever invoked as `./containerlab`** — in the Makefile
+  (`$(CONTAINERLAB)`) and in every doc. The shim exec's a native binary when
+  one is on PATH (Linux: byte-identical to calling it directly) and otherwise,
+  on Darwin or with `CLAB_IN_DOCKER=1`, runs `ghcr.io/srl-labs/clab` privileged
+  through the docker socket. A bare `containerlab …` in a recipe or a doc breaks
+  every Mac. Container mode is deliberately NOT the silent fallback on Linux
+  (SELinux `:z` binds, rootless socket paths, root-owned `generated/` files).
+- **In container mode the repo is mounted at the SAME absolute path**
+  (`-v "$ROOT:$ROOT" -w "$PWD"`). containerlab turns the topology's relative
+  binds (`frr/<host>.iface`, `../devices/frr/set-aliases.sh`) into absolute
+  host paths and hands them to the docker daemon; that only resolves if the
+  path inside the clab container equals the daemon's. Mounting the repo at
+  `/work` would give every FRR node a silently empty bind. Do not "tidy" it.
+- **`lab-net` is created by the Makefile, not by compose.** `make lab-net`
+  (prerequisite of every `*-up` target) creates it with `LAB_SUBNET` before the
+  first `docker compose up` and refuses one with a different subnet;
+  `docker-compose.worker.yml` declares it `external: true` (no `ipam`, on
+  purpose). Compose creates its auto-subnetted networks concurrently, and on a
+  host with many docker networks the next free /16 in docker's pool can be
+  `172.30.0.0/16` — which then blocks the /24 with "Pool overlaps". The subnet
+  is single-sourced in `gen_clab_topology` (`LAB_SUBNET`) and cross-checked
+  against the Makefile by `tests/test_host_invariants.py`. `local-lab-down` and
+  `local-env-prune` remove the network again.
+- **Redis is wired, not decorative.** The CMS gets `REDIS_URL=redis://redis:6379`
+  — its channel layer (GraphQL subscriptions/websocket pushes), Django cache and
+  Celery broker, exactly as in the production compose file and the Helm chart.
+  Without it neops-core configures no channel layer at all and subscription
+  broadcasts fail silently. `redis` sits on the default network like every
+  other service.
+- **The engine image is pinned, and `bootstrap/register.py` speaks the publish
+  API.** Default `quay.io/zebbra/neops-workflow-engine:0.42.2-beta.3`: the
+  first published tag with the raised per-route body limits (a 15-device
+  discovery result is otherwise a **413**) *and* `POST
+  /workflow-definition/publish` (the legacy `POST /workflow-definition` was
+  removed from the engine on 2026-07-30). Under publish semantics **200 =
+  unchanged (idempotent), 409 = same version with different content = hard
+  failure** (bump the YAML version; the engine returns `suggestedVersion`), 422
+  = bump too small. `register.py` falls back to the legacy route on 404. Do not
+  reintroduce "409 means already registered" on the publish path — it would
+  silently run a stale definition.
+- **No published worker image runs the lab yet** (August 2026): the discovery
+  block is only on unmerged neops-worker-sdk-py branches and the current
+  `develop` image cannot even start. `make images-check` proves whether the
+  configured image can run the lab; `make build-worker-image` builds one from a
+  local checkout. Keep README "Image compatibility" current when this changes.
+- **`make doctor` is the preflight; keep it honest.** Every check in it maps to
+  a failure that happened during a real bring-up (ports held by another stack,
+  overlapping docker network, 8 GB Docker Desktop VM, missing containerlab, an
+  image that cannot start). When you meet a new late-and-confusing failure,
+  add the check there rather than only to the troubleshooting page.
 
 ## Neops Ecosystem
 
@@ -118,7 +184,8 @@ depends on:
   (renaming it in neops-worker-sdk-py breaks `workflows/*.yaml` and the Makefile's
   `DISCOVER_FB`, with no compile-time check),
 - the **workflow-engine REST API** used by `run_workflow`, `wait_ready` and
-  `bootstrap/register.py` (`/workflow-execution`, `/workflow-definition`,
+  `bootstrap/register.py` (`/workflow-execution`,
+  `/workflow-definition/publish` with legacy `/workflow-definition` fallback,
   `/function-blocks/…/workers`, `/health`),
 - the **CMS GraphQL mutation `scopesUpsert`** and the `neops.core.models` ORM
   shape used by `apply_cms_config`.
@@ -129,7 +196,11 @@ depends on:
   contract those targets implement.
 - Do **not** run `make local-lab-up` casually: it builds two images, pulls the
   whole NeOps stack and deploys 15 containers (the SR Linux nodes alone want a
-  few GB of RAM).
+  few GB of RAM). Run `make doctor` first on a new host.
+- Never test portability against whatever is first in `PATH`: validate shell
+  changes with `/usr/bin/grep`, `/usr/bin/base64`, `/usr/bin/sed`,
+  `/usr/bin/python3` and `/bin/bash` on a Mac — Homebrew GNU tools and ugrep
+  shadowing `grep` hide exactly the failures a stock Mac hits.
 - `make test` is fast, hermetic and the meaningful gate for generator changes.
 - When verifying lab/UI behavior, drive a browser via the Playwright MCP rather
   than guessing — the web client's failure modes (blank `<app-root>`) don't

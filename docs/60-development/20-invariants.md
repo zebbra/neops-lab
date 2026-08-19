@@ -55,14 +55,34 @@ Related: **the scope is `Global`, capital G.** The CMS image seeds a scope by th
 ## 11. The race ordering in `local-lab-up` is deliberate
 
 ```text
-docker compose wait lab_bootstrap    # workflow registration
-containerlab deploy                  # SR Linux boots slowly — start it early
-./wait_ready <fb>                    # the worker registers FBs asynchronously
-wait_devices, from inside the worker # the host has no route to lab-net on macOS
+docker compose wait lab_bootstrap         # workflow registration
+./containerlab deploy --reconfigure       # SR Linux boots slowly — start it early
+./wait_ready <fb>                         # the worker registers FBs asynchronously
+wait_devices, from inside the worker      # the host has no route to lab-net on macOS
 ```
 
-Each wait exists because of a real, reproduced failure, and each has a distinctive symptom listed in [Troubleshooting](../20-operations/40-troubleshooting.md). **Do not replace one with a `sleep`.**
+Each wait exists because of a real, reproduced failure, and each has a distinctive symptom listed in [Troubleshooting](../20-operations/40-troubleshooting.md). **Do not replace one with a `sleep`.** Their budgets are `WAIT_READY_TIMEOUT` / `WAIT_DEVICES_TIMEOUT` — raise those, never remove a wait.
 
 ## 12. Everything generated goes under `generated/`, and it is git-ignored
 
 Never commit it — containerlab mints TLS private keys in there. The one exception to "generated output is ignored" is the three `workflow-execution-parameters/*.json` files, which *are* tracked precisely so the tests can diff against them (invariant 5).
+
+## 13. containerlab is only ever called as `./containerlab`
+
+In the Makefile (`$(CONTAINERLAB)`) and in every doc. The launcher exec's a native binary when one is on `PATH` (Linux: byte-identical to calling it directly) and otherwise — on Darwin, or with `CLAB_IN_DOCKER=1` — runs `ghcr.io/srl-labs/clab` privileged through the docker socket. **A bare `containerlab …` in a recipe or a doc breaks every Mac.** Container mode is deliberately not the silent fallback on Linux: SELinux `:z` binds, rootless socket paths, root-owned files under `generated/`.
+
+## 14. In container mode the repo is mounted at the *same* absolute path
+
+`-v "$ROOT:$ROOT" -w "$PWD"`. containerlab turns the topology's relative binds (`frr/<host>.iface`, `../devices/frr/set-aliases.sh` — invariant 4) into absolute host paths and hands them to the docker daemon; that only resolves if the path inside the clab container equals the daemon's. Mounting the repo at `/work` would give every FRR node a silently empty bind. On Docker Desktop this is also why the checkout must live under a shared path. **Do not "tidy" it.**
+
+## 15. `lab-net` is created by the Makefile, not by compose
+
+`make lab-net` (prerequisite of every `*-up` target) creates it with `LAB_SUBNET` *before* the first `docker compose up` and refuses one with a different subnet; `docker-compose.worker.yml` declares it `external: true` — with no `ipam` block, on purpose, since compose ignores everything but `name` on an external network. The reason is docker's concurrent auto-subnet allocation colliding with the fixed `/24` on busy hosts ([Architecture → Networks](../10-concepts/10-architecture.md#networks)). The subnet is single-sourced in `gen_clab_topology` (`LAB_SUBNET`) and cross-checked against the Makefile by `tests/test_host_invariants.py`. `local-lab-down` and `local-env-prune` remove the network again.
+
+## 16. Host scripts import under Python 3.9
+
+A stock macOS ships `/usr/bin/python3` 3.9, where a PEP 604 `X | None` annotation is evaluated at import time and raises. Every host script therefore starts with `from __future__ import annotations`. `make py39-check` (in `make check` and CI) proves it at runtime; `tests/test_host_invariants.py` keeps the rule visible; ruff at `target-version = "py312"` will **not** warn you.
+
+## 17. Redis is wired, and the engine is pinned
+
+The CMS gets `REDIS_URL=redis://redis:6379` (channel layer, cache, Celery broker — as in production; without it neops-core configures no channel layer at all). The engine defaults to `quay.io/zebbra/neops-workflow-engine:0.42.2-beta.3`, the first published tag with the raised body limits *and* the publish API, and `bootstrap/register.py` implements the publish semantics (200 unchanged = idempotent, **409 = hard failure**, 422 = bump too small, 404 → legacy route). See [Images → Image compatibility](../20-operations/20-images.md#image-compatibility).

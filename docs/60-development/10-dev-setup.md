@@ -28,15 +28,18 @@ make check     # lint + typeCheck + test
 | `make format` | `uv run ruff format .` then `uv run ruff check --fix .` |
 | `make typeCheck` | `uv run pyrefly check` |
 | `make test` | `uv run pytest tests` |
+| `make shellcheck-syntax` | `bash -n` over the bash entry points (`apply_cms_config`, `containerlab`, `doctor`) |
+| `make py39-check` | imports the five host scripts under Python 3.9 (`uv run --python 3.9`) |
 
-Ruff is configured with line length 120, target `py312`, and a broad rule selection (`F E W I B UP N S A C4 SIM RET PIE ARG PTH PERF PT PL RUF`) with `E501` delegated to the formatter.
+Ruff is configured with line length 120, target `py312`, and a broad rule selection (`F E W I B UP N S A C4 SIM RET PIE ARG PTH PERF PT PL RUF`) with `E501` delegated to the formatter. **`py312` is the floor for the dev tooling only** — the host scripts must keep importing under Python 3.9 (a stock macOS), which ruff will not check for you; `make py39-check` and `tests/test_host_invariants.py` do.
 
 ## What CI runs
 
 `.github/workflows/ci.yml`, on pushes to `main`/`develop` and on every PR:
 
-1. **`lint-test`** on `ubuntu-latest` — `uv sync --group dev --frozen`, then ruff format check, ruff lint, pyrefly, pytest. Exactly `make check`.
-2. **`docker`** on the self-hosted `hetzner` runner, gated on `lint-test` — `make build-docker`. The images are local-only, so this job exists purely to make a broken Dockerfile fail in CI rather than on a developer's first `make local-lab-up`.
+1. **`lint-test`** on `ubuntu-latest` — `uv sync --group dev --frozen`, then ruff format check, ruff lint, pyrefly, pytest, `make py39-check`, `make shellcheck-syntax`. Exactly `make check`.
+2. **`macos`** on `macos-latest` — pytest, the host scripts imported by the *stock* `/usr/bin/python3` (3.9), the bash entry points parsed by `/bin/bash` 3.2, and `gen_clab_topology` reproducing the committed parameter files with BSD userland. macOS is a supported host; this job is what makes that promise CI-owned rather than best-effort. It stands up no containers.
+3. **`docker`** on the self-hosted `hetzner` runner, gated on `lint-test` — `make build-docker`. The images are local-only, so this job exists purely to make a broken Dockerfile fail in CI rather than on a developer's first `make local-lab-up`.
 
 There is no job that stands the lab up: 15 device containers and a few GB of SR Linux RAM do not belong in CI.
 
@@ -73,9 +76,12 @@ Three callers depend on the bare names:
 
 Renaming them to `*.py` is not an option — it would break every caller.
 
-!!! note "`apply_cms_config` is bash, not Python"
-    It is deliberately absent from both include lists. Do not "fix" that by
-    adding it — ruff would try to parse shell as Python.
+!!! note "`apply_cms_config`, `containerlab` and `doctor` are bash, not Python"
+    They are deliberately absent from both include lists. Do not "fix" that by
+    adding them — ruff would try to parse shell as Python. Keep them bash-3.2
+    and BSD-userland compatible (no arrays under `set -u`, no `grep -P`, no
+    `base64 FILE`, no `sed -i` without a suffix); `make shellcheck-syntax`
+    parses them, and the CI macOS job parses them with the real `/bin/bash`.
 
     Note also that CI lints `.` (a directory walk) rather than an explicit file
     list, because `extend-include` only applies to discovery.
@@ -86,10 +92,11 @@ Renaming them to `*.py` is not an option — it would break every caller.
 uv run pytest tests
 ```
 
-Two modules, both loading the generator scripts by path:
+Three modules:
 
 - `tests/test_gen_device_configs.py` — the per-device renderers: FRR `.iface` lines, the loopback-first rule, SR Linux `set /` lines, and the `ethernet-1/N` → `e1/N` description conversion.
 - `tests/test_gen_clab_topology.py` — interface-name mapping, veth-link deduplication, dummy-link generation, and **the byte-for-byte reproduction of the committed `workflow-execution-parameters/*.json`**.
+- `tests/test_host_invariants.py` — the constants that live in more than one place (`LAB_SUBNET`/`LAB_NET` in the Makefile vs `gen_clab_topology`; `lab-net` external in compose) and the Python-3.9 rule for the host scripts.
 
 That last one is the repo's real guard. `_dump_discover_params` hand-rolls a compact layout `json.dumps` cannot produce, so the assertion is exact: change `topology.json`, rerun `./gen_clab_topology`, and commit the regenerated JSON — or `make test` fails.
 
