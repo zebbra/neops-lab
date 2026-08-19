@@ -14,6 +14,13 @@ authors = [{ name = "zebbra AG" }]
 
 # The lab scripts are stdlib-only on purpose: they run on the host, before any
 # virtualenv exists, with nothing but `python3`. Keep this list empty.
+#
+# `requires-python` above is the floor for the DEV TOOLING (pytest/ruff/pyrefly)
+# only. The host scripts themselves must keep importing under Python 3.9 — the
+# `python3` a stock macOS ships — which is why each carries
+# `from __future__ import annotations` (PEP 604 `X | None` annotations would
+# otherwise fail at import time on 3.9). `make py39-check` (part of `make
+# check` and CI) enforces it; ruff's `target-version = "py312"` below does not.
 dependencies = []
 
 [tool.uv]
