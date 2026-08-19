@@ -53,15 +53,20 @@ SCOPE_NAME=${SCOPE_NAME:-Global}
 #     would lose. (These reset to image defaults on a CMS restart / any later
 #     manage.py run; re-run this script to reapply.)
 SCOPE_DIR="scope/${SCOPE_NAME}"
-# `tr -d '\n'` (not `base64 -w0`) so this works on both GNU and BSD/macOS base64.
-DASHBOARD=$(base64 "${SCOPE_DIR}/dashboard_configuration.json" | tr -d '\n')
+# Portable across GNU and BSD/macOS base64: read from stdin (BSD base64 takes no
+# file operand, and GNU's `-i` means --ignore-garbage, so neither `base64 FILE`
+# nor `base64 -i FILE` works on both) and strip the line wrapping GNU adds
+# (`-w0` is GNU-only).
+DASHBOARD=$(base64 < "${SCOPE_DIR}/dashboard_configuration.json" | tr -d '\n')
 
 if [ ! -f cms_api_key.env ]; then
     echo "error: cms_api_key.env not found. Run 'make local-env-init' first." >&2
     exit 1
 fi
 
-NEOPS_CMS_TOKEN=$(grep -oP 'NEOPS_CMS_TOKEN=\K.*' cms_api_key.env || true)
+# `sed -n` rather than `grep -oP` (BSD/macOS grep has no -P). Exits 0 on no
+# match, so the empty-value guard below is what reports a missing token.
+NEOPS_CMS_TOKEN=$(sed -n 's/^NEOPS_CMS_TOKEN=//p' cms_api_key.env | tr -d '\r')
 if [ -z "$NEOPS_CMS_TOKEN" ]; then
     echo "error: NEOPS_CMS_TOKEN missing in cms_api_key.env." >&2
     exit 1
@@ -133,8 +138,11 @@ print(f"  role->scope: {role.name} -> {scope.name} permission={int(rs.permission
 PYSCRIPT
 
 # The lab devices use platforms `frr` and `srl`, which are not part of the CMS's
-# default platform seed. Discovery registers devices by platform short_name (see
-# neops_worker_sdk Device/Platform), so these must exist or resolution fails.
+# default platform seed. Discovery writes each Device with its platform
+# short_name, so the Platform rows must exist in the CMS or the write fails.
+# The `libraries` entries below are informational: the worker SDK resolves its
+# connection plugin from its own short_name mapping
+# (neops_worker_sdk/connection/utils/platform_mappings.py).
 # The proper fix is seeding them upstream in neops-core NEOPS_PLATFORMS; we also
 # seed them here (idempotently, via the CMS's own init_platforms) so the lab
 # works against the prebuilt neops-cms-free image without a rebuild.
