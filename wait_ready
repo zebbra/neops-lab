@@ -26,6 +26,8 @@ Exit codes
     2   timed out before all function blocks became ready
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import sys

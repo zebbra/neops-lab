@@ -31,7 +31,12 @@ typeCheck:
 test:
 	uv run pytest tests
 
-check: lint typeCheck test
+# The host scripts must import under Python 3.9, the python3 a stock macOS
+# ships; ruff at `target-version py312` accepts syntax that breaks there.
+py39-check:
+	uv run --python 3.9 --no-project python tools/import_host_scripts.py
+
+check: lint typeCheck test py39-check
 
 # Dev-only RSA keypair for the CMS. Newer neops-cms-free images require it for
 # RS256 JWT issuance and crash at startup (token_service check_keys) without it,

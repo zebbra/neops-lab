@@ -6,6 +6,8 @@ and the committed `workflow-execution-parameters/discover-params.json`. Reuses t
 per-device renderers from the sibling `gen_device_configs`.
 """
 
+from __future__ import annotations
+
 import importlib.machinery
 import importlib.util
 import json
