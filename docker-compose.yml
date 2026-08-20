@@ -22,6 +22,10 @@ services:
       - CORS_ORIGIN_ALLOW_ALL=True
       - NEOPS_PLUGINS=neops_auth_static_api_key neops_auth_django neops_permissions_simple
       - DJANGO_ALLOW_ASYNC_UNSAFE=True
+      # Redis backs the CMS channel layer (GraphQL subscriptions), Django cache
+      # and Celery broker, as in the production compose file and the Helm
+      # chart; neops-core configures a channel layer only when REDIS_URL is set.
+      - REDIS_URL=redis://redis:6379
       # No quotes: in compose list form they become part of the value.
       - AUTH_PROVIDERS_CONFIG_PATH=./auth_providers_with_secret.json
       # The web client's GraphQL `appSettings.oidcConfig` query reads this file via the CMS resolver
@@ -43,6 +47,8 @@ services:
       postgres:
         condition: service_healthy
       elasticsearch:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: >
       bash -c "
@@ -148,9 +154,8 @@ services:
       retries: 5
 
   redis:
-    image: redis:5-alpine
-    networks:
-      - redis-net
+    # Same major as the production compose file and the Helm chart.
+    image: redis:7-alpine
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
@@ -187,7 +192,3 @@ volumes:
     driver: local
   postgres_data:
     driver: local
-
-networks:
-  redis-net:
-    driver: "bridge"
