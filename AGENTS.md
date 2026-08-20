@@ -10,9 +10,14 @@ this repo's root** — there is no `lab/` subdirectory here. Host-side paths
 therefore have no `lab/` prefix; in-container ones still do (see Invariants).
 
 Branch from `develop`. CI (`.github/workflows/ci.yml`) runs ruff, pyrefly,
-`pytest tests`, and `make build-docker`. Read `README.md` first — it is the
-operator-facing doc and covers prerequisites, the device table and the make
-targets.
+`pytest tests`, `make py39-check`, `make shell-syntax` (plus a bash-3.2 parse),
+and `make build-docker`. Read `README.md` first — it is the operator-facing doc
+and covers prerequisites, the device table and the make targets.
+
+**Supported hosts are Linux and macOS.** containerlab always runs in container
+mode through `./containerlab` (ghcr.io/srl-labs/clab via the docker socket), so
+both hosts use the same command and the same pinned containerlab version; a
+host binary is used only with `CLAB_NATIVE=/path`.
 
 **This is not a distributable package.** Nothing here is published: no wheel, no
 npm package, no registry image. `pyproject.toml` exists only to configure
@@ -20,12 +25,18 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
 
 ## Conventions
 
-- Ruff: line length 120, target Python 3.12. Pyrefly for types.
-- **Host scripts are stdlib-only** (`gen_clab_topology`, `gen_device_configs`,
-  `run_workflow`, `wait_ready`, `wait_devices`). They run on a bare host before
-  any virtualenv exists — do not add a third-party import to them.
-- `apply_cms_config` is bash, not Python; it is deliberately absent from ruff's
-  `extend-include`.
+- Ruff: line length 120, target Python 3.12 (dev tooling). Pyrefly for types.
+- **Host scripts are stdlib-only and Python-3.9-safe** (`gen_clab_topology`,
+  `gen_device_configs`, `run_workflow`, `wait_ready`, `wait_devices`). They run
+  on a bare host before any virtualenv exists — do not add a third-party import
+  to them — and each starts with `from __future__ import annotations` so a
+  stock macOS `/usr/bin/python3` (3.9) imports them. `make py39-check`
+  enforces this; ruff at `py312` does not.
+- `apply_cms_config` and `containerlab` are bash, not Python; they are
+  deliberately absent from ruff's `extend-include`. Keep them bash-3.2 and
+  BSD-userland compatible (no arrays under `set -u`, no `grep -P`, no
+  `base64 FILE`, no `sed -i` without a suffix); `make shell-syntax` parses
+  them, CI also with a real bash 3.2.
 - Example/lab function block package: `fb.lab.neops.io`; the workflow package is
   `wf.lab.neops.io`. The discovery block itself is `fb.base.neops.io/global_discover_network`
   and lives in **neops-worker-sdk-py**, not here.
@@ -105,12 +116,22 @@ Load-bearing and usually not obvious from the code:
   name; Postgres name uniqueness is case-sensitive, so a lowercase `global` would
   create a silent duplicate.
 - **Race ordering in `local-lab-up` is deliberate**: `docker compose wait
-  lab_bootstrap` (workflow registration) → `containerlab deploy` (SR Linux boots
-  slowly, so start it early) → `wait_ready` (the worker registers its function
-  blocks asynchronously) → `wait_devices` **from inside the worker container**
+  lab_bootstrap` (workflow registration) → `./containerlab deploy --reconfigure`
+  (SR Linux boots slowly, so start it early; `--reconfigure` makes the target
+  re-runnable) → `wait_ready` (the worker registers its function blocks
+  asynchronously) → `wait_devices` **from inside the worker container**
   (on macOS/Docker Desktop the host has no route to the `172.30.0.0/24` bridge,
   so a host-side poll always times out). Each wait exists because of a real,
   reproduced failure; do not replace one with a `sleep`.
+- **containerlab is only ever invoked as `./containerlab`** — in the Makefile
+  (`$(CONTAINERLAB)`) and in every doc. It runs `ghcr.io/srl-labs/clab`
+  privileged through the docker socket on both hosts; `CLAB_NATIVE` selects a
+  host binary. The repo is mounted at the **same absolute path** inside that
+  container: containerlab resolves the topology's relative binds to absolute
+  host paths for the daemon, so the path inside must equal the daemon's —
+  mounting the repo at `/work` would give every FRR node an empty bind.
+  Side effects (`/etc/hosts`, `ssh_config.d`) stay inside the ephemeral clab
+  container; reach devices with `docker exec <node>`.
 
 ## Neops Ecosystem
 
