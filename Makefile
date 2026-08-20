@@ -78,8 +78,16 @@ local-env-init: lab-jwt
 	# `pull_policy: missing`, so a local image already present is used as-is.
 	docker compose pull --policy always --ignore-pull-failures
 	docker compose up -d
-	# generate_api_key prints the key on the last non-empty line (no `api key:` label in current CMS image)
-	echo "NEOPS_CMS_TOKEN=$$(docker compose exec -T cms ./manage.py generate_api_key 1 workflow 2>/dev/null | awk 'NF{l=$$0}END{print l}')" > cms_api_key.env
+	# Mint the engine's CMS API key for the `neops` user, resolving the pk by
+	# name (a re-init over a preserved volume can hold a different pk).
+	# generate_api_key prints the key on the last non-empty line (current CMS
+	# images print no `api key:` label); an empty key fails here.
+	@pk=$$(docker compose exec -T cms ./manage.py shell -c "from django.contrib.auth import get_user_model; print('PK=%s' % get_user_model().objects.get(username='neops').pk)" 2>/dev/null | sed -n 's/^PK=//p' | tr -d '\r'); \
+	test -n "$$pk" || { echo "error: could not resolve the CMS user 'neops'"; exit 1; }; \
+	key=$$(docker compose exec -T cms ./manage.py generate_api_key $$pk workflow 2>/dev/null | awk 'NF{l=$$0}END{print l}' | tr -d '\r'); \
+	test -n "$$key" || { echo "error: generate_api_key returned an empty key"; exit 1; }; \
+	echo "NEOPS_CMS_TOKEN=$$key" > cms_api_key.env; \
+	echo "wrote cms_api_key.env (user pk $$pk)"
 	# Apply CMS config (grants the neops user access to the Global scope) BEFORE
 	# recreating the engine. The CMS caches each user's accessible scopes
 	# in-memory for 10 min; if the engine queries the CMS as neops before the
