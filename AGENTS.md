@@ -62,9 +62,14 @@ Load-bearing and usually not obvious from the code:
   lab/wait_devices`. Host-side paths never have one. A `lab/` in a Makefile
   recipe or a host script is a bug; a `lab/` inside a `docker compose exec` or an
   env var read by the container is correct.
-- **`neops/fb` ships inside the published worker image**, it is not mounted from
-  here. If discovery fails with "Function block … not found", check that the
+- **`neops/fb` ships inside the worker image**, it is not mounted from here. If
+  discovery fails with "Function block … not found", check that the
   `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `neops/fb`.
+  ⚠️ **The published `quay.io/zebbra/neops-worker-sdk:develop` tag does not**, and
+  its container exits at start on a missing `README.md`. The function blocks and
+  the `COPY ./neops` that ships them are on the SDK's `feature/technopark` branch
+  (open PR zebbra/neops-worker-sdk-py#127). Until that merges, the lab requires a
+  locally-built worker image — see README "Prerequisites".
 - **`gen_clab_topology` emits `"../devices/frr/set-aliases.sh:…"`** as a
   containerlab bind. That path is relative to `generated/`, where the topology
   file lives — it is correct as written. Do not "fix" it to `devices/…`.
@@ -118,7 +123,7 @@ depends on:
   (renaming it in neops-worker-sdk-py breaks `workflows/*.yaml` and the Makefile's
   `DISCOVER_FB`, with no compile-time check),
 - the **workflow-engine REST API** used by `run_workflow`, `wait_ready` and
-  `bootstrap/register.py` (`/workflow-execution`, `/workflow-definition`,
+  `bootstrap/register.py` (`/workflow-execution`, `/workflow-definition/publish`,
   `/function-blocks/…/workers`, `/health`),
 - the **CMS GraphQL mutation `scopesUpsert`** and the `neops.core.models` ORM
   shape used by `apply_cms_config`.

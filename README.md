@@ -8,10 +8,12 @@ a one-shot bootstrap container — runs on docker-compose; the devices attach to
 the same `lab-net` bridge (172.30.0.0/24) at fixed management IPs, so the worker
 reaches them at those IPs.
 
-Everything the control plane runs comes from **published images** on
-`quay.io/zebbra` (CMS, workflow engine, web client, worker SDK). This repo owns
-the lab itself: the topology, the device configs, the workflow, the bootstrap
-sequencing and the two small helper images.
+The control plane runs from **published images** on `quay.io/zebbra` (CMS,
+workflow engine, web client) — except the **worker**, whose published `develop`
+tag is currently unusable and must be built locally; see
+[Prerequisites](#prerequisites). This repo owns the lab itself: the topology,
+the device configs, the workflow, the bootstrap sequencing and the two small
+helper images.
 
 End state: run a make target, click Run in the engine UI (or use the matching
 make target), and **15 `Device` rows** (FRR `vendor=FRRouting`, Nokia
@@ -69,11 +71,39 @@ repo's invariants.
 - **`uv`** — only for `make test` / `make lint`; the lab itself needs nothing
   but `python3` (all host scripts are stdlib-only).
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
-- **A workflow-engine image with the large-payload + reference-resolution fixes.**
-  Discovery emits a few hundred `Interface` rows in one job result. To run a
-  locally-built engine instead of the published `develop` image, set
-  `NEOPS_WORKFLOW_ENGINE_IMAGE` (e.g. `export NEOPS_WORKFLOW_ENGINE_IMAGE=neops-workflow-engine:latest`)
-  before `make local-lab-up`. Unset, it defaults to the published engine.
+- **A locally-built worker image — the published `develop` tag does not work.**
+  `quay.io/zebbra/neops-worker-sdk:develop` is built from `neops-worker-sdk-py`'s
+  `develop`, which carries no `neops/fb` and no `README.md` in the image, so the
+  container dies at start with `OSError: Readme file does not exist: README.md`
+  and would register no function blocks even if it started. The discovery block
+  `fb.base.neops.io/global_discover_network:0.1.0` and the `COPY ./neops` that
+  ships it live on the SDK's `feature/technopark` branch (open PR
+  [zebbra/neops-worker-sdk-py#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127)).
+  Until that merges and CI republishes the tag, build it yourself:
+
+  ```bash
+  git -C ../neops-worker-sdk-py switch feature/technopark
+  make -C ../neops-worker-sdk-py build-docker      # -> neops-worker-sdk:latest
+  echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
+  ```
+
+  Check what you got before bringing the lab up — the image must carry the
+  block, not just build:
+
+  ```bash
+  docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global'
+  ```
+
+  Without this the worker container exits, `local-lab-up` burns its full
+  `wait_ready` budget and gives up with `timeout: no online worker for
+  fb.base.neops.io/global_discover_network:0.1.0`.
+- **A workflow-engine image with the publish route and the large-payload +
+  reference-resolution fixes.** Discovery emits a few hundred `Interface` rows in
+  one job result, and `bootstrap/register.py` writes definitions through
+  `POST /workflow-definition/publish`. The published `develop` tag has both. To
+  run a locally-built engine instead, set `NEOPS_WORKFLOW_ENGINE_IMAGE` (e.g.
+  `export NEOPS_WORKFLOW_ENGINE_IMAGE=neops-workflow-engine:latest`) before
+  `make local-lab-up`. Unset, it defaults to the published engine.
   `NEOPS_WEB_CLIENT_IMAGE` and `NEOPS_WORKER_SDK_IMAGE` work the same way — see
   `.env.example`.
 - Host resources: the 5 SR Linux nodes are RAM/CPU-hungry (budget a few GB) and

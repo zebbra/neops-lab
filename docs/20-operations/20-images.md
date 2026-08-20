@@ -49,7 +49,7 @@ Interface *descriptions* are not baked into the image: containerlab `exec`s `dev
 
 ### `neops-lab-bootstrap`
 
-A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, POSTs every `workflows/*.yaml` to the engine's `/workflow-definition`, and exits. `docker compose wait lab_bootstrap` in `local-lab-up` blocks on that exit and propagates the code.
+A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, publishes every `workflows/*.yaml` through the engine's `POST /workflow-definition/publish`, and exits. Publishing is idempotent: an unchanged document answers `200 unchanged`, which is the normal outcome of re-running `make local-lab-up`. Published content is immutable, so *editing* a workflow without bumping its version answers `409` and fails the target — bump `majorVersion`/`minorVersion`/`patchVersion` instead. Engines older than [`068753a0`](https://github.com/zebbra/neops-workflow-engine/commit/068753a0) have no publish route; `register.py` falls back to the legacy `POST /workflow-definition` on a 404. `docker compose wait lab_bootstrap` in `local-lab-up` blocks on that exit and propagates the code.
 
 ## Pulled — the NeOps control plane
 
@@ -58,7 +58,7 @@ A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `re
 | `cms` | `quay.io/zebbra/neops-cms-free:develop` | — (not overridable) |
 | `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine:develop` | `NEOPS_WORKFLOW_ENGINE_IMAGE` |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
-| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | `NEOPS_WORKER_SDK_IMAGE` |
+| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` ⚠️ **unusable — build locally** | `NEOPS_WORKER_SDK_IMAGE` |
 
 Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:5-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
 
@@ -84,7 +84,17 @@ Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}
 
 ### Why you would
 
-- **Worker SDK** — the most common case. The lab depends on `fb.base.neops.io/global_discover_network:0.1.0` shipping inside the worker image; point `NEOPS_WORKER_SDK_IMAGE` at a local build to exercise a function-block change before it is released.
+- **Worker SDK — not optional today.** The published `develop` tag is built from
+  `neops-worker-sdk-py`'s `develop`, where `neops/` holds only `.gitkeep` files and
+  the Dockerfile copies neither `neops/` nor `README.md`. The container therefore
+  dies at start (`OSError: Readme file does not exist: README.md`) and carries no
+  function blocks. The lab depends on
+  `fb.base.neops.io/global_discover_network:0.1.0` shipping *inside* the worker
+  image — it is not bind-mounted from here — and that block plus the `COPY ./neops`
+  that ships it live on the SDK's `feature/technopark` branch (open PR
+  [#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127)). Until it merges
+  and CI republishes the tag, build the image yourself and point
+  `NEOPS_WORKER_SDK_IMAGE` at it.
 - **Workflow engine** — discovery emits a few hundred `Interface` rows in one job result, so it needs an engine with the large-payload and reference-resolution fixes. If the published `develop` tag lags, run a local build.
 - **Web client** — to preview UI changes against a populated CMS.
 

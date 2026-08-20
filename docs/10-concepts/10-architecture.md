@@ -75,7 +75,7 @@ graph LR
   worker -- "URL_BLACKBOARD<br/>http://workflow_engine:3030" --> engine
   worker -- "SSH 22" --> dev1
   worker -- "SSH 22" --> dev2
-  boot -- "POST /workflow-definition" --> engine
+  boot -- "POST /workflow-definition/publish" --> engine
 ```
 
 `lab-net` is declared by `docker-compose.worker.yml` with an explicit IPAM subnet of `172.30.0.0/24`, and containerlab's topology sets `mgmt.network: lab-net` with the same subnet. That is the join: compose creates the bridge, containerlab attaches the devices to it at their fixed `mgmt-ipv4`, and the worker — a member of both networks — can reach the engine by service name *and* the devices by IP.

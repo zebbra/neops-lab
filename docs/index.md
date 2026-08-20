@@ -108,7 +108,7 @@ graph TB
   wc --> cms
   monitor --> engine
   engine --> cms
-  boot -- "POST /workflow-definition" --> engine
+  boot -- "POST /workflow-definition/publish" --> engine
   worker -- "poll blackboard" --> engine
   worker -- "SSH :22" --> frr
   worker -- "SSH :22" --> srl

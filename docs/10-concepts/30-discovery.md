@@ -22,7 +22,7 @@ Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.2.0` — package `wf.l
 
 ### How registration works
 
-`bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then POSTs each `workflows/*.yaml` to `/workflow-definition` as `{"workflow": <parsed yaml>}`. It is **idempotent**: a `409`, or any response whose body mentions "already exists", counts as success. A real failure exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-lab-up` fails rather than continuing into a broken discovery.
+`bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then publishes each `workflows/*.yaml` through `POST /workflow-definition/publish` as `{"workflow": <parsed yaml>}`. It is **idempotent**: `201` means the version was written, `200` means this version already held exactly this document. Published content is **immutable**, so a `409` is a real failure — it means the version exists with *different* content, and the fix is to bump `majorVersion`/`minorVersion`/`patchVersion` in the YAML rather than edit in place. A `422` means the engine computed a higher version floor than the document declares. Either exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-lab-up` fails rather than continuing into a broken discovery. Against an engine from before the publish route the script falls back to the legacy `POST /workflow-definition` on a `404`.
 
 ## The function block
 

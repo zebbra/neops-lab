@@ -48,13 +48,73 @@ A `409` or an "already exists" body is treated as success, so a real failure her
 
 1. **You raced the worker.** The worker registers its function blocks with the engine *asynchronously* after its container starts. `make local-lab-up` and `make local-lab-discover` both run `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` first, which polls the engine's per-function-block worker registry until an online worker exists. Run the make target rather than `run_workflow` directly.
 
-2. **The image does not carry the block.** `neops/fb` ships *inside* the published `neops-worker-sdk` image; it is not mounted from this repo. If you pinned `NEOPS_WORKER_SDK_IMAGE` at a local or older build, check it:
+2. **The image does not carry the block.** `neops/fb` ships *inside* the `neops-worker-sdk` image; it is not mounted from this repo. Check what you are running:
 
     ```bash
     docker compose exec worker ls /app/neops/fb
     ```
 
+    ⚠️ The published `quay.io/zebbra/neops-worker-sdk:develop` tag **does not carry it** — see the next entry.
+
 See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10-concepts/40-container-paths.md).
+
+---
+
+## The worker container exits immediately / `no online worker` at `wait_ready`
+
+**Where:** `make local-lab-up` burns its full `wait_ready` budget and gives up with
+
+```
+timeout: no online worker for fb.base.neops.io/global_discover_network:0.1.0 within 180s
+```
+
+and `docker compose logs worker` ends in
+
+```
+OSError: Readme file does not exist: README.md
+```
+
+**Cause:** you are running the published `quay.io/zebbra/neops-worker-sdk:develop`
+image. It is built from `neops-worker-sdk-py`'s `develop` branch, where `neops/`
+contains only `.gitkeep` files and the Dockerfile copies neither `neops/` nor
+`README.md`. `CMD ["uv", "run", "neops_worker"]` installs the project at container
+start, hatchling reads `readme = "README.md"`, and the container dies before the
+worker ever connects. Even if it started, it would register no function blocks.
+
+**Fix:** build the image from the SDK branch that has the function blocks
+(open PR [zebbra/neops-worker-sdk-py#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127))
+and point the lab at it:
+
+```bash
+git -C ../neops-worker-sdk-py switch feature/technopark
+make -C ../neops-worker-sdk-py build-docker          # -> neops-worker-sdk:latest
+docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global'
+echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
+make local-lab-up
+```
+
+This entry disappears once #127 merges and CI republishes the `develop` tag.
+
+---
+
+## `bootstrap` fails with `404` or `409` on the workflow definition
+
+**Where:** `docker compose wait lab_bootstrap` returns non-zero and
+`docker compose logs lab_bootstrap` shows a `FAILED` line.
+
+- **`409`** — the version already exists with *different* content. Published
+  workflow definitions are **immutable**; editing `workflows/*.yaml` in place and
+  re-running is exactly what triggers this. Bump
+  `majorVersion`/`minorVersion`/`patchVersion` in the YAML, and update the
+  matching `wf.lab.neops.io/simple_lab_discovery:<version>` in the `Makefile`'s
+  `local-lab-discover` recipe.
+- **`422`** — the document is publishable but the engine computed a higher
+  version floor than the document declares. Raise the version.
+- **A `404` handled silently** — the engine predates
+  [`068753a0`](https://github.com/zebbra/neops-workflow-engine/commit/068753a0)
+  and has no `/workflow-definition/publish`; `register.py` falls back to the
+  legacy `POST /workflow-definition`. Nothing to fix, but you are on an old
+  engine image.
 
 ---
 
