@@ -22,7 +22,8 @@ services:
       - CORS_ORIGIN_ALLOW_ALL=True
       - NEOPS_PLUGINS=neops_auth_static_api_key neops_auth_django neops_permissions_simple
       - DJANGO_ALLOW_ASYNC_UNSAFE=True
-      - AUTH_PROVIDERS_CONFIG_PATH="./auth_providers_with_secret.json"
+      # No quotes: in compose list form they become part of the value.
+      - AUTH_PROVIDERS_CONFIG_PATH=./auth_providers_with_secret.json
       # The web client's GraphQL `appSettings.oidcConfig` query reads this file via the CMS resolver
       # (neops/core/schema.py: open(settings.OIDC_CONFIG_PATH)). When the file is missing the field
       # returns null; the web client's Angular bootstrap (APP_INITIALIZER -> OidcSecurityService.checkAuth())
