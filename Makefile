@@ -49,6 +49,11 @@ py39-check:
 shell-syntax:
 	bash -n apply_cms_config
 	bash -n containerlab
+	bash -n doctor
+
+# Host preflight; read-only apart from pulling busybox / the clab image.
+doctor:
+	@./doctor
 
 check: lint typeCheck test py39-check shell-syntax
 
@@ -243,6 +248,6 @@ apply-cms-config:
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
-.PHONY: build-docker lint format typeCheck test py39-check shell-syntax check lab-jwt clab-suid \
+.PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config

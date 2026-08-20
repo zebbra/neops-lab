@@ -112,6 +112,10 @@ convention = "google"
 ]
 # Host scripts open URLs built from local CLI arguments, not user input.
 "run_workflow" = ["S310"]
+"tools/check_subnets.py" = [
+  "S603", "S607", # runs the local docker CLI with fixed arguments
+  "PLR2004",      # the IP version literal
+]
 "wait_ready" = ["S310"]
 "bootstrap/register.py" = [
   "PLR2004", # HTTP status codes read better as literals than as named constants

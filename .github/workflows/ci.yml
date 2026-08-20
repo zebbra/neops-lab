@@ -55,7 +55,7 @@ jobs:
 
       # macOS ships bash 3.2; parse the entry points with a real 3.2 shell.
       - name: Shell entry points parse under bash 3.2
-        run: docker run --rm -v "$PWD:/w" -w /w bash:3.2 bash -c 'bash -n apply_cms_config && bash -n containerlab'
+        run: docker run --rm -v "$PWD:/w" -w /w bash:3.2 bash -c 'bash -n apply_cms_config && bash -n containerlab && bash -n doctor'
 
       - name: Summary
         run: echo "### Ruff/pyrefly/pytest/py39/shell passed ✅" >> $GITHUB_STEP_SUMMARY
