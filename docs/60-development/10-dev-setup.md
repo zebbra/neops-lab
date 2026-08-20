@@ -28,6 +28,8 @@ make check     # lint + typeCheck + test
 | `make format` | `uv run ruff format .` then `uv run ruff check --fix .` |
 | `make typeCheck` | `uv run pyrefly check` |
 | `make test` | `uv run pytest tests` |
+| `make py39-check` | imports the host scripts under Python 3.9 (`uv run --python 3.9`) |
+| `make shell-syntax` | `bash -n` over the bash entry points |
 
 Ruff is configured with line length 120, target `py312`, and a broad rule selection (`F E W I B UP N S A C4 SIM RET PIE ARG PTH PERF PT PL RUF`) with `E501` delegated to the formatter.
 
@@ -35,7 +37,7 @@ Ruff is configured with line length 120, target `py312`, and a broad rule select
 
 `.github/workflows/ci.yml`, on pushes to `main`/`develop` and on every PR:
 
-1. **`lint-test`** on `ubuntu-latest` — `uv sync --group dev --frozen`, then ruff format check, ruff lint, pyrefly, pytest. Exactly `make check`.
+1. **`lint-test`** on `ubuntu-latest` — `uv sync --group dev --frozen`, then ruff format check, ruff lint, pyrefly, pytest, `make py39-check`, `make shell-syntax`, a parse of the bash entry points with a real bash 3.2 (the `bash:3.2` image — the shell macOS ships), and a check that `gen_clab_topology` reproduces the committed parameter files. Exactly `make check` plus the 3.2 parse.
 2. **`docker`** on the self-hosted `hetzner` runner, gated on `lint-test` — `make build-docker`. The images are local-only, so this job exists purely to make a broken Dockerfile fail in CI rather than on a developer's first `make local-lab-up`.
 
 There is no job that stands the lab up: 15 device containers and a few GB of SR Linux RAM do not belong in CI.
@@ -73,9 +75,10 @@ Three callers depend on the bare names:
 
 Renaming them to `*.py` is not an option — it would break every caller.
 
-!!! note "`apply_cms_config` is bash, not Python"
-    It is deliberately absent from both include lists. Do not "fix" that by
-    adding it — ruff would try to parse shell as Python.
+!!! note "`apply_cms_config`, `containerlab` and `doctor` are bash, not Python"
+    They are deliberately absent from both include lists. Do not "fix" that by
+    adding them — ruff would try to parse shell as Python. Keep them bash-3.2
+    and BSD-userland compatible; `make shell-syntax` parses them.
 
     Note also that CI lints `.` (a directory walk) rather than an explicit file
     list, because `extend-include` only applies to discovery.

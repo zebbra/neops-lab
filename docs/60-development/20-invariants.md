@@ -66,3 +66,15 @@ Each wait exists because of a real, reproduced failure, and each has a distincti
 ## 12. Everything generated goes under `generated/`, and it is git-ignored
 
 Never commit it — containerlab mints TLS private keys in there. The one exception to "generated output is ignored" is the three `workflow-execution-parameters/*.json` files, which *are* tracked precisely so the tests can diff against them (invariant 5).
+
+## 13. containerlab is only ever called as `./containerlab`
+
+In the Makefile (`$(CONTAINERLAB)`) and in every doc. The launcher runs `ghcr.io/srl-labs/clab` privileged through the docker socket on both hosts (`CLAB_NATIVE=/path` selects a host binary). The repo is mounted at the **same absolute path** inside that container: containerlab resolves the topology's relative binds (invariant 4) to absolute host paths for the daemon, so the path inside must equal the daemon's — mounting the repo at `/work` would give every FRR node a silently empty bind. **Do not "tidy" it.**
+
+## 14. Every project network has a fixed subnet
+
+`lab-net` carries `172.30.0.0/24` and the compose `default` network is pinned to `172.30.1.0/24` — docker auto-allocates subnet-less networks from its `172.16/12` pool, which on a busy host collides with the lab's fixed `/24` ("Pool overlaps"). The subnet is single-sourced in `gen_clab_topology` (`LAB_SUBNET`) and cross-checked by `tests/test_host_invariants.py`. A new network in either compose file needs a fixed subnet too.
+
+## 15. Host scripts import under Python 3.9
+
+A stock macOS ships `/usr/bin/python3` 3.9, where a PEP 604 `X | None` annotation is evaluated at import time and raises. Every host script therefore starts with `from __future__ import annotations`. `make py39-check` (in `make check` and CI) proves it at runtime; ruff at `target-version = "py312"` will **not** warn you.

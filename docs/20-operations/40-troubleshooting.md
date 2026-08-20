@@ -11,6 +11,7 @@ tags: [operations, debugging]
 ## Start here
 
 ```bash
+make doctor                       # host preflight: RAM, subnets, mount, images
 export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 docker compose ps                 # what is running, what exited
 make local-lab-logs               # worker + lab_bootstrap, followed
@@ -19,6 +20,16 @@ docker compose logs cms           # CMS startup crashes land here
 ```
 
 Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the `worker` or `lab_bootstrap` services — the base compose file does not declare them. The make targets set it themselves.
+
+---
+
+## `Pool overlaps with other one on this address space`
+
+**Where:** `docker compose up`, creating `lab-net` or the project `default` network.
+
+**Cause:** another docker network overlaps `172.30.0.0/23`. On a host with many compose projects docker's auto-assigned `/16` blocks run out and some other project's `default` network landed on `172.30.0.0/16` before the lab's networks existed. (The lab's own networks all carry fixed subnets, so they never compete with each other.)
+
+**Fix:** `make doctor` names the overlapping network. If it is an unused leftover (`docker network inspect <name>` shows no containers): `docker network rm <name>` — the owning project's next `up` recreates it. If it is genuinely in use, stop that stack first.
 
 ---
 
