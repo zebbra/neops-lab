@@ -56,7 +56,7 @@ Related: **the scope is `Global`, capital G.** The CMS image seeds a scope by th
 
 ```text
 docker compose wait lab_bootstrap    # workflow registration
-containerlab deploy                  # SR Linux boots slowly — start it early
+./containerlab deploy --reconfigure  # SR Linux boots slowly — start it early
 ./wait_ready <fb>                    # the worker registers FBs asynchronously
 wait_devices, from inside the worker # the host has no route to lab-net on macOS
 ```

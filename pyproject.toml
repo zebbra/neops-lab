@@ -14,6 +14,9 @@ authors = [{ name = "zebbra AG" }]
 
 # The lab scripts are stdlib-only on purpose: they run on the host, before any
 # virtualenv exists, with nothing but `python3`. Keep this list empty.
+# `requires-python` covers the dev tooling only; the host scripts import under
+# Python 3.9 (the stock macOS python3) via `from __future__ import annotations`,
+# enforced by `make py39-check`.
 dependencies = []
 
 [tool.uv]
@@ -118,6 +121,7 @@ convention = "google"
 python-version = "3.12"
 project-includes = [
   "tests/**/*.py",
+  "tools/**/*.py",
   "function_blocks/**/*.py",
   # Same extension-less scripts as ruff's extend-include above.
   "gen_clab_topology",

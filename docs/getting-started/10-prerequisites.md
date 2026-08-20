@@ -1,43 +1,61 @@
 ---
 title: Prerequisites
-description: What your host needs before the first make target — Docker, containerlab with sudo-less operation, openssl, uv, and Quay pull access.
+description: What your host needs before the first make target — Docker, the containerlab launcher, openssl, python3, RAM, Quay access — and the preflight that checks it all.
 tags: [tutorial, setup]
 ---
 
 # Prerequisites
 
-*Check these first. Every one of them fails late and confusingly if you skip it.*
+*Check these first. Every one of them fails late and confusingly if you skip it — which is why `make doctor` exists.*
+
+## Run the preflight
+
+```bash
+make doctor
+```
+
+Read-only apart from pulling two small images. It checks the docker daemon and the RAM it has, amd64 emulation on Apple Silicon, that the repo bind-mounts at its own path, docker networks overlapping the lab's subnets, the containerlab image, and that `python3` imports the host scripts — and prints the fix next to each failure.
 
 ## Host requirements
 
 | Requirement | Why | Used by |
 |---|---|---|
-| **Docker** + `docker compose` | The whole control plane and every device container | everything |
-| **containerlab** | Wires real veth links via network namespaces — Linux only | `make local-lab-up` |
-| **`openssl`** | Mints the dev RSA keypair the CMS needs for RS256 JWTs | `make lab-jwt` |
-| **`uv`** | Runs ruff / pyrefly / pytest and the MkDocs tooling | `make check`, `make doc-*` |
+| **Docker** + `docker compose` ≥ 2.20 | The whole control plane, the devices, and containerlab itself | everything |
+| **`openssl`** | Mints the dev RSA keypair the CMS needs for RS256 JWTs (OpenSSL 3 or macOS LibreSSL) | `make lab-jwt` |
+| **`python3` ≥ 3.9** | The host scripts are stdlib-only and import under a stock macOS `/usr/bin/python3` | `gen_clab_topology`, `run_workflow`, `wait_ready` |
+| **`uv`** | ruff / pyrefly / pytest and the MkDocs tooling | `make check`, `make doc-*` |
 | **Quay pull access** | The CMS, engine, web client and worker images are private | `make local-env-init` |
-| **RAM/CPU** | The 5 SR Linux nodes are hungry — budget a few GB | `make local-lab-up` |
+| **RAM** | 5 SR Linux nodes (≈1.5–2 GB each) + Elasticsearch + control plane ≈ **14–16 GB** for containers | `make local-lab-up` |
+| **A worker image with the discovery block** | Published with [neops-worker-sdk-py#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127); until then build it from a checkout | [Images](../20-operations/20-images.md) |
 
-!!! note "The lab scripts themselves need nothing but `python3`"
-    `gen_clab_topology`, `gen_device_configs`, `run_workflow`, `wait_ready` and
-    `wait_devices` are **stdlib-only** on purpose: they run on a bare host
-    before any virtualenv exists. `uv` is only needed for the dev tooling, not
-    to run the lab.
+## containerlab — one command, both hosts, no install
 
-## containerlab and sudo-less operation
+Every make target and every command in these docs calls **`./containerlab`**, a small launcher committed at the repo root. It runs the official `ghcr.io/srl-labs/clab` image privileged through the docker socket — on Linux exactly as on macOS — so the containerlab version is pinned (`CLAB_IMAGE`) and the host needs nothing but docker. This is containerlab's documented container mode; it needs a rootful docker daemon (podman is not supported by clab's container mode — set `CLAB_NATIVE=/path/to/containerlab` to use a host binary there).
 
-containerlab creates network namespaces and veth pairs, so it needs privileges. The make targets call `containerlab deploy` directly, with no `sudo`, so it must work password-free:
+Three things follow from the container mode:
 
-```bash
-sudo usermod -aG clab_admins $USER          # then re-login for the group to apply
-sudo chown root:root "$(command -v containerlab)"
-sudo chmod 4755 "$(command -v containerlab)" # SUID -> -rwsr-xr-x
+- The repo is mounted at the **same absolute path** inside the clab container, because containerlab hands the topology's bind paths to the docker daemon as absolute host paths. On Docker Desktop the checkout must therefore live under a shared path (`/Users`, `/Volumes`, `/private`, `/tmp` by default) and must not contain spaces — `make doctor` checks the mount round-trips.
+- containerlab's convenience entries (`/etc/hosts`, `ssh_config.d`) land inside the ephemeral container, on both hosts. Reach devices with `docker exec <node>` / `docker logs <node>` — the topology sets `prefix: ""`, so node names are container names.
+- On plain Linux the lab runtime dir (`generated/clab-neops-lab/`) is written as root; the launcher chowns it back to you after each run.
+
+Verify with the two-node probe — it confirms the whole chain (docker socket, privileged mode, veth wiring) without pulling the NeOps stack:
+
+```yaml title="clab/probe.clab.yml"
+--8<-- "../clab/probe.clab.yml"
 ```
 
-`make clab-suid` does the SUID half for you: idempotent, it prompts for sudo
-only when the bit is actually missing, and warns if you are not in
-`clab_admins`.
+```bash
+./containerlab deploy  -t clab/probe.clab.yml
+./containerlab destroy -t clab/probe.clab.yml --cleanup
+```
+
+### Native binary (optional)
+
+`CLAB_NATIVE=$(command -v containerlab)` makes the launcher exec a host
+binary instead. On Linux that path needs sudo-less operation — membership in
+`clab_admins` plus the SUID bit; `make clab-suid` does the SUID half for you:
+idempotent, it prompts for sudo only when the bit is actually missing, and
+warns if you are not in `clab_admins`.
 
 !!! warning "Re-run `make clab-suid` after every containerlab upgrade"
     A package upgrade replaces the binary and silently drops the SUID bit.
@@ -46,38 +64,17 @@ only when the bit is actually missing, and warns if you are not in
     survives the upgrade, so `id` looks fine and only the file mode gives it
     away.
 
-Verify the SUID bit is set:
+## macOS notes
 
-```bash
-ls -l "$(command -v containerlab)"   # expect -rwsr-xr-x
-```
-
-### Prove it works before the 15-node deploy
-
-The repo ships a two-node probe so you can confirm privileges *and* that a `linux`-kind FRR node accepts a `swpN` interface over a real veth link — without pulling the whole stack:
-
-```yaml title="clab/probe.clab.yml"
---8<-- "../clab/probe.clab.yml"
-```
-
-```bash
-containerlab deploy  -t clab/probe.clab.yml
-containerlab destroy -t clab/probe.clab.yml
-```
-
-A successful deploy means containerlab is ready. The failure you are checking for is `... requires root privileges`.
-
-!!! warning "Linux only"
-    containerlab wires veths through Linux network namespaces. The lab's
-    control plane runs anywhere Docker does, but the 15 devices do not come up
-    on macOS or Windows. Where macOS *does* still matter is the
-    [device-readiness poll](../20-operations/40-troubleshooting.md#devices-never-become-reachable),
-    which deliberately runs from inside the lab network for exactly this
-    class of reason.
+- **Docker Desktop VM sizing.** The VM's memory is the whole budget: Settings → Resources → Memory ≥ **16 GB** (the 8 GB default cannot hold 5 SR Linux nodes plus Elasticsearch), then *Apply & restart*.
+- **Apple Silicon.** The four `quay.io/zebbra` images are amd64-only; enable *Use Rosetta for x86_64/amd64 emulation* (Settings → General) or they run under QEMU, much slower. containerlab, FRR and SR Linux are native arm64.
+- **No route from the Mac to `lab-net`** (`172.30.0.0/24`): the make targets poll device readiness from inside the worker, and nothing in these docs reaches a device from the host.
+- A slow first run wants larger wait budgets, not fewer waits: `make local-lab-up WAIT_READY_TIMEOUT=600 WAIT_DEVICES_TIMEOUT=600`.
+- `make doc-fix-symlinks` needs `brew install symlinks`; nothing else in the docs workflow differs.
 
 ## Registry access
 
-The lab is a **consumer of published images**. Four of the services pull from `quay.io/zebbra`, which is a **private** organisation — an anonymous pull is rejected with `401`:
+Four services pull from `quay.io/zebbra`, a **private** organisation — an anonymous pull is rejected with `401`:
 
 ```bash
 docker login quay.io
@@ -88,51 +85,33 @@ docker login quay.io
 | `quay.io/zebbra/neops-cms-free:develop` | `cms` |
 | `quay.io/zebbra/neops-workflow-engine:develop` | `workflow_engine`, `workflow-engine-client` |
 | `quay.io/zebbra/neops-web-client:develop` | `web_client` |
-| `quay.io/zebbra/neops-worker-sdk:develop` | `worker` |
+| `quay.io/zebbra/neops-worker-sdk:develop` | `worker` — see [Images](../20-operations/20-images.md) |
 
-`ghcr.io/nokia/srlinux:26.3` (the SR Linux devices) is public and needs no login.
+`ghcr.io/nokia/srlinux:26.3` (the SR Linux devices) and `ghcr.io/srl-labs/clab` (containerlab) are public and need no login.
 
 !!! tip "`NPM_TOKEN` is **not** needed here"
-    Most NeOps repos require an `NPM_TOKEN` with `read:packages` to install
-    `@zebbra/*` npm packages. This repo installs no npm packages and publishes
-    nothing — Quay credentials are the only registry access it needs. (In the
-    shared dev environment `NPM_TOKEN` and `PYPI_TOKEN` are exported anyway;
-    they are simply unused by this lab.)
+    Most NeOps repos require an `NPM_TOKEN` to install `@zebbra/*` npm
+    packages. This repo installs no npm packages and publishes nothing — Quay
+    credentials are the only registry access it needs.
 
 ## Running locally-built images instead
 
-Every published image can be swapped for a local tag through an environment variable — this is how you exercise an unreleased engine or worker against the lab. Copy `.env.example` to `.env` and uncomment what you need:
+Every published image can be swapped for a local tag through an environment variable; copy `.env.example` to `.env` (docker compose reads it automatically) or export the variable:
 
 | Variable | Default |
 |---|---|
-| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine:develop` |
+| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-develop}` |
 | `NEOPS_WEB_CLIENT_IMAGE` | `quay.io/zebbra/neops-web-client:develop` |
 | `NEOPS_WORKER_SDK_IMAGE` | `quay.io/zebbra/neops-worker-sdk:develop` |
 
-```bash
-export NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest
-```
-
-!!! warning "A local tag breaks the explicit `docker compose pull` step"
-    A tag with no registry host (`neops-worker-sdk:latest`) resolves as
-    `docker.io/library/neops-worker-sdk:latest`, which does not exist, so the
-    `docker compose pull` inside `make local-env-init` / `make local-env-up`
-    **fails**. Run that step yourself with `--ignore-pull-failures` when you
-    override an image this way.
-
-    `docker compose up -d` is unaffected: every overridable service sets
-    `pull_policy: missing` (itself overridable via `NEOPS_*_PULL_POLICY`), so a
-    local image that is already present is used without contacting any
-    registry.
+Every overridable service sets `pull_policy: missing`, so a local image already present is used without a registry call; the make targets pull the published tags with `--policy always --ignore-pull-failures`, so a local override tag is a warning, not an error.
 
 ## Files the lab needs but does not ship
 
-Two things are git-ignored and created for you on first run. If either is missing the stack does not start:
+Two things are git-ignored and created on first run; without them the stack does not start:
 
-- **`cms/jwt/{private,public}.pem`** — dev-only RSA keypair minted by `make lab-jwt`. Newer `neops-cms-free` images require it for RS256 JWT issuance and crash at startup (`token_service check_keys`) without it. Idempotent, so re-running never invalidates issued tokens. These are throwaway lab credentials, never secrets.
-- **`cms_api_key.env`** — the CMS API key the workflow engine authenticates with, minted by `make local-env-init`.
-
-`make local-env-init` depends on `lab-jwt`, so in practice you only run the four quickstart commands.
+- **`cms/jwt/{private,public}.pem`** — dev-only RSA keypair minted by `make lab-jwt` (`openssl genpkey`, so OpenSSL and LibreSSL emit the same PKCS#8 PEM). Idempotent; a throwaway lab credential.
+- **`cms_api_key.env`** — the CMS API key the engine authenticates with, minted by `make local-env-init`.
 
 ## Next
 

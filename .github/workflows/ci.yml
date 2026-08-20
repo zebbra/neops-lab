@@ -48,8 +48,17 @@ jobs:
       - name: Run tests
         run: uv run pytest tests
 
+      # The host scripts must import under Python 3.9 (the stock macOS
+      # python3); ruff at py312 accepts syntax that breaks there.
+      - name: Host scripts import under Python 3.9
+        run: make py39-check
+
+      # macOS ships bash 3.2; parse the entry points with a real 3.2 shell.
+      - name: Shell entry points parse under bash 3.2
+        run: docker run --rm -v "$PWD:/w" -w /w bash:3.2 bash -c 'bash -n apply_cms_config && bash -n containerlab'
+
       - name: Summary
-        run: echo "### Ruff/pyrefly/pytest passed ✅" >> $GITHUB_STEP_SUMMARY
+        run: echo "### Ruff/pyrefly/pytest/py39/shell passed ✅" >> $GITHUB_STEP_SUMMARY
 
   docker:
     name: Build lab images (no push)

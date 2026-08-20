@@ -15,7 +15,7 @@ export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 docker compose ps                 # what is running, what exited
 make local-lab-logs               # worker + lab_bootstrap, followed
 docker compose logs cms           # CMS startup crashes land here
-containerlab inspect -t generated/neops-lab.clab.json
+./containerlab inspect -t generated/neops-lab.clab.json
 ```
 
 Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the `worker` or `lab_bootstrap` services — the base compose file does not declare them. The make targets set it themselves.
@@ -144,7 +144,7 @@ This entry disappears once #127 merges and CI republishes the `develop` tag.
 
 ```bash
 docker logs spine-01
-containerlab inspect -t generated/neops-lab.clab.json
+./containerlab inspect -t generated/neops-lab.clab.json
 ```
 
 !!! warning "Never replace a wait with a `sleep`"
@@ -211,21 +211,17 @@ make apply-cms-config
 
 ---
 
-## `containerlab deploy` says it requires root privileges
+## `containerlab deploy` fails to start or cannot reach docker
 
-**Cause:** containerlab is not set up for sudo-less operation. The make targets never call `sudo`. The usual trigger is a **containerlab upgrade**: the new binary is installed without the SUID bit, while your `clab_admins` membership survives — so `id` still looks right and only `ls -l "$(command -v containerlab)"` shows the missing `s`.
+**Cause:** `./containerlab` runs containerlab in a container through the docker socket; it needs a rootful docker daemon and, on Docker Desktop, the repo under a shared path. `make doctor` checks both.
 
-**Fix:**
+With `CLAB_NATIVE` (a host binary) the classic failure is *"This containerlab command requires root privileges or root via SUID to run"* — usually after a **containerlab upgrade**: the new binary is installed without the SUID bit while your `clab_admins` membership survives, so `id` still looks right and only `ls -l "$(command -v containerlab)"` shows the missing `s`. `make clab-suid` restores it (idempotent).
 
-```bash
-make clab-suid
-```
-
-Idempotent, and it only asks for a password when the bit is actually missing. For the full setup (including the `clab_admins` group) see [Prerequisites](../getting-started/10-prerequisites.md#containerlab-and-sudo-less-operation). Then confirm with the two-node probe:
+**Fix:** `make doctor`, or `make clab-suid` for the native path; details in [Prerequisites](../getting-started/10-prerequisites.md#containerlab--one-command-both-hosts-no-install). Then confirm with the two-node probe:
 
 ```bash
-containerlab deploy  -t clab/probe.clab.yml
-containerlab destroy -t clab/probe.clab.yml
+./containerlab deploy  -t clab/probe.clab.yml
+./containerlab destroy -t clab/probe.clab.yml --cleanup
 ```
 
 ---
@@ -250,4 +246,4 @@ make local-lab-down local-env-prune
 make local-env-init && make local-lab-up && make local-lab-discover
 ```
 
-`local-lab-down` tolerates there being no deployed lab (the `containerlab destroy` line is prefixed with `-`, so `make` continues on failure). `local-env-prune` drops the Elasticsearch and Postgres volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.
+`local-lab-down` tolerates there being no deployed lab (the `./containerlab destroy` line is prefixed with `-`, so `make` continues on failure). `local-env-prune` drops the Elasticsearch and Postgres volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.

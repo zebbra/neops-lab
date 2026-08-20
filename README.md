@@ -44,32 +44,37 @@ repo's invariants.
 
 ## Prerequisites
 
-- **Docker** + docker compose.
-- **containerlab** (Linux host — it wires real veths via network namespaces).
-  Sudo-less operation is required so the make targets can `containerlab deploy`
-  without a password:
+Supported hosts: **Linux and macOS** (Docker Desktop or OrbStack). Run the
+preflight first — it checks everything below and prints the fix next to each
+failure:
+
+```bash
+make doctor
+```
+
+- **Docker** + `docker compose` ≥ 2.20. `quay.io/zebbra` is private:
+  `docker login quay.io`.
+- **containerlab** needs no install: every make target and documented command
+  uses `./containerlab`, which runs the official `ghcr.io/srl-labs/clab` image
+  through the docker socket — the same command and the same pinned containerlab
+  version on both hosts. `CLAB_IMAGE` overrides the version;
+  `CLAB_NATIVE=/path/to/containerlab` selects a host binary instead. Verify
+  with the 2-node probe:
   ```bash
-  sudo usermod -aG clab_admins $USER          # then re-login for the group to apply
-  sudo chown root:root "$(command -v containerlab)"
-  sudo chmod 4755 "$(command -v containerlab)" # SUID -> -rwsr-xr-x
+  ./containerlab deploy  -t clab/probe.clab.yml
+  ./containerlab destroy -t clab/probe.clab.yml --cleanup
   ```
-  `make clab-suid` does the SUID half of that for you (idempotent, prompts for
-  sudo only when the bit is actually missing) and warns if you are not in
-  `clab_admins`. **Re-run it after every containerlab upgrade** — a package
-  upgrade replaces the binary and drops the SUID bit, after which `local-lab-up`
-  fails with `This containerlab command requires root privileges or root via
-  SUID to run`.
-  Verify: `ls -l $(command -v containerlab)` shows the `s` bit, and
-  `containerlab deploy -t clab/probe.clab.yml` (a 2-node probe) stands up
-  without the "requires root privileges" error (`containerlab destroy -t
-  clab/probe.clab.yml` to clean up).
-- **`openssl`** — `make lab-jwt` mints the dev RSA keypair under `cms/jwt/` that
-  the CMS image requires for RS256 JWT issuance. Without it the CMS crashes at
-  startup (`token_service check_keys`) and nothing else comes up. It is chained
-  into `make local-env-init`, and is idempotent, so you rarely run it directly.
-  The keypair is git-ignored: it is a throwaway lab credential, not a secret.
-- **`uv`** — only for `make test` / `make lint`; the lab itself needs nothing
-  but `python3` (all host scripts are stdlib-only).
+  Prefer a native binary instead? Set
+  `CLAB_NATIVE=$(command -v containerlab)`. On Linux that path needs the SUID
+  setup — `make clab-suid` does it (idempotent; re-run after a containerlab
+  upgrade, which replaces the binary and drops the SUID bit).
+- **`openssl`** — `make lab-jwt` mints the dev RSA keypair under `cms/jwt/`
+  that the CMS requires for RS256 JWT issuance (chained into
+  `make local-env-init`, idempotent; OpenSSL 3 and the LibreSSL a stock macOS
+  ships both work). The keypair is git-ignored: a throwaway lab credential.
+- **`python3` ≥ 3.9** — the lab itself needs nothing else; all host scripts are
+  stdlib-only and import under the `/usr/bin/python3` a stock macOS ships.
+- **`uv`** — only for `make test` / `make lint` / `make check` and the docs.
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
 - **A locally-built worker image — the published `develop` tag does not work.**
   `quay.io/zebbra/neops-worker-sdk:develop` is built from `neops-worker-sdk-py`'s
@@ -103,11 +108,18 @@ repo's invariants.
   `POST /workflow-definition/publish`. The published `develop` tag has both. To
   run a locally-built engine instead, set `NEOPS_WORKFLOW_ENGINE_IMAGE` (e.g.
   `export NEOPS_WORKFLOW_ENGINE_IMAGE=neops-workflow-engine:latest`) before
-  `make local-lab-up`. Unset, it defaults to the published engine.
+  `make local-lab-up`; `NEOPS_ENGINE_TAG=<tag>` in `.env` pins just the
+  published tag. Unset, it defaults to the published engine.
   `NEOPS_WEB_CLIENT_IMAGE` and `NEOPS_WORKER_SDK_IMAGE` work the same way — see
   `.env.example`.
-- Host resources: the 5 SR Linux nodes are RAM/CPU-hungry (budget a few GB) and
-  boot slower than FRR, so the first `make local-lab-up` takes a couple of minutes.
+- **Host resources**: the 5 SR Linux nodes want ≈1.5–2 GB each; with
+  Elasticsearch and the control plane the lab needs roughly **14–16 GB** for
+  containers. On macOS that is the Docker Desktop **VM** budget (Settings →
+  Resources → Memory; the 8 GB default is too small). On Apple Silicon enable
+  *Use Rosetta for x86_64/amd64 emulation* — the `quay.io/zebbra` images are
+  amd64-only. The first `make local-lab-up` takes a couple of minutes; on a
+  slow host raise the wait budgets
+  (`make local-lab-up WAIT_READY_TIMEOUT=600 WAIT_DEVICES_TIMEOUT=600`).
 
 ## Devices
 
@@ -185,6 +197,8 @@ scope/Global/           # table columns, drill-down and dashboard applied by app
 workflows/              # workflow YAMLs registered by the bootstrap container
 function_blocks/        # lab-local function blocks, auto-discovered by the worker
 bootstrap/              # one-shot container that POSTs every workflow YAML
+containerlab            # containerlab launcher (runs ghcr.io/srl-labs/clab via the docker socket)
+doctor                  # host preflight (docker, RAM, mount round-trip, subnets, images)
 apply_cms_config        # seeds the neops role + Global scope in the CMS
 run_workflow            # triggers a workflow execution and waits for a terminal state
 wait_ready              # blocks until the worker's function block has an online worker

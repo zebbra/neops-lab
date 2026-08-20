@@ -5,6 +5,10 @@ include .make_scripts/project-infrastructure/project-infrastructure-makefile
 # This includes make: sync-infrastructure-assets, github-autodelete-merged-branches, github-set-branch-protections and github-set-default-branch
 include .make_scripts/release-management/release-management-makefile
 # This includes make: tag-major, tag-major-beta, tag-minor, tag-minor-beta, tag-patch, tag-patch-beta, tag-latest-beta, tag-major-minor-ruleset, hard-reset-tags, check-for-releases and sync-release-assets.
+
+# containerlab launcher: runs ghcr.io/srl-labs/clab through the docker socket,
+# the same on Linux and macOS (see the header of ./containerlab).
+CONTAINERLAB ?= ./containerlab
 # -----------------------------------------------------------------------------
 # Images built from this repo. Local tags only — nothing here is published to a
 # registry; the lab always builds its two helper images on the machine that runs
@@ -31,7 +35,17 @@ typeCheck:
 test:
 	uv run pytest tests
 
-check: lint typeCheck test
+# The host scripts must import under Python 3.9, the python3 a stock macOS
+# ships; ruff at `target-version py312` accepts syntax that breaks there.
+py39-check:
+	uv run --python 3.9 --no-project python tools/import_host_scripts.py
+
+# Syntax gate for the bash entry points (macOS ships bash 3.2).
+shell-syntax:
+	bash -n apply_cms_config
+	bash -n containerlab
+
+check: lint typeCheck test py39-check shell-syntax
 
 # Dev-only RSA keypair for the CMS. Newer neops-cms-free images require it for
 # RS256 JWT issuance and crash at startup (token_service check_keys) without it,
@@ -163,7 +177,7 @@ local-lab-up: build-docker
 	# Deploy the 15 devices with REAL point-to-point wiring onto lab-net. SR Linux
 	# boots slowly, so deploy early — before waiting on device SSH below.
 	@echo "Deploying containerlab devices (real links)..."
-	containerlab deploy -t $(CLAB_TOPO)
+	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO)
 	# The worker registers its function blocks with the engine asynchronously
 	# after its container starts. Block until an online worker exists so the
 	# "Lab is up" banner is honest and `local-lab-discover` won't race the
@@ -191,7 +205,7 @@ local-lab-up: build-docker
 local-lab-down:
 	# --cleanup removes the per-lab runtime dir (generated/clab-neops-lab); the
 	# leading `-` lets `make` continue if no lab is deployed.
-	-containerlab destroy -t $(CLAB_TOPO) --cleanup
+	-$(CONTAINERLAB) destroy -t $(CLAB_TOPO) --cleanup
 	docker compose down
 
 local-lab-discover:
@@ -211,6 +225,6 @@ apply-cms-config:
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
-.PHONY: build-docker lint format typeCheck test check lab-jwt clab-suid \
+.PHONY: build-docker lint format typeCheck test py39-check shell-syntax check lab-jwt clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config
