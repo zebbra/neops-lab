@@ -22,7 +22,12 @@ services:
       - CORS_ORIGIN_ALLOW_ALL=True
       - NEOPS_PLUGINS=neops_auth_static_api_key neops_auth_django neops_permissions_simple
       - DJANGO_ALLOW_ASYNC_UNSAFE=True
-      - AUTH_PROVIDERS_CONFIG_PATH="./auth_providers_with_secret.json"
+      # Redis backs the CMS channel layer (GraphQL subscriptions), Django cache
+      # and Celery broker, as in the production compose file and the Helm
+      # chart; neops-core configures a channel layer only when REDIS_URL is set.
+      - REDIS_URL=redis://redis:6379
+      # No quotes: in compose list form they become part of the value.
+      - AUTH_PROVIDERS_CONFIG_PATH=./auth_providers_with_secret.json
       # The web client's GraphQL `appSettings.oidcConfig` query reads this file via the CMS resolver
       # (neops/core/schema.py: open(settings.OIDC_CONFIG_PATH)). When the file is missing the field
       # returns null; the web client's Angular bootstrap (APP_INITIALIZER -> OidcSecurityService.checkAuth())
@@ -43,6 +48,8 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     command: >
       bash -c "
         python manage.py migrate &&
@@ -58,7 +65,10 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s # Gives time for migrations to run before checking
+      # Migrations and the ES index build run before the server listens;
+      # ~2 minutes under amd64 emulation. Failures count after start_period,
+      # so a genuinely broken CMS is reported that much later.
+      start_period: 150s
 
   workflow_engine:
     # Override via NEOPS_WORKFLOW_ENGINE_IMAGE (e.g. a locally-built
@@ -90,7 +100,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      # Node start + DB migrations; slower under emulation.
+      start_period: 60s
 
   workflow-engine-client:
     image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-develop}}
@@ -147,9 +158,8 @@ services:
       retries: 5
 
   redis:
-    image: redis:5-alpine
-    networks:
-      - redis-net
+    # Same major as the production compose file and the Helm chart.
+    image: redis:7-alpine
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
@@ -171,8 +181,10 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    # Heap is 2g (-Xms2g -Xmx2g); 4g covers off-heap and page cache. On
+    # Docker Desktop this limit competes with the SR Linux nodes for the VM.
     cpus: 2
-    mem_limit: 8g
+    mem_limit: 4g
     volumes:
       - elasticsearch:/usr/share/elasticsearch/data
     healthcheck:
@@ -180,6 +192,10 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+      # A cold ES 8 JVM takes ~60 s to listen on a loaded host; without a
+      # grace period the retries are used up first and every dependent
+      # service aborts with "dependency elasticsearch failed to start".
+      start_period: 90s
 
 volumes:
   elasticsearch:
@@ -188,5 +204,12 @@ volumes:
     driver: local
 
 networks:
-  redis-net:
-    driver: "bridge"
+  # Fixed subnet so no network in this project is auto-allocated: docker hands
+  # auto-allocated networks the next free /16 from its 172.16/12 pool, and on a
+  # host with many projects that can be 172.30.0.0/16 — which blocks lab-net's
+  # fixed 172.30.0.0/24 with "Pool overlaps". With every subnet pinned, the
+  # allocator never competes with the lab.
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.1.0/24

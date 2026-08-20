@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Host preflight for the lab: the checks that fail late and confusingly when
+# skipped. Pulls busybox and the containerlab image if absent; changes nothing
+# else. Exit 1 when a check fails; the fix is printed next to each failure.
+
+set -u
+cd "$(dirname "$0")"
+
+MIN_VM_MEM_GIB=${MIN_VM_MEM_GIB:-14}
+# Keep in sync with the default in ./containerlab.
+CLAB_IMAGE=${CLAB_IMAGE:-$(sed -n 's/^CLAB_IMAGE=.*:-\(ghcr[^}]*\)}$/\1/p' containerlab)}
+
+fails=0
+ok()   { printf '  [ ok ] %s\n' "$1"; }
+warn() { printf '  [warn] %s\n' "$1"; [ -n "${2:-}" ] && printf '         -> %s\n' "$2"; }
+fail() { printf '  [FAIL] %s\n' "$1"; [ -n "${2:-}" ] && printf '         -> %s\n' "$2"; fails=$((fails+1)); }
+
+os=$(uname -s); arch=$(uname -m)
+echo "neops-lab doctor — $os $arch, $(pwd)"
+echo
+
+echo "Docker"
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    fail "docker daemon not reachable" "start Docker (Desktop) / the docker service"
+else
+    ok "docker $(docker version -f '{{.Server.Version}}' 2>/dev/null) ($(docker info -f '{{.OperatingSystem}}' 2>/dev/null))"
+    mem=$(docker info -f '{{.MemTotal}}' 2>/dev/null || echo 0)
+    gib=$(( mem / 1024 / 1024 / 1024 ))
+    if [ "$gib" -ge "$MIN_VM_MEM_GIB" ]; then
+        ok "docker has ${gib} GiB RAM"
+    else
+        hint="the lab (5 SR Linux + Elasticsearch + control plane) needs about ${MIN_VM_MEM_GIB} GiB"
+        [ "$os" = "Darwin" ] && hint="$hint — Docker Desktop: Settings > Resources > Memory, then Apply & restart"
+        fail "docker has only ${gib} GiB RAM" "$hint"
+    fi
+    if [ "$os" = "Darwin" ] && [ "$arch" = "arm64" ]; then
+        if docker run --rm --platform linux/amd64 busybox true >/dev/null 2>&1; then
+            ok "amd64 emulation works (the quay.io/zebbra images are amd64-only)"
+            warn "prefer Rosetta over QEMU for them" "Docker Desktop: Settings > General > Use Rosetta for x86_64/amd64 emulation"
+        else
+            fail "cannot run amd64 images" "enable Rosetta/QEMU emulation in Docker Desktop (Settings > General)"
+        fi
+    fi
+fi
+echo
+
+echo "Repository path"
+root=$(pwd -P)
+case "$root" in
+    *' '*) fail "repo path contains spaces: $root" "containerlab bind-mounts this path; move the checkout" ;;
+    *) ok "no spaces in $root" ;;
+esac
+if docker info >/dev/null 2>&1; then
+    if docker run --rm -v "$root:$root" -w "$root" busybox test -f Makefile >/dev/null 2>&1; then
+        ok "repo is visible to containers at its own path (bind mount round-trips)"
+    else
+        fail "bind-mounting $root into a container does not show the repo" \
+             "Docker Desktop: the checkout must live under a shared path (Settings > Resources > File sharing)"
+    fi
+    echo
+    echo "Networks"
+    if out=$(python3 tools/check_subnets.py 2>&1); then
+        ok "$out"
+    else
+        fail "$(printf '%s' "$out" | head -1)" "$(printf '%s' "$out" | tail -1)"
+    fi
+    echo
+    echo "containerlab"
+    if [ -n "$CLAB_IMAGE" ] && { docker image inspect "$CLAB_IMAGE" >/dev/null 2>&1 || docker pull -q "$CLAB_IMAGE" >/dev/null 2>&1; }; then
+        ok "$CLAB_IMAGE available (./containerlab runs it through the docker socket)"
+    else
+        fail "containerlab image ${CLAB_IMAGE:-<unset>} not available" "docker pull $CLAB_IMAGE (or set CLAB_IMAGE)"
+    fi
+fi
+echo
+
+echo "Python"
+if python3 tools/import_host_scripts.py >/dev/null 2>&1; then
+    ok "python3 $(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])') imports the host scripts"
+else
+    fail "python3 cannot import the host scripts" "python3 >= 3.9 required (macOS: xcode-select --install)"
+fi
+echo
+
+if [ "$fails" -gt 0 ]; then
+    echo "$fails check(s) FAILED — fix the items above, then re-run 'make doctor'."
+    exit 1
+fi
+echo "All checks passed. Next: make local-env-init local-lab-up local-lab-discover"

@@ -9,6 +9,11 @@ include .make_scripts/release-management/release-management-makefile
 # containerlab launcher: runs ghcr.io/srl-labs/clab through the docker socket,
 # the same on Linux and macOS (see the header of ./containerlab).
 CONTAINERLAB ?= ./containerlab
+
+# Wait budgets (seconds). Defaults suit a native Linux host; a Mac booting the
+# SR Linux nodes against a shared VM raises these rather than removing a wait.
+WAIT_READY_TIMEOUT ?= 180
+WAIT_DEVICES_TIMEOUT ?= 240
 # -----------------------------------------------------------------------------
 # Images built from this repo. Local tags only — nothing here is published to a
 # registry; the lab always builds its two helper images on the machine that runs
@@ -44,6 +49,11 @@ py39-check:
 shell-syntax:
 	bash -n apply_cms_config
 	bash -n containerlab
+	bash -n doctor
+
+# Host preflight; read-only apart from pulling busybox / the clab image.
+doctor:
+	@./doctor
 
 check: lint typeCheck test py39-check shell-syntax
 
@@ -53,12 +63,14 @@ check: lint typeCheck test py39-check shell-syntax
 # cannot start the stack until this has run once. Idempotent: an existing
 # keypair is left alone, so re-running never invalidates issued tokens.
 # The keys are git-ignored; they are throwaway lab credentials, never secrets.
+# `genpkey` rather than `genrsa`: OpenSSL 3 and the LibreSSL a stock macOS
+# ships then emit the same PKCS#8 PEM.
 lab-jwt:
 	@mkdir -p cms/jwt
 	@if [ -f cms/jwt/private.pem ] && [ -f cms/jwt/public.pem ]; then \
 		echo "cms/jwt keypair already present — skipping"; \
 	else \
-		openssl genrsa -out cms/jwt/private.pem 2048 && \
+		openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out cms/jwt/private.pem && \
 		openssl rsa -in cms/jwt/private.pem -pubout -out cms/jwt/public.pem && \
 		echo "generated cms/jwt/{private,public}.pem"; \
 	fi
@@ -78,8 +90,16 @@ local-env-init: lab-jwt
 	# `pull_policy: missing`, so a local image already present is used as-is.
 	docker compose pull --policy always --ignore-pull-failures
 	docker compose up -d
-	# generate_api_key prints the key on the last non-empty line (no `api key:` label in current CMS image)
-	echo "NEOPS_CMS_TOKEN=$$(docker compose exec -T cms ./manage.py generate_api_key 1 workflow 2>/dev/null | awk 'NF{l=$$0}END{print l}')" > cms_api_key.env
+	# Mint the engine's CMS API key for the `neops` user, resolving the pk by
+	# name (a re-init over a preserved volume can hold a different pk).
+	# generate_api_key prints the key on the last non-empty line (current CMS
+	# images print no `api key:` label); an empty key fails here.
+	@pk=$$(docker compose exec -T cms ./manage.py shell -c "from django.contrib.auth import get_user_model; print('PK=%s' % get_user_model().objects.get(username='neops').pk)" 2>/dev/null | sed -n 's/^PK=//p' | tr -d '\r'); \
+	test -n "$$pk" || { echo "error: could not resolve the CMS user 'neops'"; exit 1; }; \
+	key=$$(docker compose exec -T cms ./manage.py generate_api_key $$pk workflow 2>/dev/null | awk 'NF{l=$$0}END{print l}' | tr -d '\r'); \
+	test -n "$$key" || { echo "error: generate_api_key returned an empty key"; exit 1; }; \
+	echo "NEOPS_CMS_TOKEN=$$key" > cms_api_key.env; \
+	echo "wrote cms_api_key.env (user pk $$pk)"
 	# Apply CMS config (grants the neops user access to the Global scope) BEFORE
 	# recreating the engine. The CMS caches each user's accessible scopes
 	# in-memory for 10 min; if the engine queries the CMS as neops before the
@@ -186,7 +206,7 @@ local-lab-up: build-docker
 	# "Lab is up" banner is honest and `local-lab-discover` won't race the
 	# worker with "Function block ... not found".
 	@echo "Waiting for the worker to register its function blocks..."
-	@./wait_ready $(DISCOVER_FB)
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
 	# Devices (esp. Nokia SR Linux) boot slower than `containerlab deploy` returns.
 	# Poll from *inside* the lab network (the worker is on lab-net), not the host.
 	# On macOS/Docker Desktop the host has no route to the lab-net bridge IPs
@@ -195,7 +215,7 @@ local-lab-up: build-docker
 	# discovery actually uses — works on every platform.
 	# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix here.
 	@echo "Waiting for all devices to accept SSH..."
-	@docker compose exec -T worker python3 lab/wait_devices
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
 	@echo ""
 	@echo "Lab is up (containerlab: 10 FRR + 5 Nokia SR Linux, real links)."
 	@echo "  Web client:   http://localhost:8080/"
@@ -212,10 +232,10 @@ local-lab-down:
 	docker compose down
 
 local-lab-discover:
-	@./wait_ready $(DISCOVER_FB)
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB)
 	# Always wait for the known lab devices, not the requested discovery input:
 	# a subnet target also contains unused addresses which must not block readiness.
-	@docker compose exec -T worker python3 lab/wait_devices
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
 	# 15-minute timeout: discovering 15 devices (SSH + fact/interface collection
 	# across 10 FRR + 5 slower Nokia SR Linux nodes) legitimately exceeds the
 	# run_workflow 300s default. Autodetection adds an SSH probe per host, so the
@@ -228,6 +248,6 @@ apply-cms-config:
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
-.PHONY: build-docker lint format typeCheck test py39-check shell-syntax check lab-jwt clab-suid \
+.PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config

@@ -13,7 +13,7 @@ CMS
 :   The NeOps network content-management system — the Django monolith (`neops-core`, shipped here as `quay.io/zebbra/neops-cms-free`) that owns entities such as `Device` and `Interface` and serves the platform GraphQL API. Reachable at <http://localhost:8001>.
 
 containerlab
-:   The tool that runs the device containers and wires real `veth` links between them via Linux network namespaces. Driven by the generated `generated/neops-lab.clab.json`. See [containerlab.dev](https://containerlab.dev).
+:   The tool that runs the device containers and wires real `veth` links between them via Linux network namespaces. Driven by the generated `generated/neops-lab.clab.json` and always invoked as `./containerlab`, which runs the official `ghcr.io/srl-labs/clab` image through the docker socket on both hosts. See [containerlab.dev](https://containerlab.dev).
 
 Control plane
 :   In this repo's vocabulary, the NeOps services on docker compose — CMS, workflow engine, monitor app, web client, worker — as opposed to the 15 device containers.
