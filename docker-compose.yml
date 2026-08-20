@@ -63,9 +63,10 @@ services:
   workflow_engine:
     # Override via NEOPS_WORKFLOW_ENGINE_IMAGE (e.g. a locally-built
     # neops-workflow-engine:latest); defaults to the published develop image.
+    # NEOPS_ENGINE_TAG pins the published tag only; the full override wins.
     # `missing` means a local image that is already present is used as-is, with
     # no registry call. Force with NEOPS_WORKFLOW_ENGINE_PULL_POLICY.
-    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:develop}
+    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-develop}}
     pull_policy: ${NEOPS_WORKFLOW_ENGINE_PULL_POLICY:-missing}
     environment:
       - DEBUG=True
@@ -92,7 +93,7 @@ services:
       start_period: 10s
 
   workflow-engine-client:
-    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:develop}
+    image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-develop}}
     pull_policy: ${NEOPS_WORKFLOW_ENGINE_PULL_POLICY:-missing}
     ports:
       - "3031:5173"

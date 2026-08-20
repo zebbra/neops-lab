@@ -36,7 +36,17 @@ Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the 
 docker compose logs lab_bootstrap
 ```
 
-A `409` or an "already exists" body is treated as success, so a real failure here means the engine rejected the definition.
+`200 unchanged` is the idempotent re-run. A `409` means the version in the YAML already exists with different content — bump `patchVersion`/`minorVersion` (the log prints the engine's `suggestedVersion`); a `404` on `/workflow-definition/publish` means an engine older than `0.42.2-beta.3`.
+
+---
+
+## Discovery stays `running`, the worker log says `413 Payload Too Large`
+
+**Where:** `make local-lab-discover` after the worker discovered every device (`Generated 448 db update(s)`) and then `Failed to push job result … (413)`.
+
+**Cause:** an engine image without the raised per-route body limits (older than `0.42.2-beta.3`). Discovery returns a few hundred `Interface` rows in one job result; the engine rejects the push and re-dispatches the job.
+
+**Fix:** refresh the engine (`make local-env-up` pulls with `--policy always`), or pin a known-good tag: `NEOPS_ENGINE_TAG=0.42.2-beta.3` in `.env`.
 
 ---
 

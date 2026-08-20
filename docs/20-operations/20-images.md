@@ -56,9 +56,11 @@ A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `re
 | Service | Default image | Override with |
 |---|---|---|
 | `cms` | `quay.io/zebbra/neops-cms-free:develop` | — (not overridable) |
-| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine:develop` | `NEOPS_WORKFLOW_ENGINE_IMAGE` |
+| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-develop}` | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image) |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` ⚠️ **unusable — build locally** | `NEOPS_WORKER_SDK_IMAGE` |
+
+The make targets pull the published tags with `--policy always`; the services' `pull_policy: missing` would otherwise skip images already on disk. `NEOPS_ENGINE_TAG=0.42.2-beta.3` is the oldest engine tag the lab supports (raised body limits + the publish route); current `develop` qualifies.
 
 Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:5-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
 
@@ -75,12 +77,11 @@ make local-lab-up
 
 Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}`. `missing` means an image already present locally is used as-is, with no registry call — which is exactly what makes a local tag work.
 
-!!! warning "`docker compose pull` fails on a local tag"
+!!! note "`docker compose pull` warns on a local tag"
     A tag with no registry host resolves as `docker.io/library/…`, which does
-    not exist. The explicit `docker compose pull` inside `make local-env-init`
-    and `make local-env-up` therefore fails. Run that step yourself with
-    `--ignore-pull-failures` when you override an image this way; `up -d` is
-    unaffected.
+    not exist. The explicit pulls in `local-env-init`, `local-env-up` and
+    `local-lab-up` run with `--ignore-pull-failures`, so an override like this
+    is a warning; `up -d` uses the local image (`pull_policy: missing`).
 
 ### Why you would
 

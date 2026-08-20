@@ -93,7 +93,12 @@ def poll_until_terminal(engine_url: str, uuid: str, timeout: int, interval: floa
 
         status = data.get("status", "?")
         reason = (data.get("reason") or "").strip()
+        # retryNote (engine >= 0.42.2-beta.3): why an execution is being
+        # retried, e.g. a CMS lock that could not be taken yet.
+        retry_note = (data.get("retryNote") or "").strip()
         line = f"{status} — {reason}" if reason else status
+        if retry_note:
+            line = f"{line} (retry: {retry_note})"
 
         if line != last_line:
             elapsed = int(time.monotonic() - started)
