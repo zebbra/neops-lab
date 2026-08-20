@@ -71,12 +71,12 @@ local-env-init: lab-jwt
 	# docker.io/library/... and the pull fails with "repository does not exist",
 	# which would abort the whole target. With the flag the published images
 	# still refresh and the local one is merely warned about.
-	# Do NOT swap this for `--policy missing`: that would also stop re-pulling
-	# quay.io/zebbra/*:develop whenever a stale copy is already on disk, which is
-	# the entire point of this step.
+	# `--policy always` overrides the services' `pull_policy: missing`, which
+	# `docker compose pull` also honours and which would skip any image already
+	# on disk.
 	# `docker compose up -d` needs no such care — the compose files set
 	# `pull_policy: missing`, so a local image already present is used as-is.
-	docker compose pull --ignore-pull-failures
+	docker compose pull --policy always --ignore-pull-failures
 	docker compose up -d
 	# generate_api_key prints the key on the last non-empty line (no `api key:` label in current CMS image)
 	echo "NEOPS_CMS_TOKEN=$$(docker compose exec -T cms ./manage.py generate_api_key 1 workflow 2>/dev/null | awk 'NF{l=$$0}END{print l}')" > cms_api_key.env
@@ -92,8 +92,8 @@ local-env-init: lab-jwt
 
 local-env-up: lab-jwt
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make local-env-init' first."; exit 1; fi
-	# See the note in local-env-init about --ignore-pull-failures.
-	docker compose pull --ignore-pull-failures
+	# See the note in local-env-init about --policy always / --ignore-pull-failures.
+	docker compose pull --policy always --ignore-pull-failures
 	docker compose up -d
 
 local-env-down:
@@ -163,6 +163,9 @@ local-lab-up: build-docker
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
 	# Generate the containerlab topology + per-device configs from topology.json.
 	@./gen_clab_topology
+	# Refresh the worker image: the local-env-* pulls run with the base compose
+	# file, which does not include the worker service.
+	docker compose pull --policy always --ignore-pull-failures worker
 	# Base stack + worker + bootstrap. This creates the `lab-net` network that
 	# containerlab attaches the devices to, and registers the workflow definitions.
 	# `up -d` returns once containers are *Started*, not *Completed*; the one-shot
