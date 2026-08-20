@@ -192,3 +192,14 @@ volumes:
     driver: local
   postgres_data:
     driver: local
+
+networks:
+  # Fixed subnet so no network in this project is auto-allocated: docker hands
+  # auto-allocated networks the next free /16 from its 172.16/12 pool, and on a
+  # host with many projects that can be 172.30.0.0/16 — which blocks lab-net's
+  # fixed 172.30.0.0/24 with "Pool overlaps". With every subnet pinned, the
+  # allocator never competes with the lab.
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.1.0/24
