@@ -53,12 +53,14 @@ check: lint typeCheck test py39-check shell-syntax
 # cannot start the stack until this has run once. Idempotent: an existing
 # keypair is left alone, so re-running never invalidates issued tokens.
 # The keys are git-ignored; they are throwaway lab credentials, never secrets.
+# `genpkey` rather than `genrsa`: OpenSSL 3 and the LibreSSL a stock macOS
+# ships then emit the same PKCS#8 PEM.
 lab-jwt:
 	@mkdir -p cms/jwt
 	@if [ -f cms/jwt/private.pem ] && [ -f cms/jwt/public.pem ]; then \
 		echo "cms/jwt keypair already present — skipping"; \
 	else \
-		openssl genrsa -out cms/jwt/private.pem 2048 && \
+		openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out cms/jwt/private.pem && \
 		openssl rsa -in cms/jwt/private.pem -pubout -out cms/jwt/public.pem && \
 		echo "generated cms/jwt/{private,public}.pem"; \
 	fi
