@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# containerlab, run in a container (ghcr.io/srl-labs/clab) through the docker
+# socket — the same command on Linux and macOS, no host install, version
+# pinned via CLAB_IMAGE.
+#
+#   * The repo is mounted at the SAME absolute path inside the container:
+#     containerlab resolves the topology's relative binds (frr/<host>.iface,
+#     ../devices/frr/set-aliases.sh) to absolute host paths for the docker
+#     daemon, so the path in here must equal the path the daemon sees.
+#   * --privileged --pid host let containerlab enter the device containers'
+#     network namespaces to wire the veth links; --network host makes the
+#     mgmt bridge visible. On Docker Desktop "host" is the Linux VM.
+#   * /etc/hosts and ssh_config.d entries land inside this ephemeral
+#     container; reach devices with `docker exec <node>` (the topology sets
+#     prefix "", so node names are container names).
+#
+#   CLAB_IMAGE=ghcr.io/srl-labs/clab:<version>   containerlab version
+#   CLAB_NATIVE=/path/to/containerlab            use a host binary instead
+
+set -eu
+
+CLAB_IMAGE=${CLAB_IMAGE:-ghcr.io/srl-labs/clab:0.78.2}
+
+if [ -n "${CLAB_NATIVE:-}" ]; then
+    exec "$CLAB_NATIVE" "$@"
+fi
+
+command -v docker >/dev/null 2>&1 || { echo "containerlab: docker is required" >&2; exit 127; }
+
+ROOT=$(cd "$(dirname "$0")" && pwd -P)
+case "$ROOT$PWD" in
+    *' '*) echo "containerlab: cannot bind-mount a path containing spaces: $ROOT" >&2; exit 2 ;;
+esac
+
+# The repo root is always mounted; when invoked from elsewhere, mount that
+# directory too so relative -t paths keep working.
+extra_mount=""
+case "$PWD/" in
+    "$ROOT"/*) ;;
+    *) extra_mount="$PWD" ;;
+esac
+tty_opt=-i
+if [ -t 0 ] && [ -t 1 ]; then
+    tty_opt=-it
+fi
+
+rc=0
+docker run --rm "$tty_opt" --privileged --network host --pid host \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /var/run/netns:/var/run/netns \
+    -v "$ROOT:$ROOT" ${extra_mount:+-v "$extra_mount:$extra_mount"} -w "$PWD" \
+    "$CLAB_IMAGE" containerlab "$@" || rc=$?
+
+# Plain Linux writes generated/clab-* as root (Docker Desktop maps ownership
+# to the host user); return the tree to the invoking user.
+if [ "$(uname -s)" != "Darwin" ] && [ -d "$ROOT/generated" ]; then
+    docker run --rm -v "$ROOT/generated:/g" busybox chown -R "$(id -u):$(id -g)" /g 2>/dev/null || true
+fi
+exit $rc
