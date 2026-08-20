@@ -9,6 +9,11 @@ include .make_scripts/release-management/release-management-makefile
 # containerlab launcher: runs ghcr.io/srl-labs/clab through the docker socket,
 # the same on Linux and macOS (see the header of ./containerlab).
 CONTAINERLAB ?= ./containerlab
+
+# Wait budgets (seconds). Defaults suit a native Linux host; a Mac booting the
+# SR Linux nodes against a shared VM raises these rather than removing a wait.
+WAIT_READY_TIMEOUT ?= 180
+WAIT_DEVICES_TIMEOUT ?= 240
 # -----------------------------------------------------------------------------
 # Images built from this repo. Local tags only — nothing here is published to a
 # registry; the lab always builds its two helper images on the machine that runs
@@ -196,7 +201,7 @@ local-lab-up: build-docker
 	# "Lab is up" banner is honest and `local-lab-discover` won't race the
 	# worker with "Function block ... not found".
 	@echo "Waiting for the worker to register its function blocks..."
-	@./wait_ready $(DISCOVER_FB)
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
 	# Devices (esp. Nokia SR Linux) boot slower than `containerlab deploy` returns.
 	# Poll from *inside* the lab network (the worker is on lab-net), not the host.
 	# On macOS/Docker Desktop the host has no route to the lab-net bridge IPs
@@ -205,7 +210,7 @@ local-lab-up: build-docker
 	# discovery actually uses — works on every platform.
 	# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix here.
 	@echo "Waiting for all devices to accept SSH..."
-	@docker compose exec -T worker python3 lab/wait_devices
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
 	@echo ""
 	@echo "Lab is up (containerlab: 10 FRR + 5 Nokia SR Linux, real links)."
 	@echo "  Web client:   http://localhost:8080/"
@@ -222,10 +227,10 @@ local-lab-down:
 	docker compose down
 
 local-lab-discover:
-	@./wait_ready $(DISCOVER_FB)
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB)
 	# Always wait for the known lab devices, not the requested discovery input:
 	# a subnet target also contains unused addresses which must not block readiness.
-	@docker compose exec -T worker python3 lab/wait_devices
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
 	# 15-minute timeout: discovering 15 devices (SSH + fact/interface collection
 	# across 10 FRR + 5 slower Nokia SR Linux nodes) legitimately exceeds the
 	# run_workflow 300s default. Autodetection adds an SSH probe per host, so the
