@@ -45,11 +45,12 @@ def parse_fb_id(fb_id: str) -> tuple[str, str, str]:
     return pkg, name, version
 
 
-def online_worker_count(engine_url: str, fb_id: str) -> int | None:
-    """Return the number of online workers for a function block.
+def worker_states(engine_url: str, fb_id: str) -> list[str] | None:
+    """Return the state of every worker registered for a function block.
 
-    Returns None if the engine can't be reached or the block isn't registered
-    yet (both are transient during startup and should keep the caller polling).
+    Returns None while the engine is unreachable or no worker has registered
+    the block; both keep the caller polling. (The engine learns about a block
+    when a worker registers it, so a 404 also reads as "no worker yet".)
     """
     pkg, name, version = parse_fb_id(fb_id)
     url = f"{engine_url}/function-blocks/{pkg}/{name}/{version}/workers"
@@ -60,7 +61,24 @@ def online_worker_count(engine_url: str, fb_id: str) -> int | None:
         return None
     if not isinstance(workers, list):
         return None
-    return sum(1 for w in workers if w.get("state") == "online")
+    return [str(w.get("state", "?")) for w in workers]
+
+
+def online_worker_count(engine_url: str, fb_id: str) -> int | None:
+    """Return the number of online workers for a function block (None while unknown)."""
+    states = worker_states(engine_url, fb_id)
+    if states is None:
+        return None
+    return sum(1 for s in states if s == "online")
+
+
+TIMEOUT_HINT = """\
+Likely causes, most common first:
+  * the worker container is stopped or crash-looping: check
+    `docker compose ps worker` and `make local-lab-logs`;
+  * the worker image lacks the block: `docker compose exec worker ls /app/neops/fb`;
+  * the worker is still starting: re-run, or raise WAIT_READY_TIMEOUT.\
+"""
 
 
 def main() -> int:
@@ -96,6 +114,11 @@ def main() -> int:
                 f"timeout: no online worker for {', '.join(pending)} within {args.timeout}s",
                 file=sys.stderr,
             )
+            for fb_id in pending:
+                states = worker_states(args.engine_url, fb_id)
+                if states:
+                    print(f"  {fb_id}: registered worker states: {', '.join(states)}", file=sys.stderr)
+            print(TIMEOUT_HINT, file=sys.stderr)
             return 2
         time.sleep(args.interval)
 
