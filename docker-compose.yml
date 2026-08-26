@@ -120,12 +120,21 @@ services:
 
   workflow-engine-client:
     <<: *workflow-engine-image
+    environment:
+      # `npm run dev` needs vite, @sveltejs/kit and svelte, which are
+      # devDependencies of rest/monitor-app; `npm install` omits
+      # devDependencies under NODE_ENV=production.
+      - NODE_ENV=development
     ports:
       - "3031:5173"
     depends_on:
       workflow_engine:
         condition: service_healthy
     working_dir: /app/rest/monitor-app
+    volumes:
+      # The monitor reads window.__NEOPS_CONFIG__ from this file; see invariant
+      # 16 in docs/60-development/20-invariants.md.
+      - ./monitor/config.js:/app/rest/monitor-app/static/config.js:ro
     command: >
       sh -c "npm install && npm run dev"
 
