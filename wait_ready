@@ -30,9 +30,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from urllib import error, request
+
+# What the engine answers a caller whose token is absent, expired, or short of
+# `workflow:read`.
+UNAUTHORIZED = (401, 403)
+
+AUTH_HINT = "mint a token with ./lab_token and export it as NEOPS_ENGINE_TOKEN"
+
+
+def auth_headers() -> dict:
+    """`Authorization` for the engine, from NEOPS_ENGINE_TOKEN.
+
+    Empty while the variable is unset, which an engine in `disabled` mode and
+    every `@Public` route still answer.
+    """
+    token = os.environ.get("NEOPS_ENGINE_TOKEN", "").strip()
+    return {"Authorization": "Bearer " + token} if token else {}
 
 
 def parse_fb_id(fb_id: str) -> tuple[str, str, str]:
@@ -51,13 +68,19 @@ def worker_states(engine_url: str, fb_id: str) -> list[str] | None:
     Returns None while the engine is unreachable or no worker has registered
     the block; both keep the caller polling. (The engine learns about a block
     when a worker registers it, so a 404 also reads as "no worker yet".)
+    A 401 or 403 raises SystemExit, which ends the wait at once.
     """
     pkg, name, version = parse_fb_id(fb_id)
     url = f"{engine_url}/function-blocks/{pkg}/{name}/{version}/workers"
+    req = request.Request(url, headers=auth_headers())
     try:
-        with request.urlopen(url, timeout=5) as resp:
+        with request.urlopen(req, timeout=5) as resp:
             workers = json.load(resp)
-    except (error.HTTPError, error.URLError, TimeoutError, json.JSONDecodeError):
+    except error.HTTPError as exc:
+        if exc.code in UNAUTHORIZED:
+            raise SystemExit(f"the engine refused the request ({exc.code} {exc.reason}): {AUTH_HINT}") from exc
+        return None
+    except (error.URLError, TimeoutError, json.JSONDecodeError):
         return None
     if not isinstance(workers, list):
         return None

@@ -41,6 +41,9 @@ services:
     environment:
       ENGINE_URL: http://workflow_engine:3030
       WORKFLOWS_DIR: /workflows
+      # Access token for the engine's publish route, minted by ./lab_token and
+      # interpolated at `up -d`. The lab make targets export it.
+      NEOPS_ENGINE_TOKEN: ${NEOPS_ENGINE_TOKEN:-}
     volumes:
       - ./workflows:/workflows:ro
     restart: "no"
