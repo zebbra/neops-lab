@@ -52,8 +52,9 @@ failure:
 make doctor
 ```
 
-- **Docker** + `docker compose` ≥ 2.20. `quay.io/zebbra` is private:
-  `docker login quay.io`.
+- **Docker** + `docker compose` ≥ 2.20. No registry login needed: the CMS, the
+  web client and the default **developer preview** engine all pull anonymously.
+  `docker login quay.io` is only for swapping in the full licensed engine.
 - **containerlab** needs no install: every make target and documented command
   uses `./containerlab`, which runs the official `ghcr.io/srl-labs/clab` image
   through the docker socket — the same command and the same pinned containerlab
@@ -105,11 +106,14 @@ make doctor
 - **A workflow-engine image with the publish route and the large-payload +
   reference-resolution fixes.** Discovery emits a few hundred `Interface` rows in
   one job result, and `bootstrap/register.py` writes definitions through
-  `POST /workflow-definition/publish`. The published `develop` tag has both. To
-  run a locally-built engine instead, set `NEOPS_WORKFLOW_ENGINE_IMAGE` (e.g.
-  `export NEOPS_WORKFLOW_ENGINE_IMAGE=neops-workflow-engine:latest`) before
-  `make local-lab-up`; `NEOPS_ENGINE_TAG=<tag>` in `.env` pins just the
-  published tag. Unset, it defaults to the published engine.
+  `POST /workflow-definition/publish`. The default is the **developer preview**,
+  `quay.io/zebbra/neops-workflow-engine-preview:develop`, which has both
+  and is public — nothing to log into. `NEOPS_WORKFLOW_ENGINE_IMAGE` replaces
+  the whole reference, which is how you swap in the full licensed engine
+  (`docker login quay.io` first, then
+  `export NEOPS_WORKFLOW_ENGINE_IMAGE=quay.io/zebbra/neops-workflow-engine:develop`)
+  or run a local build (`neops-workflow-engine:latest`); `NEOPS_ENGINE_TAG=<tag>`
+  in `.env` pins just the tag on the preview.
   `NEOPS_WEB_CLIENT_IMAGE` and `NEOPS_WORKER_SDK_IMAGE` work the same way — see
   `.env.example`.
 - **Host resources**: the 5 SR Linux nodes want ≈1.5–2 GB each; with

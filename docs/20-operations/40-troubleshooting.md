@@ -57,7 +57,7 @@ docker compose logs lab_bootstrap
 
 **Cause:** an engine image without the raised per-route body limits (older than `0.42.2-beta.3`). Discovery returns a few hundred `Interface` rows in one job result; the engine rejects the push and re-dispatches the job.
 
-**Fix:** refresh the engine (`make local-env-up` pulls with `--policy always`), or pin a known-good tag: `NEOPS_ENGINE_TAG=0.42.2-beta.3` in `.env`.
+**Fix:** refresh the engine — `make local-env-up` pulls with `--policy always`, and the default `develop` tag is rebuilt on every merge to the engine's develop branch.
 
 ---
 

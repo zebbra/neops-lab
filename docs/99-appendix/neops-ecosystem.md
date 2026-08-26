@@ -32,7 +32,7 @@ There is a third thing occasionally confused with both: `neops-worker-sdk-py/lab
 ```mermaid
 graph LR
   core["neops-core<br/>quay.io/zebbra/neops-cms-free"]
-  wfe["neops-workflow-engine<br/>quay.io/zebbra/neops-workflow-engine"]
+  wfe["neops-workflow-engine<br/>quay.io/zebbra/neops-workflow-engine-preview"]
   wc["neops-web-client<br/>quay.io/zebbra/neops-web-client"]
   sdk["neops-worker-sdk-py<br/>quay.io/zebbra/neops-worker-sdk"]
   lab["neops-lab<br/>(this repo)"]

@@ -40,7 +40,7 @@ The scoping is deliberate: `local-env-*` targets keep using the base `docker-com
 | Service | Image | Published port | Notes |
 |---|---|---|---|
 | `cms` | `quay.io/zebbra/neops-cms-free:develop` | `8001` → 8000 | Django CMS + GraphQL. Runs `migrate`, creates the `neops` superuser, builds the ES index, then `runserver`. `REDIS_URL` points it at `redis` |
-| `workflow_engine` | `quay.io/zebbra/neops-workflow-engine:develop` | `3030` | Reads the CMS token from `cms_api_key.env` |
+| `workflow_engine` | `quay.io/zebbra/neops-workflow-engine-preview:develop` | `3030` | Reads the CMS token from `cms_api_key.env`. The **developer preview**, public; `NEOPS_WORKFLOW_ENGINE_IMAGE` swaps in the full licensed engine |
 | `workflow-engine-client` | same image as the engine | `3031` → 5173 | The **monitor app**, run in dev mode (`npm install && npm run dev`) out of `/app/rest/monitor-app` |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `8080` | `FRONTEND_*` env vars are browser-relative, so they point at host ports |
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | — | On **both** networks; polls the engine's blackboard and drives the devices |

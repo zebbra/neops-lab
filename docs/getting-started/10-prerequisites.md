@@ -74,25 +74,35 @@ warns if you are not in `clab_admins`.
 
 ## Registry access
 
-Four services pull from `quay.io/zebbra`, a **private** organisation — an anonymous pull is rejected with `401`:
+**The lab as documented needs no registry credentials.** Every image on the
+default path pulls anonymously:
+
+| Image | Service | |
+|---|---|---|
+| `quay.io/zebbra/neops-cms-free:develop` | `cms` | public |
+| `quay.io/zebbra/neops-web-client:develop` | `web_client` | public |
+| `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` | `workflow_engine`, `workflow-engine-client` | public — the **developer preview** engine |
+
+`ghcr.io/nokia/srlinux:26.3` (the SR Linux devices) and `ghcr.io/srl-labs/clab` (containerlab) are public as well.
+
+### When `docker login` *is* needed
+
+Only to swap the developer preview for the **full licensed engine**, which is
+not public — an anonymous pull is rejected with `401`:
 
 ```bash
 docker login quay.io
+export NEOPS_WORKFLOW_ENGINE_IMAGE=quay.io/zebbra/neops-workflow-engine:develop
 ```
 
-| Image | Service |
-|---|---|
-| `quay.io/zebbra/neops-cms-free:develop` | `cms` |
-| `quay.io/zebbra/neops-workflow-engine:develop` | `workflow_engine`, `workflow-engine-client` |
-| `quay.io/zebbra/neops-web-client:develop` | `web_client` |
-| `quay.io/zebbra/neops-worker-sdk:develop` | `worker` — see [Images](../20-operations/20-images.md) |
-
-`ghcr.io/nokia/srlinux:26.3` (the SR Linux devices) and `ghcr.io/srl-labs/clab` (containerlab) are public and need no login.
+`quay.io/zebbra/neops-worker-sdk` is not public either, but it never enters the
+documented path: its published tag is unusable, so the worker is built from a
+local checkout either way — see [Images](../20-operations/20-images.md).
 
 !!! tip "`NPM_TOKEN` is **not** needed here"
     Most NeOps repos require an `NPM_TOKEN` to install `@zebbra/*` npm
-    packages. This repo installs no npm packages and publishes nothing — Quay
-    credentials are the only registry access it needs.
+    packages. This repo installs no npm packages and publishes nothing — and on
+    the default path it needs no registry credentials at all.
 
 ## Running locally-built images instead
 
@@ -100,7 +110,7 @@ Every published image can be swapped for a local tag through an environment vari
 
 | Variable | Default |
 |---|---|
-| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-develop}` |
+| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` |
 | `NEOPS_WEB_CLIENT_IMAGE` | `quay.io/zebbra/neops-web-client:develop` |
 | `NEOPS_WORKER_SDK_IMAGE` | `quay.io/zebbra/neops-worker-sdk:develop` |
 

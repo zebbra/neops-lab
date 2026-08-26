@@ -56,15 +56,18 @@ A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `re
 | Service | Default image | Override with |
 |---|---|---|
 | `cms` | `quay.io/zebbra/neops-cms-free:develop` | — (not overridable) |
-| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine:${NEOPS_ENGINE_TAG:-develop}` | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image) |
+| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image — e.g. the full licensed `quay.io/zebbra/neops-workflow-engine:develop`) |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` ⚠️ **unusable — build locally** | `NEOPS_WORKER_SDK_IMAGE` |
 
-The make targets pull the published tags with `--policy always`; the services' `pull_policy: missing` would otherwise skip images already on disk. `NEOPS_ENGINE_TAG=0.42.2-beta.3` is the oldest engine tag the lab supports (raised body limits + the publish route); current `develop` qualifies.
+The CMS, the web client and the developer-preview engine are all public, so the default lab pulls with no `docker login`. The **full licensed engine** (`quay.io/zebbra/neops-workflow-engine`) is not, and neither is `neops-worker-sdk` — but that one is built locally anyway.
+
+The make targets pull the published tags with `--policy always`; the services' `pull_policy: missing` would otherwise skip images already on disk. The default `develop` is republished on every merge to the engine's `develop` branch and never expires, so `make local-env-up` is all it takes to move forward. `0.42.2-beta.3` remains the oldest engine tag the lab supports (raised body limits + the publish route).
+
+!!! warning "Do not pin the preview's `latest`"
+    The preview's `latest` is 0.42.1 — below the oldest engine the lab supports — because `latest` only advances on non-prerelease releases. Prerelease tags carry a `quay.expires-after=20d` label and vanish (`0.42.2-beta.3` on **2026-09-07**); `develop` carries no such label.
 
 Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:5-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
-
-`quay.io/zebbra` is private — `docker login quay.io` first.
 
 ## Running a locally-built image
 
