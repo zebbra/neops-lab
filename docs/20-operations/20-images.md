@@ -71,7 +71,7 @@ Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:5
 
 ## Running a locally-built image
 
-Copy `.env.example` to `.env` (docker compose reads `.env` automatically) or export the variable:
+Edit `.env` (docker compose reads it automatically; `make local-lab-up` creates it from `.env.example` if missing) or export the variable:
 
 ```bash
 export NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest

@@ -106,7 +106,7 @@ local checkout either way — see [Images](../20-operations/20-images.md).
 
 ## Running locally-built images instead
 
-Every published image can be swapped for a local tag through an environment variable; copy `.env.example` to `.env` (docker compose reads it automatically) or export the variable:
+Every published image can be swapped for a local tag through an environment variable; edit `.env` (docker compose reads it automatically, and `make local-lab-up` creates it from `.env.example` if missing) or export the variable:
 
 | Variable | Default |
 |---|---|

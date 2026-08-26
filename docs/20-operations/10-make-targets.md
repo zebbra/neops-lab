@@ -12,7 +12,7 @@ tags: [operations, reference]
 
 | Target | What it does |
 |---|---|
-| `make local-lab-up` | Depends on `build-docker`. Generates the containerlab topology + device configs from `topology.json`, refreshes the worker image, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `./containerlab deploy --reconfigure`s the 15 devices (re-runnable), waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`. |
+| `make local-lab-up` | Depends on `build-docker` and `lab-env`. Generates the containerlab topology + device configs from `topology.json`, refreshes the worker image, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `./containerlab deploy --reconfigure`s the 15 devices (re-runnable), waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`. |
 | `make local-lab-discover` | Waits for the discovery function block and for device SSH, then POSTs a workflow execution and polls to a terminal state (15-minute ceiling). Override `DISCOVER_PARAMS` to change targeting. |
 | `make local-lab-logs` | `docker compose logs -f worker lab_bootstrap`. |
 | `make local-lab-down` | `./containerlab destroy --cleanup` (removes the devices and `generated/clab-neops-lab/`), then `docker compose down`. Volumes survive. |
@@ -45,6 +45,7 @@ make local-lab-discover \
 |---|---|
 | `make doctor` | Host preflight (`./doctor`): docker + RAM, amd64 emulation on Apple Silicon, mount round-trip, subnet overlaps, the clab image, python3. Read-only apart from pulling two images; the fix is printed per failure. |
 | `make lab-jwt` | Mints `cms/jwt/{private,public}.pem` with `openssl genpkey` if absent. Idempotent. A prerequisite of both `local-env-init` and `local-env-up`. |
+| `make lab-env` | Copies `.env.example` to `.env` if there is no `.env` yet, so a fresh clone has one to edit. Never overwrites an existing file. Every value in the example is commented out, so it changes no behaviour on its own. A prerequisite of `local-lab-up`. |
 | `make local-env-init` | One-time per environment: pull (`--policy always`) + start the base stack, resolve the `neops` user and mint the CMS API key into `cms_api_key.env` (fails on an empty key), run `apply_cms_config`, then force-recreate the engine so it picks up the token. |
 | `make local-env-up` | Start the base stack again later. Fails with a clear message if `cms_api_key.env` is missing. |
 | `make local-env-down` | `docker compose down` — stops the base stack, keeps the volumes. |
