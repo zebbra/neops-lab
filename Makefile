@@ -75,6 +75,15 @@ lab-jwt:
 		echo "generated cms/jwt/{private,public}.pem"; \
 	fi
 
+# A fresh clone has no .env; copy the example so there is one to edit (every
+# value in it is commented out, so this changes no behaviour on its own).
+lab-env:
+	@if [ -f .env ]; then \
+		echo ".env already present — skipping"; \
+	else \
+		cp .env.example .env && echo "created .env from .env.example"; \
+	fi
+
 local-env-init: lab-jwt
 	touch cms_api_key.env
 	# Refresh the published images. `--ignore-pull-failures` is load-bearing: if
@@ -179,7 +188,7 @@ clab-suid:
 		echo "         then re-login for the group to apply."; \
 	fi
 
-local-lab-up: build-docker
+local-lab-up: build-docker lab-env
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
 	# Generate the containerlab topology + per-device configs from topology.json.
 	@./gen_clab_topology
@@ -248,6 +257,6 @@ apply-cms-config:
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
-.PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt clab-suid \
+.PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt lab-env clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config
