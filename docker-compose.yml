@@ -17,7 +17,12 @@ services:
         condition: service_healthy
 
   cms:
-    image: quay.io/zebbra/neops-cms-free:develop
+    # Override via NEOPS_CMS_IMAGE (e.g. a locally-built neops-cms-free:latest);
+    # defaults to the published develop image. `missing` means a local image that
+    # is already present is used as-is, with no registry call. Force with
+    # NEOPS_CMS_PULL_POLICY.
+    image: ${NEOPS_CMS_IMAGE:-quay.io/zebbra/neops-cms-free:develop}
+    pull_policy: ${NEOPS_CMS_PULL_POLICY:-missing}
     environment:
       - DEBUG=True
       - DJANGO_SETTINGS_MODULE=neopsapp.settings
