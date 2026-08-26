@@ -12,8 +12,8 @@ tags: [operations, reference]
 
 | Target | What it does |
 |---|---|
-| `make local-lab-up` | Depends on `build-docker` and `lab-env`. Generates the containerlab topology + device configs from `topology.json`, refreshes the worker image, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `./containerlab deploy --reconfigure`s the 15 devices (re-runnable), waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`. |
-| `make local-lab-discover` | Waits for the discovery function block and for device SSH, then POSTs a workflow execution and polls to a terminal state (15-minute ceiling). Override `DISCOVER_PARAMS` to change targeting. |
+| `make local-lab-up` | Depends on `build-docker` and `lab-env`. Generates the containerlab topology + device configs from `topology.json`, refreshes the worker image, starts the CMS and waits for it to be healthy, runs `apply_cms_config`, mints one engine token, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `./containerlab deploy --reconfigure`s the 15 devices (re-runnable), waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`. |
+| `make local-lab-discover` | Runs `apply_cms_config`, mints one engine token, waits for the discovery function block and for device SSH, then POSTs a workflow execution and polls to a terminal state (15-minute ceiling). Override `DISCOVER_PARAMS` to change targeting. |
 | `make local-lab-logs` | `docker compose logs -f worker lab_bootstrap`. |
 | `make local-lab-down` | `./containerlab destroy --cleanup` (removes the devices and `generated/clab-neops-lab/`), then `docker compose down`. Volumes survive. |
 | `make clab-suid` | For the `CLAB_NATIVE` (host binary) path: sets the SUID bit on the `containerlab` binary so the lab targets can deploy without `sudo`. Idempotent — it only prompts for a password when the bit is missing — and warns if you are not in `clab_admins`. Re-run after every containerlab upgrade. See [Prerequisites](../getting-started/10-prerequisites.md#native-binary-optional). |
@@ -25,6 +25,8 @@ The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 | Variable | Default | Purpose |
 |---|---|---|
 | `DISCOVER_PARAMS` | `workflow-execution-parameters/discover-params.json` | Which parameter file `local-lab-discover` sends |
+| `PROFILE` | `operator` | Grant profile `lab-grant` applies: `author`, `operator` or `admin` |
+| `NEOPS_ENGINE_TOKEN` (env) | *(minted per target)* | Engine access token; export one to reuse it across targets |
 | `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.1.0` | The function block `wait_ready` blocks on |
 | `CLAB_TOPO` | `generated/neops-lab.clab.json` | The generated containerlab topology |
 | `CONTAINERLAB` | `./containerlab` | The containerlab launcher |
@@ -51,6 +53,7 @@ make local-lab-discover \
 | `make local-env-down` | `docker compose down` — stops the base stack, keeps the volumes. |
 | `make local-env-prune` | `docker compose down -v` — the true reset; drops the Elasticsearch and Postgres volumes. |
 | `make apply-cms-config` | Runs `./apply_cms_config` on its own. Idempotent, and worth re-running after a CMS restart (see below). |
+| `make lab-grant` | `make lab-grant ROLE=<role> [PROFILE=operator]` — applies one workflow grant profile to one role, the same `manage.py grant_workflow_permissions` call `apply_cms_config` makes per role in `cms/permissions.json`. Grants only widen — see [Authorization](../10-concepts/50-authorization.md). |
 
 !!! warning "Re-run `apply-cms-config` after a CMS restart"
     The CMS image seeds a scope named `Global` on every startup with
@@ -61,7 +64,7 @@ make local-lab-discover \
 
 ### What `apply_cms_config` does
 
-It grants the `neops` user a full-permission role (`lab-admin`, `default_permission=7`) and configures the `Global` scope from the JSON files under `scope/Global/` — table columns for devices, interfaces, clients and groups, a location drill-down schema, and a dashboard configuration.
+It applies `cms/permissions.json` — every declared role gets `default_permission=7` and a `RoleScope` on `Global`, every declared user gets its roles and a password equal to its username, and each role's workflow grant profile is applied through the CMS's own `manage.py grant_workflow_permissions`. It also configures the `Global` scope from the JSON files under `scope/Global/` — table columns for devices, interfaces, clients and groups, a location drill-down schema, and a dashboard configuration. See [Authorization](../10-concepts/50-authorization.md).
 
 It is **bash, not Python**, and it uses `manage.py shell` rather than GraphQL for the seeding steps: `roleUpsert` / `scopesUpsert` / `roleScopeUpsert` all gate on permissions the freshly-bootstrapped `neops` user does not yet have. Table columns and drill-down *are* written through GraphQL, deliberately **last**, because the CMS's `init_scopes` runs on every `manage.py` invocation and would otherwise overwrite a shell write.
 
