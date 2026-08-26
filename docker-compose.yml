@@ -91,8 +91,18 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - PORT=3030
+      # How the engine authorizes each request: enforce | permissive | disabled.
+      - NEOPS_AUTHZ_MODE=enforce
+      # SPKI PEM the engine verifies Neops RS256 tokens against — the public half
+      # of the keypair `make lab-jwt` mints for the CMS, mounted below.
+      - NEOPS_JWT_PUBLIC_KEY_PATH=/etc/neops/jwt/public.pem
+      # Exact browser origins allowed to call this engine: the web client on
+      # :8080 and the monitor app on :3031.
+      - NEOPS_CORS_ORIGINS=http://localhost:8080,http://localhost:3031
     env_file:
       - cms_api_key.env
+    volumes:
+      - ./cms/jwt/public.pem:/etc/neops/jwt/public.pem:ro
     ports:
       - "3030:3030"
     depends_on:
