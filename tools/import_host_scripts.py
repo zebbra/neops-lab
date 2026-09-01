@@ -12,7 +12,7 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SCRIPTS = ("gen_clab_topology", "gen_device_configs", "run_workflow", "wait_ready", "wait_devices")
+SCRIPTS = ("gen_clab_topology", "gen_device_configs", "lab_token", "run_workflow", "wait_ready", "wait_devices")
 
 
 def main() -> int:

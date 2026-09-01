@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 import textwrap
@@ -36,6 +37,25 @@ from urllib import error, request
 # only three terminal states exist, all end in `_ack`.
 TERMINAL_SUCCESS = {"completed_ack"}
 TERMINAL_FAILURE = {"failed_safe_ack", "failed_unsafe_ack"}
+
+# What the engine answers a caller whose token is absent, expired, or short of
+# `workflow-execution:write` (start) / `workflow-execution:read` (poll).
+UNAUTHORIZED = (401, 403)
+
+AUTH_HINT = "mint a token with ./lab_token and export it as NEOPS_ENGINE_TOKEN"
+
+# Where a started execution can be followed after this script stops polling.
+MONITOR_URL = "http://localhost:3031"
+
+
+def auth_headers() -> dict:
+    """`Authorization` for the engine, from NEOPS_ENGINE_TOKEN.
+
+    Empty while the variable is unset, which an engine in `disabled` mode and
+    every `@Public` route still answer.
+    """
+    token = os.environ.get("NEOPS_ENGINE_TOKEN", "").strip()
+    return {"Authorization": "Bearer " + token} if token else {}
 
 
 def load_parameters(arg: str) -> dict:
@@ -54,7 +74,9 @@ def parse_ids(arg: str) -> list[int]:
 
 def http_json(url: str, *, payload: dict | None = None) -> dict:
     data = json.dumps(payload).encode() if payload is not None else None
-    headers = {"Content-Type": "application/json"} if payload is not None else {}
+    headers = auth_headers()
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
     req = request.Request(url, data=data, headers=headers)
     with request.urlopen(req) as resp:
         return json.load(resp)
@@ -70,6 +92,8 @@ def start_execution(engine_url: str, workflow: str, parameters: dict, ids: list[
     try:
         resp = http_json(f"{engine_url}/workflow-execution", payload=payload)
     except error.HTTPError as e:
+        if e.code in UNAUTHORIZED:
+            raise SystemExit(f"failed to start workflow ({e.code} {e.reason}): {AUTH_HINT}") from e
         body = e.read().decode(errors="replace")
         raise SystemExit(f"failed to start workflow ({e.code} {e.reason}): {body}") from e
     except error.URLError as e:
@@ -86,7 +110,16 @@ def poll_until_terminal(engine_url: str, uuid: str, timeout: int, interval: floa
     while time.monotonic() < deadline:
         try:
             data = http_json(f"{engine_url}/workflow-execution/id/{uuid}")
-        except (error.HTTPError, error.URLError) as e:
+        except error.HTTPError as e:
+            if e.code in UNAUTHORIZED:
+                raise SystemExit(
+                    f"polling stopped ({e.code} {e.reason}): {AUTH_HINT}. "
+                    f"Execution {uuid} keeps running; follow it at {MONITOR_URL}"
+                ) from e
+            print(f"  poll failed, retrying: {e}", file=sys.stderr)
+            time.sleep(interval)
+            continue
+        except error.URLError as e:
             print(f"  poll failed, retrying: {e}", file=sys.stderr)
             time.sleep(interval)
             continue

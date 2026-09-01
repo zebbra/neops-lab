@@ -196,14 +196,16 @@ gen_device_configs      # per-device renderers, reused by gen_clab_topology
 generated/              # git-ignored: clab.json, frr/*.iface, srl/*.cli, clab runtime
 clab/probe.clab.yml     # 2-node probe to re-check containerlab deploy works
 devices/frr/            # Dockerfile (adds sshd to frrouting/frr) + entrypoint + set-aliases.sh
-cms/                    # oidc-config.json + the git-ignored jwt/ keypair (make lab-jwt)
+cms/                    # oidc-config.json + permissions.json + the git-ignored jwt/ keypair (make lab-jwt)
+monitor/config.js       # runtime config for the monitor app (webclientOrigin), bind-mounted into it
 scope/Global/           # table columns, drill-down and dashboard applied by apply_cms_config
 workflows/              # workflow YAMLs registered by the bootstrap container
 function_blocks/        # lab-local function blocks, auto-discovered by the worker
 bootstrap/              # one-shot container that POSTs every workflow YAML
 containerlab            # containerlab launcher (runs ghcr.io/srl-labs/clab via the docker socket)
 doctor                  # host preflight (docker, RAM, mount round-trip, subnets, images)
-apply_cms_config        # seeds the neops role + Global scope in the CMS
+apply_cms_config        # applies cms/permissions.json + the Global scope in the CMS
+lab_token               # prints a Neops access token for the engine (NEOPS_ENGINE_TOKEN)
 run_workflow            # triggers a workflow execution and waits for a terminal state
 wait_ready              # blocks until the worker's function block has an online worker
 wait_devices            # blocks until every lab device (topology.json) accepts SSH
@@ -245,7 +247,8 @@ skipped for hosts declared as another one.
 | `make local-env-init` | Pull + start the base stack, mint the CMS API key, force-recreate the engine to load it, then chain `apply-cms-config`. One-time per env. |
 | `make build-docker` | Builds the two local-only images: `neops-lab-frr:latest` and `neops-lab-bootstrap:latest`. A prerequisite of `local-lab-up`. |
 | `make local-lab-up` | Generates the containerlab topology + configs from `topology.json`, builds the lab images, brings up the base stack + worker + bootstrap (creating `lab-net`), then `containerlab deploy`s the 15 devices with real links. Waits for workflow registration, the worker's function blocks, and every device's SSH. |
-| `make apply-cms-config` | Grants the `neops` user a full-permission role (`lab-admin`, default_permission=7) + creates the `Global` scope so the web client can see all entities. Idempotent. Chained into `local-env-init`. |
+| `make apply-cms-config` | Applies `cms/permissions.json` (roles, users and their workflow grant profiles) + creates the `Global` scope so the web client can see all entities. Idempotent. Chained into `local-env-init`. |
+| `make lab-grant` | `make lab-grant ROLE=<role> [PROFILE=operator]` — one ad-hoc workflow grant, the same command `apply_cms_config` runs per role. Additive. |
 | `make local-lab-discover` | POSTs an execution of the discovery workflow; all 15 devices **and their interfaces** appear in the CMS. Override `DISCOVER_PARAMS` to exercise explicit hosts, autodetection, or subnet expansion. Devices are keyed by IP (re-running skips existing devices); interfaces are always recorded, so run discovery against a **fresh** CMS to avoid duplicate interface rows. |
 | `make local-lab-logs` | Tails worker + bootstrap logs. |
 | `make local-lab-down` | `containerlab destroy --cleanup` (removes devices + runtime dir) then `docker compose down` (preserves volumes). |
@@ -262,6 +265,19 @@ Full reset from scratch:
 - Engine UI: <http://localhost:3031>
 - CMS admin: <http://localhost:8001/admin/> (login `neops` / `neops`)
 - Engine REST: <http://localhost:3030>
+
+The engine runs `NEOPS_AUTHZ_MODE=enforce`, so every call to it carries a token.
+Besides `neops`, the lab declares three personas in `cms/permissions.json`
+(password = username), which differ only in workflow authority:
+
+| Login | Role | Can |
+|---|---|---|
+| `author` | `workflow-author` | read and write workflow definitions |
+| `operator` | `workflow-operator` | read definitions, run and abort executions |
+| `admin` | `workflow-admin` | the above, plus delete definitions and roll back |
+
+Full model, including how the monitor app is handed a token:
+[`docs/10-concepts/50-authorization.md`](./docs/10-concepts/50-authorization.md).
 
 ## Adding a device
 

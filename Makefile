@@ -147,6 +147,16 @@ LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml
 local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_FILE := $(LAB_COMPOSE_FILES)
 local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_PATH_SEPARATOR := :
 
+# The engine runs NEOPS_AUTHZ_MODE=enforce, so run_workflow, wait_ready and the
+# lab_bootstrap container each send `Authorization: Bearer`. This snippet exports
+# ONE token for the whole recipe it is used in: the CMS rate-limits logins per IP
+# (NEOPS_LOCAL_LOGIN_RATE_LIMIT, default 5/m) and every lab call leaves this host
+# from the same address. An already-exported NEOPS_ENGINE_TOKEN is reused. make
+# echoes recipe text, so the value stays out of the terminal.
+MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$(./lab_token)}; \
+	export NEOPS_ENGINE_TOKEN; \
+	test -n "$$NEOPS_ENGINE_TOKEN" || { echo "error: minted an empty engine token; run ./lab_token to see why"; exit 1; }
+
 # Function block the discovery workflow dispatches to. The worker registers it
 # with the engine asynchronously after startup; `wait_ready` blocks on that.
 DISCOVER_FB := fb.base.neops.io/global_discover_network:0.1.0
@@ -157,6 +167,9 @@ DISCOVER_FB := fb.base.neops.io/global_discover_network:0.1.0
 #   make local-lab-discover DISCOVER_PARAMS=workflow-execution-parameters/discover-params-subnet.json
 #   make local-lab-discover DISCOVER_PARAMS=workflow-execution-parameters/discover-params-mixed.json
 DISCOVER_PARAMS ?= workflow-execution-parameters/discover-params.json
+
+# Grant profile `make lab-grant` applies: author | operator | admin.
+PROFILE ?= operator
 
 # containerlab topology (generated from topology.json by gen_clab_topology).
 CLAB_TOPO := generated/neops-lab.clab.json
@@ -195,27 +208,46 @@ local-lab-up: build-docker lab-env
 	# Refresh the worker image: the local-env-* pulls run with the base compose
 	# file, which does not include the worker service.
 	docker compose pull --policy always --ignore-pull-failures worker
+	# The next steps run in ONE shell so a single engine token covers every
+	# caller among them; `set -e` aborts that shell on the first failing command.
+	#
+	# `./lab_token` logs in against the CMS on :8001, so the CMS comes up and
+	# reaches healthy first. After `local-lab-down` nothing is running, and the
+	# token has to exist before the `up -d` below interpolates it into
+	# lab_bootstrap's environment.
+	#
+	# `./apply_cms_config` runs before the mint: a token carries the permissions
+	# its account holds at login and keeps them for its whole 15-minute life, so
+	# the grants in cms/permissions.json have to be in the CMS first.
+	#
 	# Base stack + worker + bootstrap. This creates the `lab-net` network that
 	# containerlab attaches the devices to, and registers the workflow definitions.
 	# `up -d` returns once containers are *Started*, not *Completed*; the one-shot
 	# `lab_bootstrap` container registers the workflow definitions (e.g.
 	# simple_lab_discovery) with the engine and then exits.
-	docker compose up -d
-	# Without this wait, `local-lab-discover` races ahead and the engine 404s with
-	# "Workflow with ID null not found". `wait` blocks until it exits and
+	#
+	# Without the bootstrap wait, `local-lab-discover` races ahead and the engine
+	# 404s with "Workflow with ID null not found". `wait` blocks until it exits and
 	# propagates its exit code, so a failed registration fails this target.
-	@echo "Waiting for workflow registration (lab_bootstrap) to finish..."
-	docker compose wait lab_bootstrap
+	#
 	# Deploy the 15 devices with REAL point-to-point wiring onto lab-net. SR Linux
 	# boots slowly, so deploy early — before waiting on device SSH below.
-	@echo "Deploying containerlab devices (real links)..."
-	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO)
+	#
 	# The worker registers its function blocks with the engine asynchronously
 	# after its container starts. Block until an online worker exists so the
 	# "Lab is up" banner is honest and `local-lab-discover` won't race the
 	# worker with "Function block ... not found".
-	@echo "Waiting for the worker to register its function blocks..."
-	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
+	@set -e; \
+	docker compose up -d --wait cms; \
+	./apply_cms_config; \
+	$(MINT_ENGINE_TOKEN); \
+	docker compose up -d; \
+	echo "Waiting for workflow registration (lab_bootstrap) to finish..."; \
+	docker compose wait lab_bootstrap; \
+	echo "Deploying containerlab devices (real links)..."; \
+	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO); \
+	echo "Waiting for the worker to register its function blocks..."; \
+	./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
 	# Devices (esp. Nokia SR Linux) boot slower than `containerlab deploy` returns.
 	# Poll from *inside* the lab network (the worker is on lab-net), not the host.
 	# On macOS/Docker Desktop the host has no route to the lab-net bridge IPs
@@ -241,22 +273,39 @@ local-lab-down:
 	docker compose down
 
 local-lab-discover:
-	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB)
 	# Always wait for the known lab devices, not the requested discovery input:
 	# a subnet target also contains unused addresses which must not block readiness.
-	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	#
 	# 15-minute timeout: discovering 15 devices (SSH + fact/interface collection
 	# across 10 FRR + 5 slower Nokia SR Linux nodes) legitimately exceeds the
 	# run_workflow 300s default. Autodetection adds an SSH probe per host, so the
-	# same ceiling covers both parameter files.
-	@./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @$(DISCOVER_PARAMS)
+	# same ceiling covers both parameter files. That ceiling outlives a 15-minute
+	# access token; a run still going at the end reports the expiry and points at
+	# the monitor.
+	#
+	# `./apply_cms_config` runs before the mint: a token carries the permissions
+	# its account holds at login and keeps them for its whole 15-minute life, so
+	# an edit to cms/permissions.json reaches the engine on the next target
+	# rather than on the next `make apply-cms-config`.
+	@set -e; \
+	./apply_cms_config; \
+	$(MINT_ENGINE_TOKEN); \
+	./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB); \
+	docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT); \
+	./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @$(DISCOVER_PARAMS)
 
 apply-cms-config:
 	./apply_cms_config
+
+# Ad-hoc workflow grant for one role, the same command apply_cms_config runs for
+# every role in cms/permissions.json. PROFILE is author | operator | admin.
+lab-grant:
+	@test -n "$(ROLE)" || { echo "usage: make lab-grant ROLE=<role> [PROFILE=operator]"; exit 1; }
+	docker compose exec -T cms ./manage.py grant_workflow_permissions --role "$(ROLE)" --profile "$(PROFILE)" --yes
 
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
 .PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt lab-env clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
-	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config
+	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config lab-grant
