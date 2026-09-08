@@ -6,7 +6,16 @@
 set -u
 cd "$(dirname "$0")"
 
-MIN_VM_MEM_GIB=${MIN_VM_MEM_GIB:-14}
+# The SR Linux nodes dominate the memory bill (~1.5-2 GiB each); a scenario
+# without them fits in a fraction. Derived from the selected scenario's topology
+# so `frr-only` is not refused on a host that can run it. With SCENARIO unset
+# (./doctor run directly rather than through make) assume the heaviest case.
+scenario_min_mem() {
+    [ -n "${SCENARIO:-}" ] || { echo 14; return; }
+    python3 -c 'import json,pathlib,sys; d=json.loads((pathlib.Path("scenarios")/sys.argv[1]/"topology.json").read_text())["devices"]; print(14 if any("srl" in str(v.get("vendor","")).lower() for v in d.values()) else 6)' "$SCENARIO" 2>/dev/null || echo 14
+}
+
+MIN_VM_MEM_GIB=${MIN_VM_MEM_GIB:-$(scenario_min_mem)}
 # Keep in sync with the default in ./containerlab.
 CLAB_IMAGE=${CLAB_IMAGE:-$(sed -n 's/^CLAB_IMAGE=.*:-\(ghcr[^}]*\)}$/\1/p' containerlab)}
 
@@ -29,7 +38,7 @@ else
     if [ "$gib" -ge "$MIN_VM_MEM_GIB" ]; then
         ok "docker has ${gib} GiB RAM"
     else
-        hint="the lab (5 SR Linux + Elasticsearch + control plane) needs about ${MIN_VM_MEM_GIB} GiB"
+        hint="scenario ${SCENARIO:-wan-and-fabric} (its devices + Elasticsearch + control plane) needs about ${MIN_VM_MEM_GIB} GiB"
         [ "$os" = "Darwin" ] && hint="$hint — Docker Desktop: Settings > Resources > Memory, then Apply & restart"
         fail "docker has only ${gib} GiB RAM" "$hint"
     fi

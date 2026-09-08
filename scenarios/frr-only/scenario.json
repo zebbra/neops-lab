@@ -1,0 +1,11 @@
+{
+  "name": "frr-only",
+  "title": "FRR network only",
+  "summary": "The 10-node FRR WAN/core/edge/PE network with the Nokia SR Linux fabric removed.",
+  "flavours": ["clab", "kind"],
+  "demonstrates": [
+    "single-vendor discovery, where platform autodetection has only one answer to find",
+    "a scenario that carries nothing but a topology — workflows, scope, device configs and function blocks all come from _base",
+    "a lab that fits on a laptop: no SR Linux nodes to boot"
+  ]
+}

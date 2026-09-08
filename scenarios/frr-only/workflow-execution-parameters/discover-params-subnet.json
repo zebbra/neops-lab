@@ -1,0 +1,13 @@
+{
+  "subnets": [
+    {
+      "cidr": "172.30.0.0/24",
+      "credentials": [
+        {
+          "username": "frr",
+          "password": "frr"
+        }
+      ]
+    }
+  ]
+}
