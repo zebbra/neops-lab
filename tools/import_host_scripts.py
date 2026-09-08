@@ -17,6 +17,7 @@ import labscripts  # noqa: E402  (needs ROOT on sys.path first)
 SCRIPTS = (
     "gen_clab_topology",
     "gen_device_configs",
+    "gen_kind_discover_params",
     "gen_kind_manifests",
     "resolve_scenario",
     "run_workflow",

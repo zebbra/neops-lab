@@ -34,6 +34,32 @@ KIND_CLUSTER ?= kind
 KIND_LAB_NAMESPACE ?= neops-lab
 KIND_LAB_TIMEOUT ?= 180
 KIND_MANIFEST := $(GEN_DIR)/kind/lab.yaml
+# Discovery targets, regenerated on every run: the cluster hands out a fresh set
+# of Service ClusterIPs whenever the namespace is recreated, so this file is
+# never reused across a `kind-lab-down` / `kind-lab-up` cycle.
+KIND_DISCOVER_PARAMS := $(GEN_DIR)/kind/discover-params.json
+# 10 FRR devices over SSH; the containerlab flavour's 900s ceiling also covers
+# the 5 slower Nokia nodes, which this flavour does not render.
+KIND_DISCOVER_TIMEOUT ?= 600
+# How the workflow engine is reached. The CMS goes through a port-forward (see
+# kind-lab-cms-config); the engine cannot, because the definition is published
+# by the bootstrap container, which has no route to a port-forward bound on the
+# host. One address therefore has to serve the container and the host scripts.
+# The default is the umbrella's offline ingress name: every service is published
+# under a public name and a `*.neops.local` twin, and `make -C neops-helm
+# config-hosts` maps the twins to 127.0.0.1 — so it fits any deployment of the
+# stack without naming one. Point it at a public URL for a remote engine.
+KIND_ENGINE_URL ?= http://engine.neops.local
+# The engine's hostname and the container's route to it, both derived from that
+# one URL rather than repeated. A `*.neops.local` name resolves only through the
+# host's /etc/hosts, which a container does not share, so the mapping is handed
+# to `docker run` explicitly: the ingress listens on the host's port 80, and
+# host-gateway is the address a container reaches the host at. A public name
+# resolves through real DNS on both sides and needs no mapping; a port-forwarded
+# 127.0.0.1 needs DOCKER_RUN_FLAGS=--network=host instead.
+KIND_ENGINE_AUTHORITY := $(firstword $(subst /, ,$(patsubst http://%,%,$(patsubst https://%,%,$(KIND_ENGINE_URL)))))
+KIND_ENGINE_HOST := $(firstword $(subst :, ,$(KIND_ENGINE_AUTHORITY)))
+KIND_ENGINE_ADD_HOST := $(if $(filter %.local,$(KIND_ENGINE_HOST)),--add-host $(KIND_ENGINE_HOST):host-gateway)
 
 # The NeOps product stack `make kind-lab-cms-config` configures. It is a
 # separate deployment in its own namespace; nothing here installs, changes or
@@ -56,6 +82,9 @@ CMS_EXEC ?= kubectl -n $(NEOPS_NAMESPACE) exec -i deploy/$(NEOPS_CMS_DEPLOYMENT)
 
 # Extra flags for every docker build, e.g. DOCKER_BUILD_FLAGS=--network=host when the bridge network has no DNS.
 DOCKER_BUILD_FLAGS ?=
+# The same for `docker run` — the bootstrap container has to resolve the engine's
+# name, so a host whose docker bridge cannot resolve DNS needs --network=host here too.
+DOCKER_RUN_FLAGS ?=
 # -----------------------------------------------------------------------------
 # Images built from this repo. Local tags only — nothing here is published to a
 # registry; the lab always builds its two helper images on the machine that runs
@@ -214,9 +243,15 @@ LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml
 local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_FILE := $(LAB_COMPOSE_FILES)
 local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_PATH_SEPARATOR := :
 
-# Function block the discovery workflow dispatches to. The worker registers it
-# with the engine asynchronously after startup; `wait_ready` blocks on that.
+# The discovery workflow and the function block it dispatches to. Both flavours
+# run the same definition against the same block, so these are declared once.
+# The worker registers the block with the engine asynchronously after startup;
+# `wait_ready` blocks on that.
+# The version must match scenarios/_base/workflows/simple-lab-discovery.workflow.yaml, and
+# published versions are immutable: editing that file means bumping its
+# majorVersion/minorVersion/patchVersion and this variable together.
 DISCOVER_FB := fb.base.neops.io/global_discover_network:0.1.0
+DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.2.0
 
 # Execution parameters for the discovery workflow. Override to discover with a
 # different target form, e.g.
@@ -317,7 +352,7 @@ local-lab-discover: scenario-resolve
 	# across 10 FRR + 5 slower Nokia SR Linux nodes) legitimately exceeds the
 	# run_workflow 300s default. Autodetection adds an SSH probe per host, so the
 	# same ceiling covers both parameter files.
-	@./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @$(DISCOVER_PARAMS)
+	@./run_workflow --timeout 900 $(DISCOVER_WORKFLOW) @$(DISCOVER_PARAMS)
 
 apply-cms-config: scenario-resolve
 	./apply_cms_config
@@ -361,6 +396,30 @@ kind-lab-down:
 kind-lab-status:
 	@kubectl -n $(KIND_LAB_NAMESPACE) get pods,svc
 
+# Discovery against the pods — the same four steps as local-lab-discover, run
+# through the same four scripts. Only the addresses differ; nothing about
+# publishing, waiting or executing is reimplemented here.
+#
+# Unlike local-lab-discover this also publishes the workflow definition, because
+# no lab_bootstrap container ran: the compose flavour registers it during
+# local-lab-up, and there is no equivalent step in kind-lab-up.
+kind-lab-discover: build-docker-bootstrap scenario-resolve
+	# Publishing is idempotent for unchanged content (200) and 409s if this
+	# version was already published with different content — bump the versions in
+	# the YAML and in DISCOVER_WORKFLOW rather than editing a published one.
+	docker run --rm $(KIND_ENGINE_ADD_HOST) $(DOCKER_RUN_FLAGS) -e ENGINE_URL=$(KIND_ENGINE_URL) \
+		-v "$(CURDIR)/$(SCENARIO_DIR)/workflows:/workflows:ro" neops-lab-bootstrap:latest
+	# One /32 per device, read live from the Services — see gen_kind_discover_params
+	# for why a summarising CIDR and an in-cluster DNS name are both unusable.
+	@./gen_kind_discover_params --namespace $(KIND_LAB_NAMESPACE) --output $(KIND_DISCOVER_PARAMS)
+	# The worker registers its function blocks with the engine asynchronously, so
+	# without this the execution fails with "Function block ... not found".
+	@./wait_ready --engine-url $(KIND_ENGINE_URL) --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB)
+	# No wait_devices: each pod's `tcpSocket: 22` readinessProbe already is that
+	# poll, and the host cannot reach a ClusterIP anyway (see kind-lab-up).
+	@./run_workflow --engine-url $(KIND_ENGINE_URL) --timeout $(KIND_DISCOVER_TIMEOUT) \
+		$(DISCOVER_WORKFLOW) @$(KIND_DISCOVER_PARAMS)
+
 # Applying the CMS config is deliberately a SEPARATE target: bringing the pods up
 # must not require a running product stack, the same way local-lab-up and
 # local-lab-discover are separate today.
@@ -389,4 +448,4 @@ kind-lab-cms-config: scenario-resolve
 	scenarios scenario-resolve generate \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config \
-	kind-lab-up kind-lab-down kind-lab-status kind-lab-cms-config
+	kind-lab-up kind-lab-down kind-lab-status kind-lab-cms-config kind-lab-discover
