@@ -1,6 +1,6 @@
 ---
 title: Get started
-description: From a clean checkout to 15 discovered devices — prerequisites, the four-command quickstart, and your first discovery run.
+description: From a clean checkout to a discovered network — prerequisites, the four-command quickstart, and your first discovery run.
 tags: [tutorial]
 ---
 
@@ -13,11 +13,24 @@ tags: [tutorial]
 ```bash
 make lab-jwt          # dev RSA keypair for the CMS (idempotent)
 make local-env-init   # pull + start the base stack, mint the CMS API key, seed CMS config
-make local-lab-up     # generate topology, build lab images, deploy 15 devices
+make local-lab-up     # resolve the scenario, build lab images, deploy the devices
 make local-lab-discover
 ```
 
 If any of those four words mean nothing to you yet, read on — each page below explains one step and the failure modes it protects you from.
+
+!!! tip "In a hurry, or short on RAM"
+    Those commands run the default `wan-and-fabric` scenario: 15 devices, five
+    of them slow-booting Nokia SR Linux nodes. `make scenarios` lists the
+    alternatives, and `SCENARIO=frr-only` gives you a 10-device FRR-only lab
+    that comes up in a fraction of the time:
+
+    ```bash
+    make local-lab-up SCENARIO=frr-only
+    make local-lab-discover SCENARIO=frr-only
+    ```
+
+    See [Scenarios](../30-scenarios/index.md).
 
 ## In this section
 
@@ -27,7 +40,7 @@ If any of those four words mean nothing to you yet, read on — each page below 
 
     ---
 
-    Docker, containerlab (with sudo-less operation — the part people get wrong), `openssl` and `uv`. The default `@zebbra` images are public, so no Quay login is needed. Includes a two-node probe that proves containerlab works before you commit to a 15-node deploy.
+    Docker, containerlab (with sudo-less operation — the part people get wrong), `openssl` and `uv`. The default `@zebbra` images are public, so no Quay login is needed. Includes a two-node probe that proves containerlab works before you commit to a full deploy.
 
 -   :material-rocket-launch:{ .lg .middle } &nbsp; **[Quickstart](20-quickstart.md)**
 
@@ -39,12 +52,13 @@ If any of those four words mean nothing to you yet, read on — each page below 
 
     ---
 
-    Trigger the discovery workflow, watch it in the monitor app, and see the 15 devices and their interfaces land in the web client. Then swap the parameter file to exercise autodetection and subnet expansion.
+    Trigger the discovery workflow, watch it in the monitor app, and see the devices and their interfaces land in the web client. Then swap the parameter file to exercise autodetection and subnet expansion.
 
 </div>
 
 ## What to read next
 
+- **[Scenarios](../30-scenarios/index.md)** — running a different network, and adding one of your own.
 - **[Architecture](../10-concepts/10-architecture.md)** — the container/network layout you just started.
 - **[Make targets](../20-operations/10-make-targets.md)** — the complete target list, including the ones the quickstart does not use.
 - **[Troubleshooting](../20-operations/40-troubleshooting.md)** — read this the moment something hangs; nearly every failure here is a known boot-order race with a distinctive error string.

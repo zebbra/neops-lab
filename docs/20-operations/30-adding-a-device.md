@@ -1,14 +1,16 @@
 ---
 title: Adding a device
-description: The four-step loop for extending the lab — edit topology.json, regenerate, redeploy, and commit the regenerated parameter files.
+description: The four-step loop for extending the lab — edit the scenario's topology.json, regenerate, redeploy, and commit the regenerated parameter files.
 tags: [operations, howto]
 ---
 
 # Adding a device
 
-*Everything about the network comes from `topology.json`, so adding a device is one edit plus one regeneration. The step people miss is committing the regenerated JSON.*
+*Everything about the network comes from the scenario's `topology.json`, so adding a device is one edit plus one regeneration. The step people miss is committing the regenerated JSON.*
 
-## 1. Edit `topology.json`
+Every command below acts on one scenario. `SCENARIO` selects it and defaults to `wan-and-fabric`; append `SCENARIO=<name>` to work on another. `make scenarios` lists them.
+
+## 1. Edit `scenarios/<scenario>/topology.json`
 
 Add an entry under `devices`, keyed by hostname:
 
@@ -27,7 +29,7 @@ Add an entry under `devices`, keyed by hostname:
 
 | Field | Rule |
 |---|---|
-| `mgmt_ip` | A free address in `172.30.0.0/24`. Existing devices use `.11`–`.20` (FRR) and `.31`–`.35` (SR Linux); `.1` is the bridge gateway. |
+| `mgmt_ip` | A free address in `172.30.0.0/24`, unique within the scenario. In `wan-and-fabric` the existing devices use `.11`–`.20` (FRR) and `.31`–`.35` (SR Linux); `.1` is the bridge gateway. |
 | `vendor` | `frr` or `srl` — anything else makes the generator exit with `unknown vendor`. |
 | `loopback` | `"lo"` for FRR, `null` for SR Linux. |
 | `interfaces[].name` | `swpN` for FRR, `ethernet-1/N` for SR Linux. |
@@ -48,12 +50,13 @@ Add an entry under `devices`, keyed by hostname:
 make local-lab-up
 ```
 
-`local-lab-up` runs `./gen_clab_topology` for you, so this single command rebuilds the containerlab topology (real link or `dummy` stub, plus the node's image and credentials) and the three generated parameter files, then redeploys.
+`local-lab-up` resolves the scenario and runs `./gen_clab_topology` for you, so this single command rebuilds the containerlab topology (real link or `dummy` stub, plus the node's image and credentials) and the three generated parameter files, then redeploys.
 
 To regenerate without touching the running lab:
 
 ```bash
-./gen_clab_topology
+make generate                      # the default scenario
+make generate SCENARIO=frr-only    # another one
 ```
 
 ## 3. Discover it
@@ -62,7 +65,7 @@ To regenerate without touching the running lab:
 make local-lab-discover
 ```
 
-The new device is picked up automatically: `discover-params.json` now contains its `/32`, and `wait_devices` reads the mgmt IPs straight from `topology.json`.
+The new device is picked up automatically: the scenario's `discover-params.json` now contains its `/32`, and `wait_devices` reads the mgmt IPs straight from the scenario's `topology.json`.
 
 ## 4. Commit the regenerated JSON
 
@@ -71,28 +74,48 @@ make test
 ```
 
 !!! danger "The generator tests fail until you commit the regenerated files"
-    `tests/` assert that regenerating from `topology.json` reproduces the
-    committed `workflow-execution-parameters/*.json` **byte-for-byte**. Adding
-    a device changes three of those files, so `make test` fails until you
-    stage them:
+    `tests/` assert that regenerating from each scenario's `topology.json`
+    reproduces its committed `workflow-execution-parameters/*.json`
+    **byte-for-byte**, and they are parametrised over every scenario. Adding a
+    device changes three of those files, so `make test` fails until you stage
+    them:
 
     ```bash
-    ./gen_clab_topology
-    git add workflow-execution-parameters/
+    make generate SCENARIO=wan-and-fabric
+    git add scenarios/wan-and-fabric/workflow-execution-parameters/
     ```
 
     This is the intended guard, not an annoyance — it is what keeps the
     committed parameter files honest.
 
-## 5. If you touched the mixed scenario
+## 5. If you touched the mixed parameter file
 
-`discover-params-mixed.json` has **no generator and no test coverage**. If your new device belongs in that scenario — the `/24` plus per-host `/32` credential overrides — edit it by hand. Nothing will remind you.
+`discover-params-mixed.json` has **no generator and no test coverage**. If your new device belongs in that targeting variant — the `/24` plus per-host `/32` credential overrides — edit it by hand. Nothing will remind you. Only `wan-and-fabric` carries one; a single-vendor scenario has nothing to mix.
 
 ## Removing a device
 
-Delete its entry from `topology.json` and regenerate. `gen_clab_topology` prunes stale `generated/frr/*.iface` and `generated/srl/*.cli` files for hostnames that no longer exist, so nothing is left behind. Commit the regenerated parameter files as above.
+Delete its entry from the scenario's `topology.json` and regenerate. `gen_clab_topology` prunes stale `generated/<scenario>/clab/frr/*.iface` and `generated/<scenario>/clab/srl/*.cli` files for hostnames that no longer exist, so nothing is left behind. Commit the regenerated parameter files as above.
+
+!!! warning "Cut the cables on both sides"
+    Removing a device leaves every interface that pointed at it aiming at
+    something that is gone, and `gen_clab_topology` silently renders those as
+    `dummy` links rather than veths. `tests/test_scenario_manifests.py` checks
+    that device-to-device links are symmetric, so `make test` catches it — but
+    fix the peers, do not just satisfy the test.
 
 Devices already discovered into the CMS are **not** removed — discovery only adds. Use `make local-env-prune` for a clean CMS.
+
+## Adding a whole scenario
+
+The same loop, plus two files. Create `scenarios/<name>/` with a `topology.json`, a `scenario.json` manifest (name, title, summary, `flavours`, `demonstrates`) and a `README.md`, then:
+
+```bash
+make generate SCENARIO=<name>
+make test
+git add scenarios/<name>
+```
+
+Add only what differs from `scenarios/_base/` — workflows, scope configuration, FRR device config, function blocks and the OIDC config are all inherited file by file. See [Scenarios](../30-scenarios/index.md).
 
 ## Adding a different vendor
 
