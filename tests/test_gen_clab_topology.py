@@ -1,23 +1,17 @@
 """Unit tests for the containerlab topology generator.
 
 `gen_clab_topology` is an executable script (no `.py` extension) living at the repo
-root, so we load it by path via `importlib.util` (same pattern as
+root, so we load it through `labscripts` (same pattern as
 `test_gen_device_configs.py`).
 """
 
-import importlib.machinery
-import importlib.util
 import json
 import pathlib
 
-LAB_DIR = pathlib.Path(__file__).resolve().parents[1]
-SCRIPT_PATH = LAB_DIR / "gen_clab_topology"
+import labscripts
 
-_loader = importlib.machinery.SourceFileLoader("gen_clab_topology", str(SCRIPT_PATH))
-_spec = importlib.util.spec_from_loader(_loader.name, _loader)
-assert _spec is not None
-gen = importlib.util.module_from_spec(_spec)
-_loader.exec_module(gen)
+LAB_DIR = pathlib.Path(__file__).resolve().parents[1]
+gen = labscripts.load("gen_clab_topology")
 
 
 def test_clab_iface_srl_mapping():

@@ -8,11 +8,11 @@ per-device renderers from the sibling `gen_device_configs`.
 
 from __future__ import annotations
 
-import importlib.machinery
-import importlib.util
 import json
 import pathlib
 import sys
+
+import labscripts
 
 HERE = pathlib.Path(__file__).resolve().parent
 TOPOLOGY = HERE / "topology.json"
@@ -31,12 +31,7 @@ LAB_NET_NAME = "lab-net"
 LAB_SUBNET = "172.30.0.0/24"
 
 # Reuse the per-device render helpers from the extension-less sibling module.
-_dc_loader = importlib.machinery.SourceFileLoader("gen_device_configs", str(HERE / "gen_device_configs"))
-_dc_spec = importlib.util.spec_from_loader(_dc_loader.name, _dc_loader)
-if _dc_spec is None:  # never happens with an explicit loader; keeps the types honest
-    raise SystemExit(f"could not load {HERE / 'gen_device_configs'}")
-gen_device_configs = importlib.util.module_from_spec(_dc_spec)
-_dc_loader.exec_module(gen_device_configs)
+gen_device_configs = labscripts.load("gen_device_configs")
 
 render_frr = gen_device_configs.render_frr
 render_srl = gen_device_configs.render_srl
