@@ -75,6 +75,8 @@ nav:
   - Adding a device: 20-operations/30-adding-a-device.md
   - Troubleshooting: 20-operations/40-troubleshooting.md
   - Kubernetes lab: 20-operations/50-kubernetes-lab.md
+- Scenarios:
+  - Scenarios: 30-scenarios/index.md
 - Development:
   - Development: 60-development/index.md
   - Dev setup: 60-development/10-dev-setup.md
