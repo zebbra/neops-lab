@@ -105,7 +105,6 @@ plugins:
     - cms/*
     - devices/*
     - function_blocks/*
-    - monitor/*
     - scope/*
     - tests/*
     - workflows/*
