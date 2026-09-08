@@ -8,10 +8,9 @@ a one-shot bootstrap container — runs on docker-compose; the devices attach to
 the same `lab-net` bridge (172.30.0.0/24) at fixed management IPs, so the worker
 reaches them at those IPs.
 
-The control plane runs from **published images** on `quay.io/zebbra` (CMS,
-workflow engine, web client) — except the **worker**, whose published `develop`
-tag is currently unusable and must be built locally; see
-[Prerequisites](#prerequisites). This repo owns the lab itself: the topology,
+The control plane runs from **published images** on `quay.io/zebbra`: the CMS,
+the workflow engine, the web client and the worker. This repo owns the lab
+itself: the topology,
 the device configs, the workflow, the bootstrap sequencing and the two small
 helper images.
 
@@ -77,18 +76,12 @@ make doctor
   stdlib-only and import under the `/usr/bin/python3` a stock macOS ships.
 - **`uv`** — only for `make test` / `make lint` / `make check` and the docs.
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
-- **A locally-built worker image — the published `develop` tag does not work.**
-  `quay.io/zebbra/neops-worker-sdk:develop` is built from `neops-worker-sdk-py`'s
-  `develop`, which carries no `neops/fb` and no `README.md` in the image, so the
-  container dies at start with `OSError: Readme file does not exist: README.md`
-  and would register no function blocks even if it started. The discovery block
-  `fb.base.neops.io/global_discover_network:0.1.0` and the `COPY ./neops` that
-  ships it live on the SDK's `feature/technopark` branch (open PR
-  [zebbra/neops-worker-sdk-py#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127)).
-  Until that merges and CI republishes the tag, build it yourself:
+- **Nothing to build for the worker.** `quay.io/zebbra/neops-worker-sdk:develop`
+  ships the base function blocks, `fb.base.neops.io/global_discover_network:0.1.0`
+  among them, so the default path needs no local image. To try SDK changes before
+  they are released, build the checkout and point the lab at it:
 
   ```bash
-  git -C ../neops-worker-sdk-py switch feature/technopark
   make -C ../neops-worker-sdk-py build-docker      # -> neops-worker-sdk:latest
   echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
   ```

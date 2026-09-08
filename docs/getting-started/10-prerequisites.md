@@ -24,9 +24,8 @@ Read-only apart from pulling two small images. It checks the docker daemon and t
 | **`openssl`** | Mints the dev RSA keypair the CMS needs for RS256 JWTs (OpenSSL 3 or macOS LibreSSL) | `make lab-jwt` |
 | **`python3` ≥ 3.9** | The host scripts are stdlib-only and import under a stock macOS `/usr/bin/python3` | `gen_clab_topology`, `run_workflow`, `wait_ready` |
 | **`uv`** | ruff / pyrefly / pytest and the MkDocs tooling | `make check`, `make doc-*` |
-| **Quay pull access** | The CMS, engine, web client and worker images are private | `make local-env-init` |
+| **Quay pull access** | Not needed for the defaults — the CMS, developer-preview engine, web client and worker images are all public. Only the full licensed engine requires `docker login quay.io` | `make local-env-init` |
 | **RAM** | 5 SR Linux nodes (≈1.5–2 GB each) + Elasticsearch + control plane ≈ **14–16 GB** for containers | `make local-lab-up` |
-| **A worker image with the discovery block** | Published with [neops-worker-sdk-py#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127); until then build it from a checkout | [Images](../20-operations/20-images.md) |
 
 ## containerlab — one command, both hosts, no install
 
@@ -95,9 +94,8 @@ docker login quay.io
 export NEOPS_WORKFLOW_ENGINE_IMAGE=quay.io/zebbra/neops-workflow-engine:develop
 ```
 
-`quay.io/zebbra/neops-worker-sdk` is not public either, but it never enters the
-documented path: its published tag is unusable, so the worker is built from a
-local checkout either way — see [Images](../20-operations/20-images.md).
+`quay.io/zebbra/neops-worker-sdk` is public and pulls anonymously like the
+rest — see [Images](../20-operations/20-images.md).
 
 !!! tip "`NPM_TOKEN` is **not** needed here"
     Most NeOps repos require an `NPM_TOKEN` to install `@zebbra/*` npm

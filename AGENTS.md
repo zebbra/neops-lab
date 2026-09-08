@@ -81,11 +81,9 @@ Load-bearing and usually not obvious from the code:
 - **`neops/fb` ships inside the worker image**, it is not mounted from here. If
   discovery fails with "Function block … not found", check that the
   `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `neops/fb`.
-  ⚠️ **The published `quay.io/zebbra/neops-worker-sdk:develop` tag does not**, and
-  its container exits at start on a missing `README.md`. The function blocks and
-  the `COPY ./neops` that ships them are on the SDK's `feature/technopark` branch
-  (open PR zebbra/neops-worker-sdk-py#127). Until that merges, the lab requires a
-  locally-built worker image — see README "Prerequisites".
+  The published `quay.io/zebbra/neops-worker-sdk:develop` carries them, so the
+  default path needs no local build; `make -C ../neops-worker-sdk-py build-docker`
+  is for exercising a block you are editing.
 - **`gen_clab_topology` emits `"../devices/frr/set-aliases.sh:…"`** as a
   containerlab bind. That path is relative to `generated/`, where the topology
   file lives — it is correct as written. Do not "fix" it to `devices/…`.

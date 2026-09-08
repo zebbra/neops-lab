@@ -40,7 +40,7 @@ This repo owns *the lab*: the topology, the device configs, the workflow, the bo
 
     *From a clean checkout to 15 discovered devices.*
 
-    - What your host needs (containerlab, Docker, Quay pull access)
+    - What your host needs (containerlab, Docker; the default images pull anonymously)
     - Four commands, in order, and what each one waits for
     - The URLs the lab publishes and what to click first
 
@@ -118,7 +118,7 @@ graph TB
   frr <-- "real veth links" --> srl
 ```
 
-The devices are **really cabled** to each other — a small SR Linux spine-leaf fabric plus an FRR WAN/core/edge domain. Interfaces on connected ports come up **UP** and LLDP neighbours are real, which is what makes the lab useful for neighbour- and topology-aware work rather than just row-counting.
+The devices are **really cabled** to each other — a small SR Linux spine-leaf fabric plus an FRR WAN/core/edge domain. Interfaces on connected ports come up **UP**, and on the SR Linux fabric LLDP neighbours are real too, which is what makes the lab useful for neighbour- and topology-aware work rather than just row-counting. The FRR nodes carry no LLDP daemon (`devices/frr/daemons` runs zebra and ospfd only), so neighbour discovery there has nothing to read.
 
 ## End state
 
