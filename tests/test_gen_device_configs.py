@@ -1,23 +1,15 @@
 """Unit tests for the lab device-config generator.
 
 `gen_device_configs` is an executable script (no `.py` extension) living at the
-repo root, so we load it by path via `importlib.util`.
+repo root, so we load it through `labscripts`.
 """
 
-import importlib.machinery
-import importlib.util
 import pathlib
 
-LAB_DIR = pathlib.Path(__file__).resolve().parents[1]
-SCRIPT_PATH = LAB_DIR / "gen_device_configs"
+import labscripts
 
-# The script has no `.py` suffix, so an explicit SourceFileLoader is needed;
-# `spec_from_file_location` alone returns None for an unrecognised extension.
-_loader = importlib.machinery.SourceFileLoader("gen_device_configs", str(SCRIPT_PATH))
-_spec = importlib.util.spec_from_loader(_loader.name, _loader)
-assert _spec is not None
-gen = importlib.util.module_from_spec(_spec)
-_loader.exec_module(gen)
+LAB_DIR = pathlib.Path(__file__).resolve().parents[1]
+gen = labscripts.load("gen_device_configs")
 
 
 def test_render_frr_with_loopback():

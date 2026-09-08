@@ -58,14 +58,19 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
 
 Load-bearing and usually not obvious from the code:
 
-- **The extension-less scripts must keep their names.** `tests/*` load them by
-  path via `importlib.machinery.SourceFileLoader` (`spec_from_file_location`
-  returns `None` for an unrecognised extension), `gen_clab_topology` loads
-  `gen_device_configs` the same way, and the Makefile/README invoke them as
+- **The extension-less scripts must keep their names.** Everything that reuses
+  one loads it through `labscripts.load("<name>")` — `gen_clab_topology` takes
+  `gen_device_configs` that way, the tests take the script under test, and
+  `tools/import_host_scripts.py` takes all of them. `labscripts.py` is the
+  single place that knows the `SourceFileLoader` incantation the missing `.py`
+  forces (`spec_from_file_location` returns `None` for an unrecognised
+  extension); do not hand-roll it again. A script run as `./gen_clab_topology`
+  finds `labscripts` on `sys.path[0]`, and the root `conftest.py` puts the same
+  directory on the path for the tests. The Makefile/README invoke them as
   `./gen_clab_topology`. Because they have no `.py`, ruff and pyrefly only see
   them through the explicit `extend-include` / `project-includes` lists in
-  `pyproject.toml` — **add any new script to both lists or it is silently never
-  checked**.
+  `pyproject.toml` — **add any new script to both lists, and to
+  `tools/import_host_scripts.py`, or it is silently never checked**.
 - **The repo is bind-mounted read-only into the worker at `/app/lab`**
   (`docker-compose.worker.yml`; the SDK image's WORKDIR is `/app`). That is why
   in-container paths keep a `lab/` prefix — `DIR_FUNCTION_BLOCKS:
