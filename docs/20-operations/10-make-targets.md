@@ -12,7 +12,7 @@ tags: [operations, reference]
 
 | Target | What it does |
 |---|---|
-| `make local-lab-up` | Depends on `build-docker`, `lab-jwt` and `lab-env`. Generates the containerlab topology + device configs from `topology.json`, refreshes the worker image, starts the CMS and waits for it to be healthy, runs `apply_cms_config`, mints one engine token, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `./containerlab deploy --reconfigure`s the 15 devices (re-runnable), waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`. |
+| `make local-lab-up` | Depends on `build-docker`, `lab-jwt` and `lab-env`. Generates the containerlab topology + device configs from `topology.json`, refreshes the worker image, starts the CMS and waits for it to be healthy, runs `apply_cms_config`, mints an engine token, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `./containerlab deploy --reconfigure`s the 15 devices (re-runnable), mints a fresh token, waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`. |
 | `make local-lab-discover` | Runs `apply_cms_config`, mints one engine token, waits for the discovery function block and for device SSH, then POSTs a workflow execution and polls to a terminal state (15-minute ceiling). Override `DISCOVER_PARAMS` to change targeting. |
 | `make local-lab-logs` | `docker compose logs -f worker lab_bootstrap`. |
 | `make local-lab-down` | `./containerlab destroy --cleanup` (removes the devices and `generated/clab-neops-lab/`), then `docker compose down`. Volumes survive. |
@@ -26,7 +26,7 @@ The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 |---|---|---|
 | `DISCOVER_PARAMS` | `workflow-execution-parameters/discover-params.json` | Which parameter file `local-lab-discover` sends |
 | `PROFILE` | `operator` | Grant profile `lab-grant` applies: `author`, `operator` or `admin` |
-| `NEOPS_ENGINE_TOKEN` (env) | *(minted per target)* | Engine access token; export one to reuse it across targets |
+| `NEOPS_ENGINE_TOKEN` (env) | *(minted per target)* | Engine access token; export one to reuse it across targets. `local-lab-up` mints a fresh one after the containerlab deploy |
 | `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.1.0` | The function block `wait_ready` blocks on |
 | `CLAB_TOPO` | `generated/neops-lab.clab.json` | The generated containerlab topology |
 | `CONTAINERLAB` | `./containerlab` | The containerlab launcher |

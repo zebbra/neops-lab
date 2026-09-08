@@ -148,11 +148,13 @@ local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_FI
 local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_PATH_SEPARATOR := :
 
 # The engine runs NEOPS_AUTHZ_MODE=enforce, so run_workflow, wait_ready and the
-# lab_bootstrap container each send `Authorization: Bearer`. This snippet exports
-# ONE token for the whole recipe it is used in: the CMS rate-limits logins per IP
-# (NEOPS_LOCAL_LOGIN_RATE_LIMIT, default 5/m) and every lab call leaves this host
-# from the same address. An already-exported NEOPS_ENGINE_TOKEN is reused. make
-# echoes recipe text, so the value stays out of the terminal.
+# lab_bootstrap container each send `Authorization: Bearer`. This snippet mints a
+# token unless NEOPS_ENGINE_TOKEN is already set, and exports it to every caller
+# after it in the recipe, so a step that needs a fresh one unsets the variable
+# first (`local-lab-up` does, after the containerlab deploy). The CMS rate-limits
+# logins per IP (NEOPS_LOCAL_LOGIN_RATE_LIMIT, default 5/m) and every lab call
+# leaves this host from the same address. make echoes recipe text, so the value
+# stays out of the terminal.
 MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$(./lab_token)}; \
 	export NEOPS_ENGINE_TOKEN; \
 	test -n "$$NEOPS_ENGINE_TOKEN" || { echo "error: minted an empty engine token; run ./lab_token to see why"; exit 1; }
@@ -208,8 +210,8 @@ local-lab-up: build-docker lab-jwt lab-env
 	# Refresh the worker image: the local-env-* pulls run with the base compose
 	# file, which does not include the worker service.
 	docker compose pull --policy always --ignore-pull-failures worker
-	# The next steps run in ONE shell so a single engine token covers every
-	# caller among them; `set -e` aborts that shell on the first failing command.
+	# The next steps run in ONE shell so a minted engine token reaches every
+	# caller after it; `set -e` aborts that shell on the first failing command.
 	#
 	# `./lab_token` logs in against the CMS on :8001, so the CMS comes up and
 	# reaches healthy first. After `local-lab-down` nothing is running, and the
@@ -233,6 +235,14 @@ local-lab-up: build-docker lab-jwt lab-env
 	# Deploy the 15 devices with REAL point-to-point wiring onto lab-net. SR Linux
 	# boots slowly, so deploy early — before waiting on device SSH below.
 	#
+	# That deploy runs for minutes on a slow host and a token lasts 15 minutes, so
+	# the wait below runs on a freshly minted one; `wait_ready` stops on a 401.
+	# The `unset` precedes the snippet because the snippet reuses an already-set
+	# NEOPS_ENGINE_TOKEN. Two logins for this target, inside the CMS's local limit
+	# of 5 a minute per address. The second one sits after the deploy, so a CMS
+	# that is unreachable or rate-limited by then fails the target with the
+	# devices already up; `--reconfigure` lets a re-run pick up from there.
+	#
 	# The worker registers its function blocks with the engine asynchronously
 	# after its container starts. Block until an online worker exists so the
 	# "Lab is up" banner is honest and `local-lab-discover` won't race the
@@ -246,6 +256,8 @@ local-lab-up: build-docker lab-jwt lab-env
 	docker compose wait lab_bootstrap; \
 	echo "Deploying containerlab devices (real links)..."; \
 	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO); \
+	unset NEOPS_ENGINE_TOKEN; \
+	$(MINT_ENGINE_TOKEN); \
 	echo "Waiting for the worker to register its function blocks..."; \
 	./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
 	# Devices (esp. Nokia SR Linux) boot slower than `containerlab deploy` returns.

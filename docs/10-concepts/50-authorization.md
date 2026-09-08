@@ -111,7 +111,7 @@ Opening `http://localhost:3031` directly gives an unauthenticated monitor, becau
 
 Access tokens last 15 minutes (`NEOPS_JWT_ACCESS_LIFETIME_MINUTES`, a CMS default this lab keeps). A token carries the grants its account held at the moment it was issued, and the engine reads them from the token alone, so a grant added or withdrawn afterwards reaches the engine at the next login and no sooner. `make local-lab-discover` polls to a 900-second ceiling, so a discovery minted at the start and still running at the end outlives its token; `run_workflow` reports that and stops polling. The execution itself continues — watch it in the monitor.
 
-The CMS rate-limits local logins to 5 per minute per client IP (`NEOPS_LOCAL_LOGIN_RATE_LIMIT`), and every lab call leaves the host from the same address. Each make target mints one token and passes it to every caller in that target, which keeps a full `local-lab-up` plus `local-lab-discover` cycle at two logins. Re-running a target several times inside a minute is what reaches the limit; `./lab_token` names the setting when it does.
+The CMS rate-limits local logins to 5 per minute per client IP (`NEOPS_LOCAL_LOGIN_RATE_LIMIT`), and every lab call leaves the host from the same address. A make target mints a token and passes it to every caller in it. `local-lab-up` mints a second one after `containerlab deploy`, whose minutes can outlast the first, so a full `local-lab-up` plus `local-lab-discover` cycle is three logins. Re-running a target several times inside a minute is what reaches the limit; `./lab_token` names the setting when it does.
 
 Mint a token by hand with:
 

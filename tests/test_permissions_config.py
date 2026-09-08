@@ -4,7 +4,8 @@
 over `docker compose exec` — so nothing about it is checked until a lab is
 running. These assertions cover the parts that are checkable offline: the file's
 shape, its internal cross-references, the two things the script has to keep
-doing with it, and the point in the make targets at which it has to be applied.
+doing with it, and the points in the make targets at which it has to be applied
+and the token carrying its grants minted.
 """
 
 import json
@@ -80,3 +81,17 @@ def test_grants_are_applied_before_a_target_mints_a_token():
         assert body.index("./apply_cms_config") < body.index("$(MINT_ENGINE_TOKEN)"), (
             f"{name} mints a token before applying {CONFIG_PATH.name}"
         )
+
+
+def test_local_lab_up_mints_a_fresh_token_for_the_worker_wait():
+    """`containerlab deploy` runs for minutes and a token lives 15, so the
+    `wait_ready` after it runs on a mint of its own; `wait_ready` stops on a 401.
+    The unset carries that mint: MINT_ENGINE_TOKEN reuses a token already set.
+    """
+    body = _recipes()["local-lab-up"]
+    between = body[body.index("$(CONTAINERLAB) deploy") : body.index("./wait_ready")]
+    assert "$(MINT_ENGINE_TOKEN)" in between, "the worker wait runs on the token minted before the deploy"
+    assert "unset NEOPS_ENGINE_TOKEN" in between, "that mint hands back the token minted before the deploy"
+    assert between.index("unset NEOPS_ENGINE_TOKEN") < between.index("$(MINT_ENGINE_TOKEN)"), (
+        "the unset lands after the mint it is meant to precede"
+    )
