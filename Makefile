@@ -201,7 +201,7 @@ clab-suid:
 		echo "         then re-login for the group to apply."; \
 	fi
 
-local-lab-up: build-docker lab-env
+local-lab-up: build-docker lab-jwt lab-env
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
 	# Generate the containerlab topology + per-device configs from topology.json.
 	@./gen_clab_topology
