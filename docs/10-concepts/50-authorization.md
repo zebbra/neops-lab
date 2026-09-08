@@ -15,7 +15,7 @@ The engine reads `NEOPS_AUTHZ_MODE`, and rejects anything outside these three va
 | Mode | What the engine does |
 |---|---|
 | `enforce` | Verifies the bearer token on every gated route; answers `401` without one and `403` without the route's permission. |
-| `permissive` | Verifies a token when one is present and lets the request through either way. |
+| `permissive` | Requires a valid Neops JWT; a token reporting `authz_enforced: false` is allowed through, with a warning. Against a CMS running the permissions plugin it denies like `enforce`. |
 | `disabled` | Treats every caller as anonymous and gates nothing. |
 
 `docker-compose.yml` sets `enforce`. A lab that gates nothing would prove nothing about the deployments it stands in for, and the failure modes that matter — a missing grant, an expired token, a CORS origin nobody enumerated — only appear under enforcement.
@@ -30,7 +30,7 @@ Two more variables travel with it on the `workflow_engine` service:
 **The automation identity** is `neops`, holding the role `lab-admin`. Every host script and the `lab_bootstrap` container acts as it, and so does the engine: `make local-env-init` mints a CMS API key for `neops` into `cms_api_key.env`, which the engine reads as `NEOPS_CMS_TOKEN`.
 
 !!! note "`lab-admin` holds the `admin` profile for two reasons"
-    The host scripts publish definitions and start executions, and the engine's
+    The host scripts publish definitions and start executions, and the CMS's
     `unlockResources` mutation verifies that the `NEOPS_CMS_TOKEN` caller holds
     `workflow-execution:write`. That second coupling is tracked as
     [neops-workflow-engine#234](https://github.com/zebbra/neops-workflow-engine/issues/234).
@@ -56,6 +56,20 @@ All four roles carry the same CMS visibility (`default_permission` 7 and a `Role
 ```
 
 `apply_cms_config` reads it, creates each role and user, and then runs the CMS's own `manage.py grant_workflow_permissions --role <role> --profile <profile> --yes` once per role, printing the diff it applies. That command is the single mechanism: the script writes no grant row itself.
+
+### Default profiles
+
+Each profile is a set of `<element>:<flag>` grants:
+
+| Profile | Grants |
+|---|---|
+| `author` | `workflow:read`, `workflow:write` |
+| `operator` | `workflow:read`, `workflow-execution:read`, `workflow-execution:write`, `workflow-execution-abort:write`, `worker:read` |
+| `admin` | `author` and `operator` together, plus `workflow-delete:write`, `workflow-execution-rollback:write`, `worker:write` |
+
+Profiles are additive, and with `NEOPS_PERMISSIONS_SIMPLE_IMPLICIT_PERMISSION_LEVEL` on, which is the permissions plugin's default and what this lab runs, the CMS widens each element as it stores it: a `write` grant is kept as read, execute and write, so an `execute` flag stands beside every `write` in the diff `grant_workflow_permissions` prints.
+
+The table's home is the CMS: `manage.py grant_workflow_permissions` declares it, and neops-core's `docs/runbooks/workflow-authorization-rollout.md` documents it for a deployment that never runs this lab. It is repeated here so the persona table above can be read in one place.
 
 To change the model, edit the file and re-apply:
 
