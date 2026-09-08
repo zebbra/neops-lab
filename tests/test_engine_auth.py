@@ -32,6 +32,8 @@ wait_ready = labscripts.load("wait_ready")
 # image and are absent from this repo's dev environment.
 REGISTER_SOURCE = (LAB_DIR / "bootstrap" / "register.py").read_text()
 
+APPLY_SCRIPT = (LAB_DIR / "apply_cms_config").read_text()
+
 FB_ID = "fb.base.neops.io/global_discover_network:0.1.0"
 
 # The two shapes the engine refuses with. A 403 names the permission the route
@@ -188,6 +190,16 @@ def test_lab_token_login_payload_carries_the_credentials():
     payload = lab_token.login_payload("operator", "operator")
     assert payload["variables"] == {"username": "operator", "password": "operator"}
     assert "accessToken" in payload["query"]
+
+
+def test_lab_token_reads_the_cms_url_apply_cms_config_reads(monkeypatch):
+    """The two run back to back in one make recipe, so a lab moved off :8001
+    has to reach the same CMS from both."""
+    monkeypatch.setenv("CMS_URL", "http://cms.example:9000")
+    assert lab_token.build_arg_parser().parse_args([]).cms_url == "http://cms.example:9000"
+    monkeypatch.delenv("CMS_URL")
+    fallback = lab_token.build_arg_parser().parse_args([]).cms_url
+    assert f"CMS_URL=${{CMS_URL:-{fallback}}}" in APPLY_SCRIPT
 
 
 def test_lab_token_names_the_rate_limit_setting():

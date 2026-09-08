@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from urllib import error, request
 
@@ -81,7 +82,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--username", default="neops", help="CMS username (default: neops)")
     p.add_argument("--password", default=None, help="CMS password (default: the username)")
-    p.add_argument("--cms-url", default="http://localhost:8001", help="CMS base URL (default: http://localhost:8001)")
+    p.add_argument(
+        "--cms-url",
+        default=os.environ.get("CMS_URL", "http://localhost:8001"),
+        help="CMS base URL (default: $CMS_URL, else http://localhost:8001)",
+    )
     return p
 
 
