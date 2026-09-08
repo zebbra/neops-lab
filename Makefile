@@ -35,6 +35,25 @@ KIND_LAB_NAMESPACE ?= neops-lab
 KIND_LAB_TIMEOUT ?= 180
 KIND_MANIFEST := $(GEN_DIR)/kind/lab.yaml
 
+# The NeOps product stack `make kind-lab-cms-config` configures. It is a
+# separate deployment in its own namespace; nothing here installs, changes or
+# deletes it beyond the `neops` user's role and the Global scope.
+NEOPS_NAMESPACE ?= neops
+NEOPS_CMS_DEPLOYMENT ?= neops-neops-core
+# The workflow engine is issued a CMS API key at install; the lab borrows it
+# rather than minting a second one.
+NEOPS_CMS_TOKEN_SECRET ?= neops-neops-workflow-engine
+NEOPS_CMS_SERVICE ?= neops-neops-core
+NEOPS_CMS_PORT ?= 8000
+# The host talks to the CMS through a short-lived `kubectl port-forward`, not
+# through its ingress: no public DNS, no TLS and no ingress controller needed,
+# and it works on any cluster this kubectl can reach.
+CMS_PORT ?= 18000
+CMS_URL ?= http://127.0.0.1:$(CMS_PORT)
+# How apply_cms_config runs `manage.py` inside that CMS. Its own default is the
+# compose lab, so the Kubernetes flavour supplies the kubectl form here.
+CMS_EXEC ?= kubectl -n $(NEOPS_NAMESPACE) exec -i deploy/$(NEOPS_CMS_DEPLOYMENT) --
+
 # Extra flags for every docker build, e.g. DOCKER_BUILD_FLAGS=--network=host when the bridge network has no DNS.
 DOCKER_BUILD_FLAGS ?=
 # -----------------------------------------------------------------------------
@@ -342,9 +361,32 @@ kind-lab-down:
 kind-lab-status:
 	@kubectl -n $(KIND_LAB_NAMESPACE) get pods,svc
 
+# Applying the CMS config is deliberately a SEPARATE target: bringing the pods up
+# must not require a running product stack, the same way local-lab-up and
+# local-lab-discover are separate today.
+#
+# `apply_cms_config` is the compose lab's own script, reused through CMS_EXEC
+# rather than forked: it grants the `neops` user the `lab-admin` role and seeds
+# the Global scope, without which the web client shows no scope at all. Getting
+# the devices themselves into the CMS is discovery's job, not a second
+# implementation of it here — see the Kubernetes lab docs.
+#
+# The API key is read out of the cluster Secret per invocation, so it is never
+# stale, and the recipe is `@`-prefixed so it is never echoed.
+kind-lab-cms-config: scenario-resolve
+	@kubectl -n $(NEOPS_NAMESPACE) port-forward svc/$(NEOPS_CMS_SERVICE) $(CMS_PORT):$(NEOPS_CMS_PORT) >/dev/null & \
+	pf=$$!; trap 'kill $$pf 2>/dev/null || true' EXIT; \
+	i=0; until curl -s -o /dev/null --max-time 2 $(CMS_URL)/; do \
+		i=$$((i + 1)); test $$i -lt 30 || { echo "error: port-forward to $(NEOPS_CMS_SERVICE) never came up" >&2; exit 1; }; \
+		sleep 1; \
+	done; \
+	CMS_URL="$(CMS_URL)" CMS_EXEC="$(CMS_EXEC)" \
+	NEOPS_CMS_TOKEN="$$(kubectl -n $(NEOPS_NAMESPACE) get secret $(NEOPS_CMS_TOKEN_SECRET) -o jsonpath='{.data.NEOPS_CMS_TOKEN}' | base64 -d)" \
+	./apply_cms_config
+
 .PHONY: build-docker build-docker-frr build-docker-bootstrap doctor lint format typeCheck test py39-check \
 	shell-syntax check lab-jwt lab-env clab-suid \
 	scenarios scenario-resolve generate \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config \
-	kind-lab-up kind-lab-down kind-lab-status
+	kind-lab-up kind-lab-down kind-lab-status kind-lab-cms-config

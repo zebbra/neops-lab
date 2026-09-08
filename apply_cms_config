@@ -40,6 +40,14 @@ USERNAME=${CMS_USERNAME:-neops}
 ROLE_NAME=${ROLE_NAME:-lab-admin}
 SCOPE_NAME=${SCOPE_NAME:-Global}
 
+# How to run `manage.py` inside the CMS. The default is the compose lab; the
+# Kubernetes flavour passes
+#   CMS_EXEC="kubectl -n neops exec -i deploy/neops-neops-core --"
+# Environment goes through a plain `env VAR=value ...` after the prefix rather
+# than compose's `-e`, because that is the one form both runtimes accept.
+# Deliberately unquoted on use: it is a command prefix, not one word.
+CMS_EXEC=${CMS_EXEC:-docker compose exec -T cms}
+
 # Per-scope UI config lives as JSON files under the scenario's scope/<name>/.
 # It is applied
 # in two ways because the CMS reseeds part of the `Global` scope on every
@@ -64,26 +72,30 @@ SCOPE_DIR="generated/${SCENARIO}/scenario/scope/${SCOPE_NAME}"
 # (`-w0` is GNU-only).
 DASHBOARD=$(base64 < "${SCOPE_DIR}/dashboard_configuration.json" | tr -d '\n')
 
-if [ ! -f cms_api_key.env ]; then
-    echo "error: cms_api_key.env not found. Run 'make local-env-init' first." >&2
-    exit 1
-fi
-
-# `sed -n` rather than `grep -oP` (BSD/macOS grep has no -P). Exits 0 on no
-# match, so the empty-value guard below is what reports a missing token.
-NEOPS_CMS_TOKEN=$(sed -n 's/^NEOPS_CMS_TOKEN=//p' cms_api_key.env | tr -d '\r')
+# An already-exported token wins, so a caller that mints its own (the Kubernetes
+# flavour reads it from a cluster Secret) needs no cms_api_key.env at all.
+NEOPS_CMS_TOKEN=${NEOPS_CMS_TOKEN:-}
 if [ -z "$NEOPS_CMS_TOKEN" ]; then
-    echo "error: NEOPS_CMS_TOKEN missing in cms_api_key.env." >&2
+    if [ ! -f cms_api_key.env ]; then
+        echo "error: NEOPS_CMS_TOKEN is unset and cms_api_key.env not found. Run 'make local-env-init' first." >&2
+        exit 1
+    fi
+    # `sed -n` rather than `grep -oP` (BSD/macOS grep has no -P). Exits 0 on no
+    # match, so the empty-value guard below is what reports a missing token.
+    NEOPS_CMS_TOKEN=$(sed -n 's/^NEOPS_CMS_TOKEN=//p' cms_api_key.env | tr -d '\r')
+fi
+if [ -z "$NEOPS_CMS_TOKEN" ]; then
+    echo "error: NEOPS_CMS_TOKEN is empty." >&2
     exit 1
 fi
 
 echo "==> Seeding role '$ROLE_NAME' and scope '$SCOPE_NAME' via manage.py shell"
-docker compose exec -T \
-    -e SCOPE_NAME="$SCOPE_NAME" \
-    -e USERNAME="$USERNAME" \
-    -e ROLE_NAME="$ROLE_NAME" \
-    -e DASHBOARD="$DASHBOARD" \
-    cms ./manage.py shell <<'PYSCRIPT'
+$CMS_EXEC env \
+    SCOPE_NAME="$SCOPE_NAME" \
+    USERNAME="$USERNAME" \
+    ROLE_NAME="$ROLE_NAME" \
+    DASHBOARD="$DASHBOARD" \
+    ./manage.py shell <<'PYSCRIPT'
 import base64
 import json
 import os
@@ -153,7 +165,7 @@ PYSCRIPT
 # works against the prebuilt neops-cms-free image without a rebuild.
 echo
 echo "==> Seeding lab platforms (frr, srl) via manage.py shell"
-docker compose exec -T cms ./manage.py shell <<'PYSCRIPT'
+$CMS_EXEC ./manage.py shell <<'PYSCRIPT'
 from neops.core.models.platform import init_platforms
 from neops.core.models import Platform
 
@@ -173,7 +185,7 @@ PYSCRIPT
 # (NEOPS_PERMISSIONS_SIMPLE_CACHE_LIFETIME), so a freshly-granted scope can be
 # invisible to that query for a while. scopesUpsert(id: ...) authorizes by id
 # and works regardless of that cache.
-SCOPE_ID=$(docker compose exec -T cms ./manage.py shell -c \
+SCOPE_ID=$($CMS_EXEC ./manage.py shell -c \
     "from neops.core.models import Scope; print('SCOPEID=%s' % Scope.objects.get(name='${SCOPE_NAME}').id)" \
     2>/dev/null | grep -oE 'SCOPEID=[0-9]+' | cut -d= -f2)
 if [ -z "$SCOPE_ID" ]; then
@@ -209,7 +221,10 @@ def gql(query, variables=None):
         headers={"Content-Type": "application/json", "Authorization": f"Api-Key {token}"},
     )
     try:
-        payload = json.load(urllib.request.urlopen(req))
+        # Bounded: a host whose DNS answers with an address that silently drops
+        # packets (a stale AAAA record, say) hangs here for minutes instead of
+        # failing over to the next address getaddrinfo returned.
+        payload = json.load(urllib.request.urlopen(req, timeout=30))
     except urllib.error.HTTPError as exc:
         # Surface the GraphQL error body instead of a bare HTTPError traceback.
         raise SystemExit(f"GraphQL HTTP {exc.code}: {exc.read().decode(errors='replace')}") from exc
@@ -246,13 +261,20 @@ data = gql(
 )
 s = data["scopesUpsert"]["scope"]
 print(f"  columns applied to scope {s['id']} {s['name']!r}")
-PYEOF
 
-echo
-echo "==> Verifying via GraphQL"
-curl -fsS \
-    -H "Authorization: Api-Key $NEOPS_CMS_TOKEN" \
-    -H "Content-Type: application/json" \
-    -X POST "$CMS_URL/graphql" \
-    -d '{"query":"{ scopes { results { id name showDevices showGroups showInterfaces showClients showTopology } } role { results { id name users { username } rolepermission { defaultPermission } } } }"}' \
-    | python3 -m json.tool
+# Read back through the same gql() as the mutation above, so the endpoint and
+# the Api-Key header are built in exactly one place.
+print()
+print("==> Verifying via GraphQL")
+print(
+    json.dumps(
+        gql("""
+        {
+          scopes { results { id name showDevices showGroups showInterfaces showClients showTopology } }
+          role { results { id name users { username } rolepermission { defaultPermission } } }
+        }
+        """),
+        indent=4,
+    )
+)
+PYEOF
