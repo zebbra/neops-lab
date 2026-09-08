@@ -65,7 +65,7 @@ This repo owns *the lab*: the topology, the device configs, the workflow, the bo
     *Day-to-day operation.*
 
     - Every make target, what it does, and when to reach for it
-    - The two local-only images and the three overridable published ones
+    - The two local-only images and the four overridable published ones
     - Race conditions, boot-order symptoms, and the full-reset recipe
 
     [Operate the lab :material-arrow-right:](20-operations/index.md)

@@ -50,7 +50,7 @@ The scoping is deliberate: `local-env-*` targets keep using the base `docker-com
 | `redis` | `redis:7-alpine` | — | The CMS's channel layer (GraphQL subscriptions), cache and Celery broker |
 | `wait_health` | `busybox` | — | Depends on CMS + engine + web client being *healthy*, so `up -d` blocks until they are |
 
-The three overridable images (`workflow_engine`/`workflow-engine-client`, `web_client`, `worker`) each read a `NEOPS_*_IMAGE` variable and set `pull_policy: missing` — see [Images](../20-operations/20-images.md).
+The four overridable images (`cms`, `workflow_engine`/`workflow-engine-client`, `web_client`, `worker`) each read a `NEOPS_*_IMAGE` variable and set `pull_policy: missing` — see [Images](../20-operations/20-images.md).
 
 ## Networks
 
