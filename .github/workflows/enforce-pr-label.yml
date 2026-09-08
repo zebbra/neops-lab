@@ -5,7 +5,9 @@ on:
     types: [opened, labeled, unlabeled, synchronize]
 
 concurrency:
-  group: enforce-label
+  # Scoped per PR: a repo-wide group lets two active PRs cancel each other's
+  # runs of this required check, leaving both stuck on "cancelled".
+  group: enforce-label-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
