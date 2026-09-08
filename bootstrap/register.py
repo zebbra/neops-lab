@@ -40,9 +40,13 @@ def wait_for_engine() -> None:
 
 
 def _failure_detail(resp: requests.Response) -> str:
-    """What to print beside a refused status code."""
+    """What to print beside a refused status code.
+
+    The engine's refusal body says why it refused; a 403 names the permission
+    the route wanted.
+    """
     if resp.status_code in UNAUTHORIZED:
-        return AUTH_HINT
+        return f"{resp.text[:300]} — {AUTH_HINT}"
     return resp.text[:300]
 
 

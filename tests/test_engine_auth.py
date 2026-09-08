@@ -34,10 +34,25 @@ REGISTER_SOURCE = (LAB_DIR / "bootstrap" / "register.py").read_text()
 
 FB_ID = "fb.base.neops.io/global_discover_network:0.1.0"
 
+# The two shapes the engine refuses with. A 403 names the permission the route
+# wanted, in `requiredPermission` and in the message; a 401 names why no identity
+# could be established and carries no permission at all.
+DENIED_BODY = (
+    b'{"statusCode":403,"code":"PERMISSION_DENIED",'
+    b'"message":"Missing permission \\"workflow-execution:read\\".",'
+    b'"requiredPermission":"workflow-execution:read"}'
+)
+UNAUTHENTICATED_BODY = (
+    b'{"statusCode":401,"code":"AUTHENTICATION_REQUIRED",'
+    b'"message":"This endpoint requires a Neops access token in the Authorization header."}'
+)
 
-def _raising(status, reason):
+
+def _raising(status, reason, body=b""):
+    """An engine answer that raises, carrying the response body it refused with."""
+
     def raise_http_error(*_args, **_kwargs):
-        raise error.HTTPError("http://engine/x", status, reason, {}, None)
+        raise error.HTTPError("http://engine/x", status, reason, {}, io.BytesIO(body))
 
     return raise_http_error
 
@@ -99,6 +114,15 @@ def test_callers_name_the_token_variable_when_refused(module):
     assert module.UNAUTHORIZED == (401, 403)
 
 
+def test_register_prints_the_engines_refusal_before_the_hint():
+    """Both branches of `_failure_detail` print the engine's body; the 401/403
+    one adds the hint after it."""
+    detail = REGISTER_SOURCE.split("def _failure_detail", 1)[1].split("\n\n\n", 1)[0]
+    assert detail.count("resp.text[:300]") == 2
+    assert "AUTH_HINT" in detail
+    assert detail.index("resp.text[:300]") < detail.index("AUTH_HINT"), "the hint leads and the body follows it"
+
+
 def test_register_reads_the_token_and_sends_it_as_a_bearer():
     assert 'os.environ.get("NEOPS_ENGINE_TOKEN"' in REGISTER_SOURCE
     assert '{"Authorization": "Bearer " + ENGINE_TOKEN}' in REGISTER_SOURCE
@@ -108,11 +132,20 @@ def test_register_reads_the_token_and_sends_it_as_a_bearer():
 
 
 def test_wait_ready_stops_on_an_unauthorized_answer(monkeypatch):
-    """A 401 ends the wait at once; polling past it burns the whole budget."""
-    monkeypatch.setattr(wait_ready.request, "urlopen", _raising(401, "Unauthorized"))
+    """A 401 ends the wait at once; polling past it burns the whole budget.
+
+    The engine's body separates a missing token from an invalid one, so it is
+    printed before the hint.
+    """
+    monkeypatch.setattr(wait_ready.request, "urlopen", _raising(401, "Unauthorized", UNAUTHENTICATED_BODY))
     with pytest.raises(SystemExit) as excinfo:
         wait_ready.worker_states("http://engine", FB_ID)
-    assert "NEOPS_ENGINE_TOKEN" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert UNAUTHENTICATED_BODY.decode() in message
+    assert "NEOPS_ENGINE_TOKEN" in message
+    assert message.index(UNAUTHENTICATED_BODY.decode()) < message.index("NEOPS_ENGINE_TOKEN"), (
+        "the hint leads and the engine's reason follows it"
+    )
 
 
 def test_wait_ready_keeps_polling_past_a_not_yet_registered_block(monkeypatch):
@@ -122,15 +155,33 @@ def test_wait_ready_keeps_polling_past_a_not_yet_registered_block(monkeypatch):
 
 
 def test_run_workflow_stops_polling_on_an_unauthorized_answer(monkeypatch):
-    """An expired token ends the poll loop, naming the execution that keeps
-    running and where to follow it."""
-    monkeypatch.setattr(run_workflow, "http_json", _raising(403, "Forbidden"))
+    """An expired token ends the poll loop, naming the engine's refusal, the
+    execution that keeps running and where to follow it."""
+    monkeypatch.setattr(run_workflow, "http_json", _raising(403, "Forbidden", DENIED_BODY))
     with pytest.raises(SystemExit) as excinfo:
         run_workflow.poll_until_terminal("http://engine", "uuid-1", timeout=5, interval=0.01)
     message = str(excinfo.value)
+    assert DENIED_BODY.decode() in message
     assert "NEOPS_ENGINE_TOKEN" in message
+    assert message.index(DENIED_BODY.decode()) < message.index("NEOPS_ENGINE_TOKEN"), (
+        "the hint leads and the permission the route wanted follows it"
+    )
     assert "uuid-1" in message
     assert run_workflow.MONITOR_URL in message
+
+
+def test_run_workflow_reports_the_refusal_that_blocked_the_start(monkeypatch):
+    """A start refused for a missing permission is only actionable with the
+    engine's own message."""
+    monkeypatch.setattr(run_workflow.request, "urlopen", _raising(403, "Forbidden", DENIED_BODY))
+    with pytest.raises(SystemExit) as excinfo:
+        run_workflow.start_execution("http://engine", "wf.lab.neops.io/x:1.0.0", {}, [])
+    message = str(excinfo.value)
+    assert DENIED_BODY.decode() in message
+    assert "NEOPS_ENGINE_TOKEN" in message
+    assert message.index(DENIED_BODY.decode()) < message.index("NEOPS_ENGINE_TOKEN"), (
+        "the hint leads and the permission the route wanted follows it"
+    )
 
 
 def test_lab_token_login_payload_carries_the_credentials():

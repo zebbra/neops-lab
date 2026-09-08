@@ -92,9 +92,9 @@ def start_execution(engine_url: str, workflow: str, parameters: dict, ids: list[
     try:
         resp = http_json(f"{engine_url}/workflow-execution", payload=payload)
     except error.HTTPError as e:
-        if e.code in UNAUTHORIZED:
-            raise SystemExit(f"failed to start workflow ({e.code} {e.reason}): {AUTH_HINT}") from e
         body = e.read().decode(errors="replace")
+        if e.code in UNAUTHORIZED:
+            raise SystemExit(f"failed to start workflow ({e.code} {e.reason}): {body[:300]} — {AUTH_HINT}") from e
         raise SystemExit(f"failed to start workflow ({e.code} {e.reason}): {body}") from e
     except error.URLError as e:
         raise SystemExit(f"failed to reach engine at {engine_url}: {e.reason}") from e
@@ -112,8 +112,9 @@ def poll_until_terminal(engine_url: str, uuid: str, timeout: int, interval: floa
             data = http_json(f"{engine_url}/workflow-execution/id/{uuid}")
         except error.HTTPError as e:
             if e.code in UNAUTHORIZED:
+                body = e.read().decode(errors="replace")
                 raise SystemExit(
-                    f"polling stopped ({e.code} {e.reason}): {AUTH_HINT}. "
+                    f"polling stopped ({e.code} {e.reason}): {body[:300]} — {AUTH_HINT}. "
                     f"Execution {uuid} keeps running; follow it at {MONITOR_URL}"
                 ) from e
             print(f"  poll failed, retrying: {e}", file=sys.stderr)

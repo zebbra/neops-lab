@@ -78,7 +78,10 @@ def worker_states(engine_url: str, fb_id: str) -> list[str] | None:
             workers = json.load(resp)
     except error.HTTPError as exc:
         if exc.code in UNAUTHORIZED:
-            raise SystemExit(f"the engine refused the request ({exc.code} {exc.reason}): {AUTH_HINT}") from exc
+            body = exc.read().decode(errors="replace")
+            raise SystemExit(
+                f"the engine refused the request ({exc.code} {exc.reason}): {body[:300]} — {AUTH_HINT}"
+            ) from exc
         return None
     except (error.URLError, TimeoutError, json.JSONDecodeError):
         return None
