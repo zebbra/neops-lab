@@ -51,7 +51,11 @@ services:
       - NEOPS_JWT_PRIVATE_KEY_PATH=/etc/neops/jwt/private.pem
       - NEOPS_JWT_PUBLIC_KEY_PATH=/etc/neops/jwt/public.pem
     volumes:
-      - ./cms/oidc-config.json:/etc/neops/oidc-config.json:ro
+      # The scenario's OIDC config, materialised by `make scenario-resolve`.
+      # `:?` and not `:-`: an unset SCENARIO must fail here, not silently pick
+      # a lab. Without it compose only warns and docker would create the
+      # missing bind source as an empty directory.
+      - ./generated/${SCENARIO:?set SCENARIO or drive compose through make; see 'make scenarios'}/scenario/cms/oidc-config.json:/etc/neops/oidc-config.json:ro
       - ./cms/jwt:/etc/neops/jwt:ro
     depends_on:
       postgres:

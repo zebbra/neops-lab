@@ -10,6 +10,18 @@ include .make_scripts/release-management/release-management-makefile
 # the same on Linux and macOS (see the header of ./containerlab).
 CONTAINERLAB ?= ./containerlab
 
+# Which lab this checkout runs. `make scenarios` lists them; everything a
+# scenario can own lives under scenarios/<name>/, overlaid on scenarios/_base/.
+# This is the ONLY default: every script, compose file and bash entry point
+# reads SCENARIO and fails when it is unset, so a scenario is never half-applied.
+SCENARIO ?= wan-and-fabric
+export SCENARIO
+# The scenario's source assets, its resolved overlay, and the artifacts the
+# generators write beside it.
+SCENARIO_SRC := scenarios/$(SCENARIO)
+SCENARIO_DIR := generated/$(SCENARIO)/scenario
+GEN_DIR := generated/$(SCENARIO)
+
 # Wait budgets (seconds). Defaults suit a native Linux host; a Mac booting the
 # SR Linux nodes against a shared VM raises these rather than removing a wait.
 WAIT_READY_TIMEOUT ?= 180
@@ -23,7 +35,7 @@ build-docker:
 	# Custom FRR image (frrouting/frr + sshd + frr/frr login) that containerlab
 	# runs as `kind: linux`.
 	docker build -t neops-lab-frr:latest devices/frr
-	# One-shot container that POSTs every workflows/*.yaml to the engine.
+	# One-shot container that POSTs the scenario's workflows/*.yaml to the engine.
 	docker build -t neops-lab-bootstrap:latest bootstrap
 
 lint:
@@ -84,7 +96,7 @@ lab-env:
 		cp .env.example .env && echo "created .env from .env.example"; \
 	fi
 
-local-env-init: lab-jwt
+local-env-init: lab-jwt scenario-resolve
 	touch cms_api_key.env
 	# Refresh the published images. `--ignore-pull-failures` is load-bearing: if
 	# you override a service with a locally-built tag
@@ -119,7 +131,7 @@ local-env-init: lab-jwt
 	# env_file changes don't trigger recreate on their own; force it so the engine picks up the new token
 	docker compose up -d --force-recreate workflow_engine
 
-local-env-up: lab-jwt
+local-env-up: lab-jwt scenario-resolve
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make local-env-init' first."; exit 1; fi
 	# See the note in local-env-init about --policy always / --ignore-pull-failures.
 	docker compose pull --policy always --ignore-pull-failures
@@ -134,6 +146,27 @@ local-env-prune:
 	# state across down/up cycles caused `elastic_index --create` to fail
 	# and stale CMS data to confuse re-inits.
 	docker compose down -v
+
+# -----------------------------------------------------------------------------
+# Scenarios — see docs/30-scenarios/
+# -----------------------------------------------------------------------------
+
+scenarios:
+	@./resolve_scenario --list
+
+# Materialise scenarios/_base + scenarios/$(SCENARIO) into $(SCENARIO_DIR), the
+# one flat directory the containers mount and the scripts read. docker compose
+# cannot express a fallback in a bind mount, so the overlay is resolved here
+# instead. Cheap enough to be a prerequisite of every scenario-consuming target,
+# which is what makes a stale overlay impossible.
+scenario-resolve:
+	@./resolve_scenario --quiet
+
+# Regenerate everything derived from the scenario's topology, including the
+# committed workflow-execution-parameters/*.json. Commit those: `make test`
+# asserts they reproduce byte-for-byte.
+generate: scenario-resolve
+	@./gen_clab_topology
 
 # -----------------------------------------------------------------------------
 # Simple Lab — see README.md
@@ -153,13 +186,13 @@ DISCOVER_FB := fb.base.neops.io/global_discover_network:0.1.0
 
 # Execution parameters for the discovery workflow. Override to discover with a
 # different target form, e.g.
-#   make local-lab-discover DISCOVER_PARAMS=workflow-execution-parameters/discover-params-autodetect.json
-#   make local-lab-discover DISCOVER_PARAMS=workflow-execution-parameters/discover-params-subnet.json
-#   make local-lab-discover DISCOVER_PARAMS=workflow-execution-parameters/discover-params-mixed.json
-DISCOVER_PARAMS ?= workflow-execution-parameters/discover-params.json
+#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-autodetect.json
+#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-subnet.json
+#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-mixed.json
+DISCOVER_PARAMS ?= $(SCENARIO_SRC)/workflow-execution-parameters/discover-params.json
 
-# containerlab topology (generated from topology.json by gen_clab_topology).
-CLAB_TOPO := generated/neops-lab.clab.json
+# containerlab topology (generated from the scenario's topology.json).
+CLAB_TOPO := $(GEN_DIR)/clab/neops-lab.clab.json
 
 # containerlab needs root to create netns/veths. Rather than sudo-ing every lab
 # target (which would prompt for a password in the middle of `local-lab-up`),
@@ -188,9 +221,9 @@ clab-suid:
 		echo "         then re-login for the group to apply."; \
 	fi
 
-local-lab-up: build-docker lab-env
+local-lab-up: build-docker lab-env scenario-resolve
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
-	# Generate the containerlab topology + per-device configs from topology.json.
+	# Generate the containerlab topology + per-device configs from the scenario.
 	@./gen_clab_topology
 	# Refresh the worker image: the local-env-* pulls run with the base compose
 	# file, which does not include the worker service.
@@ -224,9 +257,9 @@ local-lab-up: build-docker lab-env
 	# discovery actually uses — works on every platform.
 	# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix here.
 	@echo "Waiting for all devices to accept SSH..."
-	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
 	@echo ""
-	@echo "Lab is up (containerlab: 10 FRR + 5 Nokia SR Linux, real links)."
+	@echo "Lab is up (scenario: $(SCENARIO), real links)."
 	@echo "  Web client:   http://localhost:8080/"
 	@echo "  Engine UI:    http://localhost:3031"
 	@echo "  Engine API:   http://localhost:3030/"
@@ -235,28 +268,30 @@ local-lab-up: build-docker lab-env
 	@echo "  Run 'make local-lab-discover' to populate the CMS (15 devices with interfaces)."
 
 local-lab-down:
-	# --cleanup removes the per-lab runtime dir (generated/clab-neops-lab); the
-	# leading `-` lets `make` continue if no lab is deployed.
+	# --cleanup removes the per-lab runtime dir
+	# (generated/<scenario>/clab/clab-neops-lab); the leading `-` lets `make`
+	# continue if no lab is deployed.
 	-$(CONTAINERLAB) destroy -t $(CLAB_TOPO) --cleanup
 	docker compose down
 
-local-lab-discover:
+local-lab-discover: scenario-resolve
 	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB)
 	# Always wait for the known lab devices, not the requested discovery input:
 	# a subnet target also contains unused addresses which must not block readiness.
-	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
 	# 15-minute timeout: discovering 15 devices (SSH + fact/interface collection
 	# across 10 FRR + 5 slower Nokia SR Linux nodes) legitimately exceeds the
 	# run_workflow 300s default. Autodetection adds an SSH probe per host, so the
 	# same ceiling covers both parameter files.
 	@./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @$(DISCOVER_PARAMS)
 
-apply-cms-config:
+apply-cms-config: scenario-resolve
 	./apply_cms_config
 
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
 .PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt lab-env clab-suid \
+	scenarios scenario-resolve generate \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config

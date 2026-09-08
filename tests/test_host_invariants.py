@@ -27,3 +27,34 @@ def test_compose_subnets_match_generator():
     assert f"subnet: {lab_subnet}" in worker
     base = (LAB_DIR / "docker-compose.yml").read_text()
     assert "subnet: 172.30.1.0/24" in base
+
+
+def test_compose_mounts_the_resolved_scenario_tree():
+    """The three scenario assets containers consume are interpolated per
+    scenario, so `SCENARIO=x docker compose up` mounts x's copies."""
+    worker = (LAB_DIR / "docker-compose.worker.yml").read_text()
+    base = (LAB_DIR / "docker-compose.yml").read_text()
+
+    assert "/scenario/workflows:/workflows:ro" in worker
+    assert "/scenario/function_blocks,neops/fb" in worker
+    assert "/scenario/cms/oidc-config.json:/etc/neops/oidc-config.json:ro" in base
+
+    # `:?` and not `:-`: compose must abort on an unset SCENARIO. Left to warn,
+    # it interpolates a blank and docker creates the missing bind source as an
+    # empty directory — a lab that comes up with no workflows registered.
+    for text in (worker, base):
+        assert text.count("${SCENARIO:?") == text.count("${SCENARIO"), "every SCENARIO reference must use :?"
+
+
+def test_the_makefile_holds_the_only_scenario_default():
+    """A second default is how a scenario gets half-applied — some assets from
+    the new one, some from the old — which stays invisible until discovery
+    produces a confusing result. Everything but the Makefile must fail on an
+    unset SCENARIO rather than guess one."""
+    makefile = (LAB_DIR / "Makefile").read_text()
+    assert "SCENARIO ?= wan-and-fabric" in makefile
+    assert "export SCENARIO" in makefile
+
+    for name in ("docker-compose.yml", "docker-compose.worker.yml", "apply_cms_config", "resolve_scenario"):
+        text = (LAB_DIR / name).read_text()
+        assert "SCENARIO:-" not in text, f"{name} carries a fallback SCENARIO default"

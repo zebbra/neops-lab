@@ -1,20 +1,44 @@
 #!/usr/bin/env python3
-"""Render per-device interface configs from `topology.json` (stdlib-only).
+"""Render per-device interface configs from a scenario's topology (stdlib-only).
 
-FRR -> `generated/frr/<host>.iface` (`name|description` per line); SR Linux ->
-`generated/srl/<host>.cli` (`set / interface …` lines).
+FRR -> `generated/<scenario>/clab/frr/<host>.iface` (`name|description` per
+line); SR Linux -> `generated/<scenario>/clab/srl/<host>.cli`
+(`set / interface …` lines).
+
+`load_topology` lives here too: three scripts read the topology, and where that
+file is and how it is opened is one fact, not three copies of two lines.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import pathlib
 import sys
 
-HERE = pathlib.Path(__file__).resolve().parent
-TOPOLOGY = HERE / "topology.json"
-FRR_DIR = HERE / "generated" / "frr"
-SRL_DIR = HERE / "generated" / "srl"
+import labscripts
+
+# Which scenario is selected, where it lives and where its artifacts go is
+# `resolve_scenario`'s knowledge, loaded rather than restated here.
+resolve_scenario = labscripts.load("resolve_scenario")
+
+
+def topology_path(scenario: str) -> pathlib.Path:
+    """Return a scenario's `topology.json`. Never inherited from the base."""
+    return resolve_scenario.source_dir(scenario) / "topology.json"
+
+
+def load_topology(scenario: str | None = None, path: pathlib.Path | None = None) -> dict:
+    """Return the device map for a scenario, or from an explicit topology file."""
+    if path is None:
+        path = topology_path(resolve_scenario.scenario_name(scenario))
+    return json.loads(path.read_text())["devices"]
+
+
+def device_dirs(scenario: str) -> tuple:
+    """Return the `(frr, srl)` output directories for a scenario."""
+    root = resolve_scenario.output_dir(scenario) / "clab"
+    return (root / "frr", root / "srl")
 
 
 def short_name(name: str) -> str:
@@ -69,9 +93,17 @@ def _prune_stale(directory: pathlib.Path, suffix: str, keep: set) -> None:
             path.unlink()
 
 
-def main() -> int:
-    data = json.loads(TOPOLOGY.read_text())
-    devices = data["devices"]
+def parse_args(argv: list) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render the per-device interface configs for a scenario.")
+    parser.add_argument("--scenario", help="scenario to render; defaults to $SCENARIO")
+    return parser.parse_args(argv)
+
+
+def main(argv: list | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    scenario = resolve_scenario.scenario_name(args.scenario)
+    devices = load_topology(scenario)
+    frr_dir, srl_dir = device_dirs(scenario)
 
     frr_hosts = set()
     srl_hosts = set()
@@ -79,17 +111,17 @@ def main() -> int:
     for hostname, dev in devices.items():
         vendor = dev["vendor"]
         if vendor == "frr":
-            _write(FRR_DIR / f"{hostname}.iface", render_frr(hostname, dev))
+            _write(frr_dir / f"{hostname}.iface", render_frr(hostname, dev))
             frr_hosts.add(hostname)
         elif vendor == "srl":
-            _write(SRL_DIR / f"{hostname}.cli", render_srl(hostname, dev))
+            _write(srl_dir / f"{hostname}.cli", render_srl(hostname, dev))
             srl_hosts.add(hostname)
         else:
             print(f"unknown vendor {vendor!r} for {hostname}", file=sys.stderr)
             return 1
 
-    _prune_stale(FRR_DIR, ".iface", frr_hosts)
-    _prune_stale(SRL_DIR, ".cli", srl_hosts)
+    _prune_stale(frr_dir, ".iface", frr_hosts)
+    _prune_stale(srl_dir, ".cli", srl_hosts)
 
     print(f"generated {len(frr_hosts)} FRR + {len(srl_hosts)} SRL device configs")
     return 0

@@ -18,7 +18,7 @@ The target does three things:
 
 1. `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` — confirm an online worker is registered for the discovery function block.
 2. `docker compose exec -T worker python3 lab/wait_devices` — confirm every device in `topology.json` accepts SSH.
-3. `./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @workflow-execution-parameters/discover-params.json`
+3. `./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @scenarios/wan-and-fabric/workflow-execution-parameters/discover-params.json`
 
 `run_workflow` POSTs to `/workflow-execution`, prints the execution UUID, then polls until the execution reaches a terminal state:
 
@@ -63,8 +63,8 @@ The discovery function block records the device **and its interfaces** in one pa
     make local-lab-discover
     ```
 
-    ```json title="workflow-execution-parameters/discover-params.json"
-    --8<-- "../workflow-execution-parameters/discover-params.json"
+    ```json title="scenarios/wan-and-fabric/workflow-execution-parameters/discover-params.json"
+    --8<-- "../scenarios/wan-and-fabric/workflow-execution-parameters/discover-params.json"
     ```
 
 === "Autodetect"
@@ -74,11 +74,11 @@ The discovery function block records the device **and its interfaces** in one pa
 
     ```bash
     make local-lab-discover \
-      DISCOVER_PARAMS=workflow-execution-parameters/discover-params-autodetect.json
+      DISCOVER_PARAMS=scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-autodetect.json
     ```
 
-    ```json title="workflow-execution-parameters/discover-params-autodetect.json"
-    --8<-- "../workflow-execution-parameters/discover-params-autodetect.json"
+    ```json title="scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-autodetect.json"
+    --8<-- "../scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-autodetect.json"
     ```
 
 === "Subnet expansion"
@@ -88,11 +88,11 @@ The discovery function block records the device **and its interfaces** in one pa
 
     ```bash
     make local-lab-discover \
-      DISCOVER_PARAMS=workflow-execution-parameters/discover-params-subnet.json
+      DISCOVER_PARAMS=scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-subnet.json
     ```
 
-    ```json title="workflow-execution-parameters/discover-params-subnet.json"
-    --8<-- "../workflow-execution-parameters/discover-params-subnet.json"
+    ```json title="scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-subnet.json"
+    --8<-- "../scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-subnet.json"
     ```
 
 === "Mixed"
@@ -102,11 +102,11 @@ The discovery function block records the device **and its interfaces** in one pa
 
     ```bash
     make local-lab-discover \
-      DISCOVER_PARAMS=workflow-execution-parameters/discover-params-mixed.json
+      DISCOVER_PARAMS=scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-mixed.json
     ```
 
-    ```json title="workflow-execution-parameters/discover-params-mixed.json"
-    --8<-- "../workflow-execution-parameters/discover-params-mixed.json"
+    ```json title="scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-mixed.json"
+    --8<-- "../scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-mixed.json"
     ```
 
 The precedence rules behind these — longest prefix wins, credentials scoped from most to least specific — are explained in [Discovery](../10-concepts/30-discovery.md).
@@ -123,7 +123,7 @@ The precedence rules behind these — longest prefix wins, credentials scoped fr
 ```bash
 # Parameters from a file (curl-style "@file")
 ./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 \
-  @workflow-execution-parameters/discover-params.json
+  @scenarios/wan-and-fabric/workflow-execution-parameters/discover-params.json
 
 # Inline JSON
 ./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 '{"subnets": []}'

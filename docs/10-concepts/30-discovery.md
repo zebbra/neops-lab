@@ -10,10 +10,10 @@ tags: [concept, workflow]
 
 ## The workflow
 
-`workflows/simple-lab-discovery.workflow.yaml` is registered with the engine by the `lab_bootstrap` container on every `make local-lab-up`. It is a single-step workflow whose entire job is to pass parameters through to a function block:
+`scenarios/_base/workflows/simple-lab-discovery.workflow.yaml` is registered with the engine by the `lab_bootstrap` container on every `make local-lab-up`. It is a single-step workflow whose entire job is to pass parameters through to a function block:
 
-```yaml title="workflows/simple-lab-discovery.workflow.yaml"
---8<-- "../workflows/simple-lab-discovery.workflow.yaml"
+```yaml title="scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
+--8<-- "../scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
 ```
 
 Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.2.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.

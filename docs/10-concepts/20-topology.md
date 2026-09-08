@@ -92,15 +92,15 @@ generated discover-params.json + discover-params-autodetect.json + discover-para
     and binds two files into the node:
 
     - `frr/<host>.iface` → `/etc/frr/lab-interfaces/<host>.iface`
-    - `../devices/frr/set-aliases.sh` → `/etc/frr/set-aliases.sh`
+    - `../scenario/devices/frr/set-aliases.sh` → `/etc/frr/set-aliases.sh`
 
     containerlab creates the `swpN` veths itself. A containerlab `exec` then
     runs `set-aliases.sh` **after wiring**, which sets each interface's Linux
     *alias* — that is what the SDK's FRR plugin reads as the interface
     description:
 
-    ```sh title="devices/frr/set-aliases.sh"
-    --8<-- "../devices/frr/set-aliases.sh"
+    ```sh title="scenarios/_base/devices/frr/set-aliases.sh"
+    --8<-- "../scenarios/_base/devices/frr/set-aliases.sh"
     ```
 
 === "Nokia SR Linux"
@@ -114,9 +114,9 @@ generated discover-params.json + discover-params-autodetect.json + discover-para
     many more ports than the topology wires. The wired ones carry descriptions;
     the rest show admin-disabled — which is realistic for a switch.
 
-!!! warning "`../devices/frr/set-aliases.sh` is relative to `generated/`"
+!!! warning "`../scenario/devices/frr/set-aliases.sh` is relative to `generated/<scenario>/clab/`"
     The generator emits that bind path with a leading `../` because the
-    topology file it writes lives in `generated/`, and containerlab resolves
+    topology file it writes lives in `generated/<scenario>/clab/`, and containerlab resolves
     binds relative to the topology file. It is correct as written — do not
     "fix" it to `devices/…`.
 

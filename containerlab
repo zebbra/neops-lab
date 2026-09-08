@@ -5,7 +5,7 @@
 #
 #   * The repo is mounted at the SAME absolute path inside the container:
 #     containerlab resolves the topology's relative binds (frr/<host>.iface,
-#     ../devices/frr/set-aliases.sh) to absolute host paths for the docker
+#     ../scenario/devices/frr/set-aliases.sh) to absolute host paths for the docker
 #     daemon, so the path in here must equal the path the daemon sees.
 #   * --privileged --pid host let containerlab enter the device containers'
 #     network namespaces to wire the veth links; --network host makes the
