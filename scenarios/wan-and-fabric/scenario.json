@@ -2,7 +2,7 @@
   "name": "wan-and-fabric",
   "title": "WAN and DC fabric",
   "summary": "10 FRR routers in a WAN/core/edge/PE layout plus a 5-node Nokia SR Linux leaf-spine fabric.",
-  "flavours": ["clab"],
+  "flavours": ["clab", "kind"],
   "demonstrates": [
     "mixed-vendor discovery over SSH against two NOS families",
     "LLDP neighbour discovery on the SR Linux fabric",

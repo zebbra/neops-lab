@@ -10,7 +10,7 @@ SCENARIOS_DIR = LAB_DIR / "scenarios"
 SCENARIOS = sorted(p.name for p in SCENARIOS_DIR.iterdir() if p.is_dir() and p.name != "_base")
 
 REQUIRED_KEYS = {"name", "title", "summary", "flavours", "demonstrates"}
-FLAVOURS = {"clab"}
+FLAVOURS = {"clab", "kind"}
 
 
 def _manifest(scenario):
@@ -40,6 +40,14 @@ def test_manifest_is_complete(scenario):
 def test_scenario_carries_a_topology_and_a_readme(scenario):
     assert (SCENARIOS_DIR / scenario / "topology.json").is_file()
     assert (SCENARIOS_DIR / scenario / "README.md").is_file()
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_kind_flavour_requires_at_least_one_frr_device(scenario):
+    """gen_kind_manifests renders FRR devices only, so a scenario with no FRR
+    device claiming the kind flavour would apply an empty manifest."""
+    if "kind" in _manifest(scenario)["flavours"]:
+        assert any(dev["vendor"] == "frr" for dev in _devices(scenario).values())
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
