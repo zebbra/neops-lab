@@ -16,7 +16,7 @@ make build-docker
 
 | Image | Built from | Used by |
 |---|---|---|
-| `neops-lab-frr:latest` | `devices/frr/` | containerlab, as the image for every `kind: linux` node |
+| `neops-lab-frr:latest` | `devices/frr/` (`Dockerfile` + `entrypoint.sh` only) | containerlab, as the image for every `kind: linux` node |
 | `neops-lab-bootstrap:latest` | `bootstrap/` | the `lab_bootstrap` compose service |
 
 !!! warning "Nothing is pushed to a registry"
@@ -36,8 +36,8 @@ make build-docker
 
 - `openssh` with `PasswordAuthentication yes` and `PermitRootLogin no`
 - the `frr` user gets a home directory, a shell, and membership in `frrvty`
-- `frr.conf` and `daemons` are baked in (`zebra`, `ospfd` and `vtysh` enabled; everything else off)
-- the entrypoint rewrites the hostname into `frr.conf`, seeds `/etc/machine-id`, starts `sshd`, then hands off to FRR's own `docker-start`
+- `frr.conf` and `daemons` are **not** baked in — they are scenario data, mounted at `/lab` and installed by the entrypoint
+- the entrypoint copies `/lab/frr.conf` and `/lab/daemons` into `/etc/frr/`, rewrites the hostname, fixes ownership, seeds `/etc/machine-id`, starts `sshd`, then hands off to FRR's own `docker-start`
 
 !!! danger "The FRR image needs `NET_ADMIN` **and** `SYS_ADMIN`"
     The FRR binary refuses to start without `cap_sys_admin`, even with no VRFs
@@ -45,11 +45,21 @@ make build-docker
     which is why this works under `containerlab deploy` — if you ever run the
     image by hand with plain `docker run`, you must add them yourself.
 
-Interface *descriptions* are not baked into the image: containerlab `exec`s `devices/frr/set-aliases.sh` after the links are wired, which sets each interface's Linux alias from the generated `.iface` file. See [Topology as source of truth](../10-concepts/20-topology.md).
+!!! danger "No `/lab` mount, no boot"
+    The entrypoint exits non-zero with `/lab/frr.conf is not mounted` rather
+    than starting FRR on whatever happens to be in `/etc/frr`. A silently wrong
+    routing config costs far more to debug than a container that refuses to
+    start. Both flavours mount it: containerlab binds the three files from
+    `generated/<scenario>/scenario/devices/frr/`, and the Kubernetes flavour
+    carries them in its ConfigMap.
+
+**One image serves every scenario.** Because nothing is baked, a scenario that needs a different FRR baseline — `bgpd` instead of `ospfd`, say — ships a `devices/frr/daemons` or `devices/frr/frr.conf` delta in its own directory. There is no second image to build and no second tag to pin. See [Scenarios](../30-scenarios/index.md).
+
+Interface *descriptions* are not baked in either: containerlab `exec`s `/lab/set-aliases.sh` after the links are wired, which sets each interface's Linux alias from the generated `.iface` file. The script comes from `scenarios/_base/devices/frr/set-aliases.sh`. See [Topology as source of truth](../10-concepts/20-topology.md).
 
 ### `neops-lab-bootstrap`
 
-A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, publishes every `workflows/*.yaml` through the engine's `POST /workflow-definition/publish`, and exits. Publishing is idempotent: an unchanged document answers `200 unchanged`, which is the normal outcome of re-running `make local-lab-up`. Published content is immutable, so *editing* a workflow without bumping its version answers `409` and fails the target — bump `majorVersion`/`minorVersion`/`patchVersion` instead. Engines older than [`068753a0`](https://github.com/zebbra/neops-workflow-engine/commit/068753a0) have no publish route; `register.py` falls back to the legacy `POST /workflow-definition` on a 404. `docker compose wait lab_bootstrap` in `local-lab-up` blocks on that exit and propagates the code.
+A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, publishes every workflow YAML in the resolved scenario (`generated/<scenario>/scenario/workflows/`, sourced from `scenarios/_base/workflows/` unless the scenario overrides or adds one) through the engine's `POST /workflow-definition/publish`, and exits. Publishing is idempotent: an unchanged document answers `200 unchanged`, which is the normal outcome of re-running `make local-lab-up`. Published content is immutable, so *editing* a workflow without bumping its version answers `409` and fails the target — bump `majorVersion`/`minorVersion`/`patchVersion` instead. Engines older than [`068753a0`](https://github.com/zebbra/neops-workflow-engine/commit/068753a0) have no publish route; `register.py` falls back to the legacy `POST /workflow-definition` on a 404. `docker compose wait lab_bootstrap` in `local-lab-up` blocks on that exit and propagates the code.
 
 ## Pulled — the NeOps control plane
 
@@ -101,7 +111,9 @@ Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}
 
 ```bash
 export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
+export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
 docker compose images                       # image + tag per service
 docker compose exec worker ls /app/neops/fb # base function blocks in the image
 docker compose exec worker ls /app/lab      # this repo, through the read-only mount
+docker compose exec worker ls /app/lab/generated/wan-and-fabric/scenario  # the resolved scenario
 ```

@@ -19,7 +19,7 @@ That gets `pytest`, `ruff` and `pyrefly`. Nothing else is needed: the repo decla
 ## The gates
 
 ```bash
-make check     # lint + typeCheck + test
+make check     # lint + typeCheck + test + py39-check + shell-syntax
 ```
 
 | Target | Command |
@@ -37,7 +37,7 @@ Ruff is configured with line length 120, target `py312`, and a broad rule select
 
 `.github/workflows/ci.yml`, on pushes to `main`/`develop` and on every PR:
 
-1. **`lint-test`** on `ubuntu-latest` — `uv sync --group dev --frozen`, then ruff format check, ruff lint, pyrefly, pytest, `make py39-check`, `make shell-syntax`, a parse of the bash entry points with a real bash 3.2 (the `bash:3.2` image — the shell macOS ships), and a check that `gen_clab_topology` reproduces the committed parameter files. Exactly `make check` plus the 3.2 parse.
+1. **`lint-test`** on `ubuntu-latest` — `uv sync --group dev --frozen`, then ruff format check, ruff lint, pyrefly, `pytest tests`, `make py39-check`, and a parse of the bash entry points with a real bash 3.2 (the `bash:3.2` image — the shell macOS ships) in place of `make shell-syntax`. The parameter-file reproduction is not a separate step: it is one of the pytest assertions.
 2. **`docker`** on the self-hosted `hetzner` runner, gated on `lint-test` — `make build-docker`. The images are local-only, so this job exists purely to make a broken Dockerfile fail in CI rather than on a developer's first `make local-lab-up`.
 
 There is no job that stands the lab up: 15 device containers and a few GB of SR Linux RAM do not belong in CI.
@@ -48,7 +48,9 @@ There is no job that stands the lab up: 15 device containers and a few GB of SR 
     The host scripts are executables with **no `.py` extension**:
 
     ```text
-    gen_clab_topology  gen_device_configs  run_workflow  wait_ready  wait_devices
+    resolve_scenario  gen_clab_topology  gen_device_configs
+    gen_kind_manifests  gen_kind_discover_params
+    run_workflow  wait_ready  wait_devices
     ```
 
     Ruff and pyrefly both discover files by extension, so each script has to be
@@ -56,10 +58,10 @@ There is no job that stands the lab up: 15 device containers and a few GB of SR 
 
     ```toml
     [tool.ruff]
-    extend-include = ["gen_clab_topology", "gen_device_configs", "run_workflow", "wait_devices", "wait_ready"]
+    extend-include = ["gen_clab_topology", "gen_device_configs", …, "resolve_scenario", "run_workflow", …]
 
     [tool.pyrefly]
-    project-includes = ["tests/**/*.py", "function_blocks/**/*.py", "gen_clab_topology", …]
+    project-includes = ["tests/**/*.py", "gen_clab_topology", …, "resolve_scenario", …]
     ```
 
     Miss one and the script is **silently** never linted or type-checked. There
@@ -70,8 +72,10 @@ There is no job that stands the lab up: 15 device containers and a few GB of SR 
 Three callers depend on the bare names:
 
 - `tests/*` load them by path via `importlib.machinery.SourceFileLoader` — `spec_from_file_location` returns `None` for an unrecognised extension, which is why the tests use the explicit-loader form;
-- `gen_clab_topology` loads `gen_device_configs` the same way;
-- the `Makefile` and the docs invoke them as `./gen_clab_topology`.
+- `gen_clab_topology` loads `gen_device_configs` the same way, which loads `resolve_scenario` in turn;
+- the `Makefile` invokes them as `./gen_clab_topology`.
+
+A third place needs updating too: `tools/import_host_scripts.py` enumerates them for `make py39-check`.
 
 Renaming them to `*.py` is not an option — it would break every caller.
 
@@ -89,12 +93,17 @@ Renaming them to `*.py` is not an option — it would break every caller.
 uv run pytest tests
 ```
 
-Two modules, both loading the generator scripts by path:
+Eight modules, each loading the script under test through `labscripts`:
 
 - `tests/test_gen_device_configs.py` — the per-device renderers: FRR `.iface` lines, the loopback-first rule, SR Linux `set /` lines, and the `ethernet-1/N` → `e1/N` description conversion.
-- `tests/test_gen_clab_topology.py` — interface-name mapping, veth-link deduplication, dummy-link generation, and **the byte-for-byte reproduction of the committed `workflow-execution-parameters/*.json`**.
+- `tests/test_gen_clab_topology.py` — interface-name mapping, veth-link deduplication, dummy-link generation, the FRR nodes' `/lab` binds, and **the byte-for-byte reproduction of each scenario's committed `workflow-execution-parameters/*.json`**.
+- `tests/test_resolve_scenario.py` — the overlay itself: per-file precedence, additions, pruning of a removed override, and the error paths.
+- `tests/test_scenario_manifests.py` — every `scenario.json` is complete and matches its directory, and every scenario's device-to-device links are symmetric.
+- `tests/test_gen_kind_manifests.py` and `tests/test_gen_kind_discover_params.py` — the Kubernetes flavour's Deployments, Services and `/32` discovery targets, with `kubectl` stubbed so the suite never touches a cluster.
+- `tests/test_wait_devices.py` — which hosts the readiness poll waits on, per scenario. The regression guard for a poller that reads one fixed topology whatever scenario is selected.
+- `tests/test_host_invariants.py` — the cross-file constants the compose files and the generators must agree on.
 
-That last one is the repo's real guard. `_dump_discover_params` hand-rolls a compact layout `json.dumps` cannot produce, so the assertion is exact: change `topology.json`, rerun `./gen_clab_topology`, and commit the regenerated JSON — or `make test` fails.
+The byte-for-byte assertion is the repo's real guard. `_dump_discover_params` hand-rolls a compact layout `json.dumps` cannot produce, so it is exact: change a scenario's `topology.json`, run `make generate SCENARIO=<name>`, and commit the regenerated JSON — or `make test` fails. It is parametrised over `scenarios/*`, so adding a scenario extends the guard rather than leaving it covering only the first one.
 
 ## Working on the docs
 

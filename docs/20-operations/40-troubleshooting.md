@@ -13,10 +13,11 @@ tags: [operations, debugging]
 ```bash
 make doctor                       # host preflight: RAM, subnets, mount, images
 export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
+export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
 docker compose ps                 # what is running, what exited
 make local-lab-logs               # worker + lab_bootstrap, followed
 docker compose logs cms           # CMS startup crashes land here
-./containerlab inspect -t generated/neops-lab.clab.json
+./containerlab inspect -t generated/wan-and-fabric/clab/neops-lab.clab.json
 ```
 
 Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the `worker` or `lab_bootstrap` services — the base compose file does not declare them. The make targets set it themselves.
@@ -112,11 +113,12 @@ make local-lab-up
 `docker compose logs lab_bootstrap` shows a `FAILED` line.
 
 - **`409`** — the version already exists with *different* content. Published
-  workflow definitions are **immutable**; editing `workflows/*.yaml` in place and
+  workflow definitions are **immutable**; editing `scenarios/_base/workflows/*.yaml` in place and
   re-running is exactly what triggers this. Bump
   `majorVersion`/`minorVersion`/`patchVersion` in the YAML, and update the
   matching `wf.lab.neops.io/simple_lab_discovery:<version>` in the `Makefile`'s
-  `local-lab-discover` recipe.
+  `DISCOVER_WORKFLOW` variable, which both `local-lab-discover` and
+  `kind-lab-discover` read.
 - **`422`** — the document is publishable but the engine computed a higher
   version floor than the document declares. Raise the version.
 - **A `404` handled silently** — the engine predates
@@ -153,7 +155,7 @@ make local-lab-up
 
 ```bash
 docker logs spine-01
-./containerlab inspect -t generated/neops-lab.clab.json
+./containerlab inspect -t generated/wan-and-fabric/clab/neops-lab.clab.json
 ```
 
 !!! warning "Never replace a wait with a `sleep`"
@@ -182,7 +184,7 @@ Idempotent, and a prerequisite of `local-env-init` / `local-env-up` — so this 
 
 **Symptom:** <http://localhost:8080/> returns HTTP 200 and a blank `<app-root>`. **curl cannot see this failure** — the HTML is fine; the Angular bootstrap is what fails.
 
-**Cause:** `cms/oidc-config.json` must contain at least one well-formed `OpenIdConfiguration` entry with **inline** `authWellknownEndpoints` (no network discovery). The web client calls `OidcSecurityService.checkAuth()` in an `APP_INITIALIZER`; a `null` or `[]` config makes it fail before anything renders. The CMS serves the file through its `appSettings.oidcConfig` GraphQL resolver, so a missing `OIDC_CONFIG_PATH` produces the same result.
+**Cause:** `scenarios/_base/cms/oidc-config.json` must contain at least one well-formed `OpenIdConfiguration` entry with **inline** `authWellknownEndpoints` (no network discovery). The web client calls `OidcSecurityService.checkAuth()` in an `APP_INITIALIZER`; a `null` or `[]` config makes it fail before anything renders. The CMS serves the file through its `appSettings.oidcConfig` GraphQL resolver, so a missing `OIDC_CONFIG_PATH` produces the same result.
 
 **Fix:** check the file is present and non-empty, and that `OIDC_CONFIG_PATH=/etc/neops/oidc-config.json` is still set on the `cms` service.
 
@@ -226,7 +228,7 @@ make apply-cms-config
 
 With `CLAB_NATIVE` (a host binary) the classic failure is *"This containerlab command requires root privileges or root via SUID to run"* — usually after a **containerlab upgrade**: the new binary is installed without the SUID bit while your `clab_admins` membership survives, so `id` still looks right and only `ls -l "$(command -v containerlab)"` shows the missing `s`. `make clab-suid` restores it (idempotent).
 
-**Fix:** `make doctor`, or `make clab-suid` for the native path; details in [Prerequisites](../getting-started/10-prerequisites.md#containerlab--one-command-both-hosts-no-install). Then confirm with the two-node probe:
+**Fix:** `make doctor`, or `make clab-suid` for the native path; details in [Prerequisites](../getting-started/10-prerequisites.md#containerlab-one-command-both-hosts-no-install). Then confirm with the two-node probe:
 
 ```bash
 ./containerlab deploy  -t clab/probe.clab.yml

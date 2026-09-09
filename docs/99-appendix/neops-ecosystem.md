@@ -16,7 +16,7 @@ Two repos in the NeOps workspace have "lab" in the name. They share **no code, n
 |---|---|---|
 | **What it is** | A local containerlab dev/demo environment | A FastAPI *service* brokering access to a shared lab host |
 | **Where it runs** | Your machine | A shared remote Netlab host |
-| **Device platform** | containerlab, from `topology.json` | [Netlab](https://netlab.tools/), from Netlab topology YAML |
+| **Device platform** | containerlab, from `scenarios/<scenario>/topology.json` | [Netlab](https://netlab.tools/), from Netlab topology YAML |
 | **Who uses it** | Humans — demoing and developing against a populated NeOps | Automated tests — `pytest` via `remote_lab_fixture` |
 | **Access model** | You own the whole thing | Exclusive, FIFO-queued sessions with heartbeats |
 | **Published?** | Nothing. No wheel, no npm package, no image | PyPI package `neops-remote-lab` |
@@ -57,7 +57,7 @@ None of these are verified at build time. All three fail at runtime, in the lab,
 fb.base.neops.io/global_discover_network:0.1.0
 ```
 
-Named in `workflows/simple-lab-discovery.workflow.yaml` and in the `Makefile`'s `DISCOVER_FB`. Renaming it in `neops-worker-sdk-py` breaks both, **with no compile-time check**. Symptom: `Function block … not found`.
+Named in `scenarios/_base/workflows/simple-lab-discovery.workflow.yaml` and in the `Makefile`'s `DISCOVER_FB`. Renaming it in `neops-worker-sdk-py` breaks both, **with no compile-time check**. Symptom: `Function block … not found`.
 
 ### The workflow-engine REST API
 
@@ -81,7 +81,7 @@ Because nothing imports it, the lab is never the *source* of a cross-repo change
 
 - a function-block rename in `neops-worker-sdk-py` → update the workflow YAML and `DISCOVER_FB` here;
 - an engine REST/DTO change in `neops-workflow-engine` → check `register.py`, `wait_ready`, `run_workflow`;
-- a CMS model or permission change in `neops-core` → check `apply_cms_config` and the `scope/Global/*.json` files.
+- a CMS model or permission change in `neops-core` → check `apply_cms_config` and the `scenarios/_base/scope/Global/*.json` files.
 
 Conversely, the lab is a good place to *notice* such a change early, because it exercises the whole stack end to end against real devices with one command.
 

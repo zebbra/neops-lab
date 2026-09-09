@@ -1,9 +1,15 @@
 # neops-lab
 
-Local containerlab developer environment for the NeOps platform: **10 FRR + 5
-Nokia SR Linux devices with real veth wiring**, plus the full control plane (CMS,
-workflow engine, monitor app, web client, worker) on docker-compose. One command
-ends with 15 `Device` rows — each with its interfaces — visible in the web client.
+Local containerlab developer environment for the NeOps platform: **a scenario's
+devices with real veth wiring**, plus the full control plane (CMS, workflow
+engine, monitor app, web client, worker) on docker-compose. One command ends
+with that scenario's `Device` rows — each with its interfaces — visible in the
+web client.
+
+**Which lab runs is a `SCENARIO`.** Each lives under `scenarios/<name>/`,
+overlaid on `scenarios/_base/`; `make scenarios` lists them. The default,
+`scenarios/wan-and-fabric/`, is 10 FRR + 5 Nokia SR Linux devices;
+`scenarios/frr-only/` is the same network without the SR Linux fabric.
 
 Extracted from `neops-worker-sdk-py/lab/`. **The contents of that directory are
 this repo's root** — there is no `lab/` subdirectory here. Host-side paths
@@ -27,7 +33,8 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
 
 - Ruff: line length 120, target Python 3.12 (dev tooling). Pyrefly for types.
 - **Host scripts are stdlib-only and Python-3.9-safe** (`gen_clab_topology`,
-  `gen_device_configs`, `run_workflow`, `wait_ready`, `wait_devices`). They run
+  `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`,
+  `resolve_scenario`, `run_workflow`, `wait_ready`, `wait_devices`). They run
   on a bare host before any virtualenv exists — do not add a third-party import
   to them — and each starts with `from __future__ import annotations` so a
   stock macOS `/usr/bin/python3` (3.9) imports them. `make py39-check`
@@ -51,56 +58,137 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
   `docs/assets/extra.{css,js}` are overwritten on every `make doc-update-assets`
   — name project CSS differently. Code blocks longer than a few lines should be
   `--8<--` includes from the real source file, via the symlinks the setup script
-  creates in `docs/` (e.g. `--8<-- "../workflows/simple-lab-discovery.workflow.yaml"`);
+  creates in `docs/` (e.g.
+  `--8<-- "../scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"`);
   `check_paths: true` makes a broken include fail the build.
 
 ## Invariants & Constraints
 
 Load-bearing and usually not obvious from the code:
 
+- **The overlay is resolved exactly once, into `generated/<scenario>/scenario/`.**
+  `docker compose` cannot express a per-file fallback in a bind mount, so
+  `resolve_scenario` copies `scenarios/_base/` then `scenarios/<name>/` over it
+  into one flat tree, and every consumer reads only that tree. **No consumer
+  implements the fallback itself** — a rule written in Python, in bash and in
+  YAML is a rule with three chances to disagree. It prunes what a previous
+  resolve left behind, so a deleted override cannot linger.
+
+  ```mermaid
+  flowchart LR
+      base["scenarios/_base/"] --> resolve["resolve_scenario"]
+      scen["scenarios/$SCENARIO/"] --> resolve
+      resolve --> out["generated/$SCENARIO/scenario/"]
+      out --> compose["compose bind mounts"]
+      out --> cms["apply_cms_config"]
+      out --> gen["gen_clab_topology<br/>gen_kind_manifests"]
+  ```
+
+- **The overlay is per file, and `topology.json` is never inherited.** A scenario
+  overriding one file in `scope/Global/` keeps the base's other five; one adding
+  a workflow keeps the base's discovery workflow too. But a scenario *is* its
+  topology, so `scenarios/<name>/topology.json` and `scenario.json` are required
+  in every scenario — `resolve_scenario.source_dir` refuses one that lacks them.
+- **`SCENARIO` has exactly one default, `SCENARIO ?= wan-and-fabric` in the
+  Makefile, which `export`s it.** The four generators, `resolve_scenario`,
+  `apply_cms_config` and both compose files must **fail** when it is unset, never
+  guess. A second default is how a scenario gets half-applied — some assets from
+  the new lab, some from the old — which stays invisible until discovery produces
+  a confusing result. `tests/test_host_invariants.py` enforces the absence of a
+  second default.
+- **Compose interpolates `${SCENARIO:?…}`, never a bare `${SCENARIO}`.** Left
+  bare, compose only *warns* on an unset variable and interpolates a blank path;
+  docker then creates the missing bind source as an empty directory and the lab
+  comes up having registered no workflows at all. The `:?` form aborts instead.
 - **The extension-less scripts must keep their names.** Everything that reuses
   one loads it through `labscripts.load("<name>")` — `gen_clab_topology` takes
-  `gen_device_configs` that way, the tests take the script under test, and
-  `tools/import_host_scripts.py` takes all of them. `labscripts.py` is the
-  single place that knows the `SourceFileLoader` incantation the missing `.py`
-  forces (`spec_from_file_location` returns `None` for an unrecognised
-  extension); do not hand-roll it again. A script run as `./gen_clab_topology`
-  finds `labscripts` on `sys.path[0]`, and the root `conftest.py` puts the same
-  directory on the path for the tests. The Makefile/README invoke them as
-  `./gen_clab_topology`. Because they have no `.py`, ruff and pyrefly only see
+  `gen_device_configs` that way (which in turn takes `resolve_scenario`), the
+  tests take the script under test, and `tools/import_host_scripts.py` takes
+  all of them. `labscripts.py` is the single place that knows the
+  `SourceFileLoader` incantation the missing `.py` forces (`spec_from_file_location`
+  returns `None` for an unrecognised extension); do not hand-roll it again.
+  A script run as `./gen_clab_topology` finds `labscripts` on `sys.path[0]`,
+  and the root `conftest.py` puts the same directory on the path for the tests.
+  The Makefile invokes the scripts through `make generate` / `make
+  scenario-resolve`. Because they have no `.py`, ruff and pyrefly only see
   them through the explicit `extend-include` / `project-includes` lists in
   `pyproject.toml` — **add any new script to both lists, and to
   `tools/import_host_scripts.py`, or it is silently never checked**.
 - **The repo is bind-mounted read-only into the worker at `/app/lab`**
   (`docker-compose.worker.yml`; the SDK image's WORKDIR is `/app`). That is why
   in-container paths keep a `lab/` prefix — `DIR_FUNCTION_BLOCKS:
-  lab/function_blocks,neops/fb` and `docker compose exec worker python3
-  lab/wait_devices`. Host-side paths never have one. A `lab/` in a Makefile
-  recipe or a host script is a bug; a `lab/` inside a `docker compose exec` or an
-  env var read by the container is correct.
+  lab/generated/<scenario>/scenario/function_blocks,neops/fb` and `docker compose
+  exec worker python3 lab/wait_devices`. Host-side paths never have one. A `lab/`
+  in a Makefile recipe or a host script is a bug; a `lab/` inside a `docker
+  compose exec` or an env var read by the container is correct.
 - **`neops/fb` ships inside the worker image**, it is not mounted from here. If
   discovery fails with "Function block … not found", check that the
   `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `neops/fb`.
   The published `quay.io/zebbra/neops-worker-sdk:develop` carries them, so the
   default path needs no local build; `make -C ../neops-worker-sdk-py build-docker`
   is for exercising a block you are editing.
-- **`gen_clab_topology` emits `"../devices/frr/set-aliases.sh:…"`** as a
-  containerlab bind. That path is relative to `generated/`, where the topology
-  file lives — it is correct as written. Do not "fix" it to `devices/…`.
-- **The generator tests are the real guard on this repo.** They assert that
-  regenerating from `topology.json` reproduces the committed
+- **`gen_clab_topology` emits `"../scenario/devices/frr/set-aliases.sh:…"`** as
+  a containerlab bind, alongside `frr.conf` and `daemons`. That path is relative
+  to `generated/<scenario>/clab/`, where the topology file lives — **not** to the
+  repo root — so it resolves to `generated/<scenario>/scenario/devices/frr/`. It
+  is correct as written; do not "fix" it to `devices/…` or `../../devices/…`.
+- **The generator tests are the real guard on this repo**, and they are
+  parametrised over `scenarios/*`, so every scenario is covered and adding one
+  extends the guard automatically. They assert that regenerating from a
+  scenario's `topology.json` reproduces its committed
   `workflow-execution-parameters/*.json` byte-for-byte (`_dump_discover_params`
-  hand-rolls a layout `json.dumps` cannot produce). Change `topology.json` →
-  rerun `./gen_clab_topology` → commit the regenerated JSON, or `make test` fails.
+  hand-rolls a layout `json.dumps` cannot produce). Change a `topology.json` →
+  rerun `make generate SCENARIO=<name>` → commit the regenerated
+  `scenarios/<name>/workflow-execution-parameters/*.json`, or `make test` fails.
+  `discover-params-mixed.json` is hand-written and deliberately outside that
+  assertion.
 - **Images are local-tag only.** `neops-lab-frr:latest` and
   `neops-lab-bootstrap:latest` are built by `make build-docker` on whatever host
   runs the lab; nothing is pushed to a registry. `docker-compose.worker.yml`
   pins `lab_bootstrap` to that exact tag so the compose build and `build-docker`
   cannot diverge. Everything else (CMS, engine, web client, worker) comes from
   `quay.io/zebbra`.
+- **The FRR image bakes no config.** `devices/frr/Dockerfile` ships only sshd
+  and `devices/frr/entrypoint.sh`; `frr.conf` and `daemons` are scenario data,
+  mounted at `/lab` from the resolved tree and installed into `/etc/frr` by the
+  entrypoint, which **exits non-zero if either is missing** rather than booting
+  FRR on whatever happens to be there. That is what lets one
+  `neops-lab-frr:latest` serve every scenario — the tag is pinned in the clab
+  topology, the kind manifests and `docker-compose.worker.yml`, so a
+  per-scenario image would have had to be threaded through all three. Both
+  flavours mount the same three files (`resolve_scenario.LAB_FILE_KEYS`) at
+  `/lab`, and both exec `/lab/set-aliases.sh`.
 - **The FRR image needs both `NET_ADMIN` and `SYS_ADMIN`** — the FRR binary
-  refuses to start without `cap_sys_admin` even with no VRFs configured.
-- **`cms/oidc-config.json` must contain at least one well-formed
+  refuses to start without `cap_sys_admin` even with no VRFs configured. The
+  Kubernetes flavour grants exactly those two on the device container, and
+  `NET_ADMIN` alone on the init container that creates the interfaces.
+- **`apply_cms_config` is runtime-agnostic; do not fork it.** It runs `manage.py`
+  through `$CMS_EXEC` (default `docker compose exec -T cms`, the Kubernetes
+  flavour passes a `kubectl exec` prefix) and passes environment as
+  `env VAR=value ...` after that prefix, which is the one form both runtimes
+  accept — compose's `-e` flags would not survive the move. An exported
+  `NEOPS_CMS_TOKEN` wins over `cms_api_key.env`, so a caller that mints its own
+  key needs no file. It reads the scope JSON from
+  `generated/$SCENARIO/scenario/scope/$SCOPE_NAME` and hard-fails on an unset
+  `SCENARIO` (`: "${SCENARIO:?…}"`), so `make scenario-resolve` must have run —
+  which is why it is a prerequisite of `apply-cms-config`.
+- **Registering devices in the CMS is discovery's job** — the
+  `fb.base.neops.io/global_discover_network` block, driven from here by
+  `bootstrap/register.py`, `scenarios/_base/workflows/simple-lab-discovery.workflow.yaml`
+  and `run_workflow`. Never add a script that writes Devices by another route; that
+  is a second implementation of the thing this repo exists to exercise.
+- **The Kubernetes flavour renders FRR devices only** (`gen_kind_manifests` →
+  `generated/<scenario>/kind/lab.yaml`, applied by `make kind-lab-up`). A
+  scenario whose manifest claims the `kind` flavour must therefore carry at
+  least one FRR device, or an empty manifest gets applied
+  (`tests/test_scenario_manifests.py` checks this). Pods have only `eth0`, so
+  the topology's `swpN` ports are dummy links created by an init container
+  running the same `set-aliases.sh` from a ConfigMap mounted at `/lab`, in the
+  same network namespace, before FRR starts. It shares `render_frr` with the containerlab
+  flow — descriptions must never be rendered twice. `kind-lab-down` deletes the
+  namespace and nothing else; the cluster is shared and is never created or
+  destroyed from here.
+- **`scenarios/_base/cms/oidc-config.json` must contain at least one well-formed
   `OpenIdConfiguration` entry with inline `authWellknownEndpoints`** (no network
   discovery). The web client's Angular bootstrap calls
   `OidcSecurityService.checkAuth()` in an `APP_INITIALIZER`; `null` or `[]` here
@@ -118,7 +206,17 @@ Load-bearing and usually not obvious from the code:
 - **The scope is `Global`, capital G.** The CMS image seeds a scope by that exact
   name; Postgres name uniqueness is case-sensitive, so a lowercase `global` would
   create a silent duplicate.
-- **Race ordering in `local-lab-up` is deliberate**: `docker compose wait
+- **`generated/.deployed-scenario-{clab,kind}` is what makes switching safe.**
+  Each up target writes the scenario it deployed and refuses to run while a
+  different one is recorded; each down target reads the marker to tear down what
+  is actually deployed, not what `SCENARIO` currently says, and then removes it.
+  Neither runtime removes devices the handed input does not name —
+  `containerlab destroy` acts on the topology's node list, `kubectl apply` never
+  deletes — so without the marker a switch to a smaller scenario strands the
+  difference and it keeps answering discovery. `rm -rf generated/` while a lab is
+  up therefore drops the guard: tear the lab down first.
+- **Race ordering in `local-lab-up` is deliberate**: `scenario-resolve`
+  (materialise the overlay the compose mounts point at) → `docker compose wait
   lab_bootstrap` (workflow registration) → `./containerlab deploy --reconfigure`
   (SR Linux boots slowly, so start it early; `--reconfigure` makes the target
   re-runnable) → `wait_ready` (the worker registers its function blocks
@@ -144,8 +242,8 @@ neops-worker-sdk-py. It defines no API and nothing imports it. Contract-wise it
 depends on:
 
 - the **function-block identifier** `fb.base.neops.io/global_discover_network:0.1.0`
-  (renaming it in neops-worker-sdk-py breaks `workflows/*.yaml` and the Makefile's
-  `DISCOVER_FB`, with no compile-time check),
+  (renaming it in neops-worker-sdk-py breaks `scenarios/*/workflows/*.yaml` and
+  the Makefile's `DISCOVER_FB`, with no compile-time check),
 - the **workflow-engine REST API** used by `run_workflow`, `wait_ready` and
   `bootstrap/register.py` (`/workflow-execution`, `/workflow-definition/publish`,
   `/function-blocks/…/workers`, `/health`),
@@ -157,8 +255,11 @@ depends on:
 - Read `README.md` before changing any make target — it documents the operator
   contract those targets implement.
 - Do **not** run `make local-lab-up` casually: it builds two images, pulls the
-  whole NeOps stack and deploys 15 containers (the SR Linux nodes alone want a
-  few GB of RAM).
+  whole NeOps stack and deploys the scenario's containers (`wan-and-fabric`'s
+  five SR Linux nodes alone want a few GB of RAM — `SCENARIO=frr-only` is the
+  cheap one).
+- `make scenarios` before assuming which lab is in play; `make generate` after
+  editing any `scenarios/*/topology.json`.
 - `make test` is fast, hermetic and the meaningful gate for generator changes.
 - When verifying lab/UI behavior, drive a browser via the Playwright MCP rather
   than guessing — the web client's failure modes (blank `<app-root>`) don't

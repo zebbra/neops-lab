@@ -22,7 +22,7 @@ Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.2.0` — package `wf.l
 
 ### How registration works
 
-`bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then publishes each `workflows/*.yaml` through `POST /workflow-definition/publish` as `{"workflow": <parsed yaml>}`. It is **idempotent**: `201` means the version was written, `200` means this version already held exactly this document. Published content is **immutable**, so a `409` is a real failure — it means the version exists with *different* content, and the fix is to bump `majorVersion`/`minorVersion`/`patchVersion` in the YAML rather than edit in place. A `422` means the engine computed a higher version floor than the document declares. Either exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-lab-up` fails rather than continuing into a broken discovery. Against an engine from before the publish route the script falls back to the legacy `POST /workflow-definition` on a `404`.
+`bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then publishes each `*.yaml` it finds in `/workflows` — the selected scenario's resolved `workflows/` directory, bind-mounted there — through `POST /workflow-definition/publish` as `{"workflow": <parsed yaml>}`. It is **idempotent**: `201` means the version was written, `200` means this version already held exactly this document. Published content is **immutable**, so a `409` is a real failure — it means the version exists with *different* content, and the fix is to bump `majorVersion`/`minorVersion`/`patchVersion` in the YAML rather than edit in place. A `422` means the engine computed a higher version floor than the document declares. Either exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-lab-up` fails rather than continuing into a broken discovery. Against an engine from before the publish route the script falls back to the legacy `POST /workflow-definition` on a `404`.
 
 ## The function block
 
@@ -46,15 +46,15 @@ fb.base.neops.io/global_discover_network:0.1.0
 The worker is told where to look with a two-entry search path:
 
 ```yaml
-DIR_FUNCTION_BLOCKS: lab/function_blocks,neops/fb
+DIR_FUNCTION_BLOCKS: lab/generated/${SCENARIO}/scenario/function_blocks,neops/fb
 ```
 
 Both are relative to the worker image's WORKDIR, `/app`:
 
-- **`lab/function_blocks`** → this repo's `function_blocks/`, bind-mounted at `/app/lab`. See [The `/app/lab` mount](40-container-paths.md).
+- **`lab/generated/<scenario>/scenario/function_blocks`** → the selected scenario's resolved function blocks, reached through the whole-repo bind mount at `/app/lab`. See [The `/app/lab` mount](40-container-paths.md).
 - **`neops/fb`** → the base function blocks baked into the image.
 
-`function_blocks/` currently holds only an empty `__init__.py`: it is the **extension point** for lab-local blocks (package `fb.lab.neops.io`), wired up and discovered but not yet used. Drop a block in there and the worker picks it up on restart — no image rebuild, because the directory is mounted.
+`scenarios/_base/function_blocks/` currently holds only an empty `__init__.py`: it is the **extension point** for lab-local blocks (package `fb.lab.neops.io`), wired up and discovered but not yet used. Drop a block in there — or in a single scenario's own `function_blocks/`, which overrides the base file by file — and the worker picks it up on restart. No image rebuild, because the directory is mounted; but `make scenario-resolve` has to run first, since the worker reads the *resolved* copy rather than the source. See [Scenarios](../30-scenarios/index.md).
 
 ## Parameters
 
@@ -86,12 +86,16 @@ So credential resolution is: **subnet credentials → global credentials**, and 
 
 ### The four parameter files
 
+They live in `scenarios/<scenario>/workflow-execution-parameters/`; the counts below are for `wan-and-fabric`.
+
 | File | Shape | Generated? |
 |---|---|---|
 | `discover-params.json` | 15 `/32`s with `platform`, platform-scoped credentials | yes |
 | `discover-params-autodetect.json` | the same `/32`s, no `platform` | yes |
 | `discover-params-subnet.json` | one `/24`, subnet-scoped credentials | yes |
 | `discover-params-mixed.json` | `/24` + `/32` overrides for the SR Linux nodes | **no — hand-maintained** |
+
+`frr-only` carries the three generated files only: mixing per-subnet platforms and credentials has nothing to express when every device runs the same NOS.
 
 See [Your first discovery](../getting-started/30-first-discovery.md) for the contents of each and the `DISCOVER_PARAMS` override that selects them.
 
@@ -106,6 +110,7 @@ Discovery emits a few hundred `Interface` rows in a single job result, which is 
 
 ## Related
 
+- [Scenarios](../30-scenarios/index.md) — how the workflow, the parameters and the function blocks are selected per lab.
 - [The `/app/lab` mount](40-container-paths.md) — why `DIR_FUNCTION_BLOCKS` has a `lab/` prefix.
 - [Troubleshooting](../20-operations/40-troubleshooting.md) — the three race conditions between registration, worker readiness and device boot.
 - [NeOps ecosystem](../99-appendix/neops-ecosystem.md) — the contracts this repo depends on and cannot verify locally.

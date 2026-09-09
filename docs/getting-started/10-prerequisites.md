@@ -22,10 +22,10 @@ Read-only apart from pulling two small images. It checks the docker daemon and t
 |---|---|---|
 | **Docker** + `docker compose` ≥ 2.20 | The whole control plane, the devices, and containerlab itself | everything |
 | **`openssl`** | Mints the dev RSA keypair the CMS needs for RS256 JWTs (OpenSSL 3 or macOS LibreSSL) | `make lab-jwt` |
-| **`python3` ≥ 3.9** | The host scripts are stdlib-only and import under a stock macOS `/usr/bin/python3` | `gen_clab_topology`, `run_workflow`, `wait_ready` |
+| **`python3` ≥ 3.9** | The host scripts are stdlib-only and import under a stock macOS `/usr/bin/python3` | `resolve_scenario`, `gen_clab_topology`, `run_workflow`, `wait_ready` |
 | **`uv`** | ruff / pyrefly / pytest and the MkDocs tooling | `make check`, `make doc-*` |
 | **Quay pull access** | Not needed for the defaults — the CMS, developer-preview engine, web client and worker images are all public. Only the full licensed engine requires `docker login quay.io` | `make local-env-init` |
-| **RAM** | 5 SR Linux nodes (≈1.5–2 GB each) + Elasticsearch + control plane ≈ **14–16 GB** for containers | `make local-lab-up` |
+| **RAM** | Scenario-dependent. `wan-and-fabric`: 5 SR Linux nodes (≈1.5–2 GB each) + Elasticsearch + control plane ≈ **14–16 GB** for containers. `frr-only` needs far less — the FRR nodes are tiny | `make local-lab-up` |
 
 ## containerlab — one command, both hosts, no install
 
@@ -35,7 +35,7 @@ Three things follow from the container mode:
 
 - The repo is mounted at the **same absolute path** inside the clab container, because containerlab hands the topology's bind paths to the docker daemon as absolute host paths. On Docker Desktop the checkout must therefore live under a shared path (`/Users`, `/Volumes`, `/private`, `/tmp` by default) and must not contain spaces — `make doctor` checks the mount round-trips.
 - containerlab's convenience entries (`/etc/hosts`, `ssh_config.d`) land inside the ephemeral container, on both hosts. Reach devices with `docker exec <node>` / `docker logs <node>` — the topology sets `prefix: ""`, so node names are container names.
-- On plain Linux the lab runtime dir (`generated/clab-neops-lab/`) is written as root; the launcher chowns it back to you after each run.
+- On plain Linux the lab runtime dir (`generated/<scenario>/clab/clab-neops-lab/`) is written as root; the launcher chowns it back to you after each run.
 
 Verify with the two-node probe — it confirms the whole chain (docker socket, privileged mode, veth wiring) without pulling the NeOps stack:
 
