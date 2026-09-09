@@ -1,0 +1,17 @@
+{
+  "subnets": [
+    { "cidr": "172.30.0.11/32", "platform": "frr" },
+    { "cidr": "172.30.0.12/32", "platform": "frr" },
+    { "cidr": "172.30.0.13/32", "platform": "frr" },
+    { "cidr": "172.30.0.14/32", "platform": "frr" },
+    { "cidr": "172.30.0.15/32", "platform": "frr" },
+    { "cidr": "172.30.0.16/32", "platform": "frr" },
+    { "cidr": "172.30.0.17/32", "platform": "frr" },
+    { "cidr": "172.30.0.18/32", "platform": "frr" },
+    { "cidr": "172.30.0.19/32", "platform": "frr" },
+    { "cidr": "172.30.0.20/32", "platform": "frr" }
+  ],
+  "credentials": [
+    { "username": "frr", "password": "frr", "platform": "frr" }
+  ]
+}
