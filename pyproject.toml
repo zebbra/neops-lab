@@ -45,6 +45,7 @@ indent-width = 4
 extend-include = [
   "gen_clab_topology",
   "gen_device_configs",
+  "resolve_scenario",
   "run_workflow",
   "wait_devices",
   "wait_ready",
@@ -130,6 +131,7 @@ project-includes = [
   # Same extension-less scripts as ruff's extend-include above.
   "gen_clab_topology",
   "gen_device_configs",
+  "resolve_scenario",
   "run_workflow",
   "wait_devices",
   "wait_ready",
