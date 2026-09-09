@@ -27,7 +27,7 @@ If any of those four words mean nothing to you yet, read on — each page below 
 
     ---
 
-    Docker, containerlab (with sudo-less operation — the part people get wrong), `openssl`, `uv`, and Quay pull access for the `@zebbra` images. Includes a two-node probe that proves containerlab works before you commit to a 15-node deploy.
+    Docker, containerlab (with sudo-less operation — the part people get wrong), `openssl` and `uv`. The default `@zebbra` images are public, so no Quay login is needed. Includes a two-node probe that proves containerlab works before you commit to a 15-node deploy.
 
 -   :material-rocket-launch:{ .lg .middle } &nbsp; **[Quickstart](20-quickstart.md)**
 

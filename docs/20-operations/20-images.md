@@ -58,16 +58,16 @@ A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `re
 | `cms` | `quay.io/zebbra/neops-cms-free:develop` | `NEOPS_CMS_IMAGE` |
 | `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image — e.g. the full licensed `quay.io/zebbra/neops-workflow-engine:develop`) |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
-| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` ⚠️ **unusable — build locally** | `NEOPS_WORKER_SDK_IMAGE` |
+| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` — carries the base function blocks | `NEOPS_WORKER_SDK_IMAGE` |
 
-The CMS, the web client and the developer-preview engine are all public, so the default lab pulls with no `docker login`. The **full licensed engine** (`quay.io/zebbra/neops-workflow-engine`) is not, and neither is `neops-worker-sdk` — but that one is built locally anyway.
+The CMS, the web client, the worker and the developer-preview engine are all public, so the default lab pulls with no `docker login`. The **full licensed engine** (`quay.io/zebbra/neops-workflow-engine`) is the one exception.
 
 The make targets pull the published tags with `--policy always`; the services' `pull_policy: missing` would otherwise skip images already on disk. The default `develop` is republished on every merge to the engine's `develop` branch and never expires, so `make local-env-up` is all it takes to move forward. `0.42.2-beta.3` remains the oldest engine tag the lab supports (raised body limits + the publish route).
 
 !!! warning "Do not pin the preview's `latest`"
-    The preview's `latest` is 0.42.1 — below the oldest engine the lab supports — because `latest` only advances on non-prerelease releases. Prerelease tags carry a `quay.expires-after=20d` label and vanish (`0.42.2-beta.3` on **2026-09-07**); `develop` carries no such label.
+    The preview's `latest` is 0.42.1 — below the oldest engine the lab supports — because `latest` only advances on non-prerelease releases. Prerelease tags carry a `quay.expires-after=20d` label and vanish — `0.42.2-beta.3` did, on 2026-09-07 — so a pinned beta stops resolving without warning; `develop` carries no such label.
 
-Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:5-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
+Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:7-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
 
 ## Running a locally-built image
 
@@ -88,17 +88,12 @@ Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}
 
 ### Why you would
 
-- **Worker SDK — not optional today.** The published `develop` tag is built from
-  `neops-worker-sdk-py`'s `develop`, where `neops/` holds only `.gitkeep` files and
-  the Dockerfile copies neither `neops/` nor `README.md`. The container therefore
-  dies at start (`OSError: Readme file does not exist: README.md`) and carries no
-  function blocks. The lab depends on
-  `fb.base.neops.io/global_discover_network:0.1.0` shipping *inside* the worker
-  image — it is not bind-mounted from here — and that block plus the `COPY ./neops`
-  that ships it live on the SDK's `feature/technopark` branch (open PR
-  [#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127)). Until it merges
-  and CI republishes the tag, build the image yourself and point
-  `NEOPS_WORKER_SDK_IMAGE` at it.
+- **Worker SDK** — to exercise a function block before it is released. The lab
+  depends on `fb.base.neops.io/global_discover_network:0.1.0` shipping *inside*
+  the worker image rather than being bind-mounted from here, so a block you are
+  editing reaches the lab only through a rebuilt image:
+  `make -C ../neops-worker-sdk-py build-docker`, then point
+  `NEOPS_WORKER_SDK_IMAGE` at `neops-worker-sdk:latest`.
 - **Workflow engine** — discovery emits a few hundred `Interface` rows in one job result, so it needs an engine with the large-payload and reference-resolution fixes. If the published `develop` tag lags, run a local build.
 - **Web client** — to preview UI changes against a populated CMS.
 

@@ -89,32 +89,20 @@ See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10
 timeout: no online worker for fb.base.neops.io/global_discover_network:0.1.0 within 180s
 ```
 
-and `docker compose logs worker` ends in
+**Cause:** the worker image you pinned does not carry the base function blocks.
+They ship *inside* the image rather than being bind-mounted from here, so an
+image built without them registers nothing and `wait_ready` waits for a worker
+that will never announce the block.
 
-```
-OSError: Readme file does not exist: README.md
-```
-
-**Cause:** you are running the published `quay.io/zebbra/neops-worker-sdk:develop`
-image. It is built from `neops-worker-sdk-py`'s `develop` branch, where `neops/`
-contains only `.gitkeep` files and the Dockerfile copies neither `neops/` nor
-`README.md`. `CMD ["uv", "run", "neops_worker"]` installs the project at container
-start, hatchling reads `readme = "README.md"`, and the container dies before the
-worker ever connects. Even if it started, it would register no function blocks.
-
-**Fix:** build the image from the SDK branch that has the function blocks
-(open PR [zebbra/neops-worker-sdk-py#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127))
-and point the lab at it:
+**Fix:** check what the image actually holds, and fall back to the published tag
+or a fresh build of the SDK checkout:
 
 ```bash
-git -C ../neops-worker-sdk-py switch feature/technopark
+docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global'
 make -C ../neops-worker-sdk-py build-docker          # -> neops-worker-sdk:latest
-docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global'
 echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
 make local-lab-up
 ```
-
-This entry disappears once #127 merges and CI republishes the `develop` tag.
 
 ---
 
