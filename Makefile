@@ -19,6 +19,19 @@ export SCENARIO
 # The scenario's source assets, its resolved overlay, and the artifacts the
 # generators write beside it.
 SCENARIO_SRC := scenarios/$(SCENARIO)
+# Which scenario is currently deployed, if any. Written after a successful
+# deploy, removed by the matching down target. Both flavours need this, for the
+# same reason: bringing up scenario B while A is deployed would otherwise leave
+# A's extra devices running and answering discovery.
+# `containerlab destroy` acts on the nodes named in the topology it is handed,
+# NOT on every container carrying the lab label — so swapping to a scenario with
+# fewer devices strands the rest and still leaves the lab registered, and the
+# next deploy fails with "lab has already been deployed". `--reconfigure` does
+# not help: it destroys the same handed set.
+# `kubectl apply` has the same gap from the other direction: it adds and updates
+# but never removes.
+CLAB_DEPLOYED_MARKER := generated/.deployed-scenario-clab
+KIND_DEPLOYED_MARKER := generated/.deployed-scenario-kind
 SCENARIO_DIR := generated/$(SCENARIO)/scenario
 GEN_DIR := generated/$(SCENARIO)
 
@@ -292,6 +305,14 @@ clab-suid:
 
 local-lab-up: build-docker lab-env scenario-resolve
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
+	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || true); \
+	if [ -n "$$deployed" ] && [ "$$deployed" != "$(SCENARIO)" ]; then \
+		echo "Error: scenario '$$deployed' is still deployed."; \
+		echo "       Run 'make local-lab-down SCENARIO=$$deployed' first — containerlab"; \
+		echo "       destroys only the nodes named in the topology it is handed, so"; \
+		echo "       '$$deployed' devices absent from '$(SCENARIO)' would keep running."; \
+		exit 1; \
+	fi
 	# Generate the containerlab topology + per-device configs from the scenario.
 	@./gen_clab_topology
 	# Refresh the worker image: the local-env-* pulls run with the base compose
@@ -327,6 +348,7 @@ local-lab-up: build-docker lab-env scenario-resolve
 	# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix here.
 	@echo "Waiting for all devices to accept SSH..."
 	@docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@echo "$(SCENARIO)" > $(CLAB_DEPLOYED_MARKER)
 	@echo ""
 	@echo "Lab is up (scenario: $(SCENARIO), real links)."
 	@echo "  Web client:   http://localhost:8080/"
@@ -337,10 +359,17 @@ local-lab-up: build-docker lab-env scenario-resolve
 	@echo "  Run 'make local-lab-discover' to populate the CMS (15 devices with interfaces)."
 
 local-lab-down:
+	# Destroy the scenario that is actually deployed, which is not necessarily
+	# $(SCENARIO): containerlab acts on the nodes the handed topology names, so
+	# tearing down with the wrong one strands the difference. The marker wins
+	# when it exists; $(SCENARIO) is the fallback for a lab deployed before it.
 	# --cleanup removes the per-lab runtime dir
 	# (generated/<scenario>/clab/clab-neops-lab); the leading `-` lets `make`
 	# continue if no lab is deployed.
-	-$(CONTAINERLAB) destroy -t $(CLAB_TOPO) --cleanup
+	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || echo "$(SCENARIO)"); \
+	echo "$(CONTAINERLAB) destroy -t generated/$$deployed/clab/neops-lab.clab.json --cleanup"; \
+	$(CONTAINERLAB) destroy -t "generated/$$deployed/clab/neops-lab.clab.json" --cleanup || true
+	@rm -f $(CLAB_DEPLOYED_MARKER)
 	docker compose down
 
 local-lab-discover: scenario-resolve
@@ -370,6 +399,14 @@ local-lab-logs:
 # -----------------------------------------------------------------------------
 
 kind-lab-up: build-docker-frr scenario-resolve
+	@deployed=$$(cat $(KIND_DEPLOYED_MARKER) 2>/dev/null || true); \
+	if [ -n "$$deployed" ] && [ "$$deployed" != "$(SCENARIO)" ]; then \
+		echo "Error: scenario '$$deployed' is still deployed in $(KIND_LAB_NAMESPACE)."; \
+		echo "       Run 'make kind-lab-down' first — kubectl apply never removes,"; \
+		echo "       so '$$deployed' devices absent from '$(SCENARIO)' would keep"; \
+		echo "       running and answering discovery."; \
+		exit 1; \
+	fi
 	# The cluster has no registry, so the image is pushed straight onto the
 	# nodes; that is what makes the manifests' `imagePullPolicy: IfNotPresent`
 	# resolve without a pull.
@@ -382,6 +419,7 @@ kind-lab-up: build-docker-frr scenario-resolve
 	# cannot reach a ClusterIP or a *.svc.cluster.local name at all.
 	@echo "Waiting for the device pods to become ready..."
 	kubectl -n $(KIND_LAB_NAMESPACE) wait --for=condition=Available --timeout=$(KIND_LAB_TIMEOUT)s deployment --all
+	@echo "$(SCENARIO)" > $(KIND_DEPLOYED_MARKER)
 	@echo ""
 	@echo "Kubernetes lab is up in namespace $(KIND_LAB_NAMESPACE) (scenario: $(SCENARIO), FRR devices only, login frr / frr)."
 	@kubectl -n $(KIND_LAB_NAMESPACE) get svc -o jsonpath='{range .items[*]}  {.metadata.name}.{.metadata.namespace}.svc.cluster.local{"\n"}{end}'
@@ -390,8 +428,10 @@ kind-lab-up: build-docker-frr scenario-resolve
 
 kind-lab-down:
 	# Deleting the namespace takes every device with it and touches nothing else
-	# in this shared cluster.
+	# in this shared cluster — so unlike the containerlab flavour this is a clean
+	# slate whichever scenario was deployed.
 	kubectl delete namespace $(KIND_LAB_NAMESPACE) --ignore-not-found
+	@rm -f $(KIND_DEPLOYED_MARKER)
 
 kind-lab-status:
 	@kubectl -n $(KIND_LAB_NAMESPACE) get pods,svc
