@@ -162,6 +162,68 @@ seeded = sorted(Platform.objects.filter(short_name__in=["frr", "srl"]).values_li
 print(f"  lab platforms present: {seeded}")
 PYSCRIPT
 
+# The lab's roles, users and workflow grants are declared in
+# cms/permissions.json. This block runs before the GraphQL columns step below,
+# whose last-position constraint the header explains.
+PERMISSIONS=$(base64 < cms/permissions.json | tr -d '\n')
+
+echo
+echo "==> Applying roles, users and workflow grants from cms/permissions.json"
+docker compose exec -T \
+    -e PERMISSIONS="$PERMISSIONS" \
+    -e SCOPE_NAME="$SCOPE_NAME" \
+    cms ./manage.py shell <<'PYSCRIPT'
+import base64
+import json
+import os
+
+from django.contrib.auth import get_user_model
+from django.core.management import call_command, get_commands
+from neops.core.models import Scope
+from neops.enterprise.permissions.permissions_simple.models import RolePermission, RoleScope
+
+config = json.loads(base64.b64decode(os.environ["PERMISSIONS"]).decode("utf-8"))
+
+User = get_user_model()
+scope = Scope.objects.get(name=os.environ["SCOPE_NAME"])
+
+# Same flag value the block above uses: 4 is `write`, and save() promotes it to
+# 7 under NEOPS_PERMISSIONS_SIMPLE_IMPLICIT_PERMISSION_LEVEL.
+FULL = 4
+
+# Every declared role gets the CMS visibility lab-admin has, so the difference
+# between the personas is their workflow authority alone.
+roles = {}
+for role_name in config["roles"]:
+    role, _ = RolePermission.objects.get_or_create(name=role_name, defaults={"default_permission": FULL})
+    role.default_permission = FULL
+    role.save()
+    role_scope, _ = RoleScope.objects.get_or_create(role=role, scope=scope, defaults={"permission": FULL})
+    role_scope.permission = FULL
+    role_scope.save()
+    roles[role_name] = role
+
+for username, role_names in config["users"].items():
+    user, created = User.objects.get_or_create(username=username, defaults={"email": f"{username}@neops.io"})
+    # Lab passwords equal usernames, as the published neops/neops login does.
+    user.set_password(username)
+    user.save()
+    for role_name in role_names:
+        user.roles.add(roles[role_name])
+    print(f"  user: {username!r} roles={sorted(role_names)} created={created}")
+
+print("")
+# grant_workflow_permissions ships with CMS images carrying neops-core's
+# workflow permission elements. Earlier images raise CommandError from
+# call_command, so the presence check keeps `make local-env-init` working
+# against them.
+if "grant_workflow_permissions" in get_commands():
+    for role_name, profile in config["roles"].items():
+        call_command("grant_workflow_permissions", role=role_name, profile=profile, yes=True)
+else:
+    print("  grant_workflow_permissions is absent from this CMS image; workflow grants skipped")
+PYSCRIPT
+
 # Resolve the scope id via the ORM (direct DB, no permission filter). We must
 # NOT discover it through the permission-filtered GraphQL `{ scopes }` query:
 # the CMS caches each user's accessible scopes in-memory for 10 minutes

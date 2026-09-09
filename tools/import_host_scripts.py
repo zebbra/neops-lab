@@ -17,6 +17,7 @@ import labscripts  # noqa: E402  (needs ROOT on sys.path first)
 SCRIPTS = (
     "gen_clab_topology",
     "gen_device_configs",
+    "lab_token",
     "run_workflow",
     "wait_ready",
     "wait_devices",

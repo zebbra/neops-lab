@@ -6,7 +6,7 @@ tags: [concept]
 
 # Concepts
 
-*Four pages that explain why the lab is shaped the way it is. Read [Architecture](10-architecture.md) first; the rest can be read in any order.*
+*Five pages that explain why the lab is shaped the way it is. Read [Architecture](10-architecture.md) first; the rest can be read in any order.*
 
 ## In this section
 
@@ -35,6 +35,12 @@ tags: [concept]
     ---
 
     The repo is bind-mounted read-only at `/app/lab` inside the worker, which is why in-container paths keep a `lab/` prefix while host paths never do. The single most confusing thing about this repo, explained once.
+
+-   :material-shield-key:{ .lg .middle } &nbsp; **[Authorization](50-authorization.md)**
+
+    ---
+
+    The engine runs in `enforce` mode: the three modes, the automation identity and the three personas, where their grants are declared, how the monitor app is handed a token, and how long one lasts.
 
 </div>
 

@@ -139,6 +139,29 @@ This entry disappears once #127 merges and CI republishes the `develop` tag.
 
 ---
 
+## `401 Unauthorized` from the engine
+
+**Where:** `wait_ready`, `run_workflow` or `lab_bootstrap` stops with `401` or `403` and a line naming `NEOPS_ENGINE_TOKEN`.
+
+**Cause:** the engine runs `NEOPS_AUTHZ_MODE=enforce`, so every call to a gated route carries a bearer token. The make targets mint one per run; a hand-run script needs one in the environment. A `403` means the token is valid and its account lacks the route's permission.
+
+**Fix:**
+
+```bash
+export NEOPS_ENGINE_TOKEN=$(./lab_token)
+./wait_ready fb.base.neops.io/global_discover_network:0.1.0
+```
+
+A token lasts 15 minutes, so a long session needs a fresh one. If the account is short of a permission, widen its role:
+
+```bash
+make lab-grant ROLE=workflow-operator PROFILE=admin
+```
+
+See [Authorization](../10-concepts/50-authorization.md).
+
+---
+
 ## Devices never become reachable
 
 **Where:** `wait_devices` times out — `timeout: 172.30.0.31:22, … not reachable within 240s`.
