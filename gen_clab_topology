@@ -28,6 +28,11 @@ LAB_SUBNET = "172.30.0.0/24"
 # Reuse the per-device render helpers from the extension-less sibling module.
 gen_device_configs = labscripts.load("gen_device_configs")
 
+# Which files a device is handed at /lab is one decision, made in
+# resolve_scenario and shared with the Kubernetes flavour.
+LAB_FILE_KEYS = gen_device_configs.resolve_scenario.LAB_FILE_KEYS
+LAB_DIR_PATH = gen_device_configs.resolve_scenario.LAB_DIR_PATH
+
 render_frr = gen_device_configs.render_frr
 render_srl = gen_device_configs.render_srl
 _write = gen_device_configs._write
@@ -145,11 +150,15 @@ def render_clab(devices: dict) -> dict:
             nodes[host] = {
                 "kind": "linux",
                 "mgmt-ipv4": dev["mgmt_ip"],
+                # Relative to the topology file's own directory
+                # (generated/<scenario>/clab), which is where containerlab
+                # resolves binds from before handing absolute host paths to the
+                # daemon — not relative to the repo root.
                 "binds": [
                     f"frr/{host}.iface:/etc/frr/lab-interfaces/{host}.iface:ro",
-                    "../devices/frr/set-aliases.sh:/etc/frr/set-aliases.sh:ro",
+                    *(f"../scenario/devices/frr/{name}:{LAB_DIR_PATH}/{name}:ro" for name in LAB_FILE_KEYS),
                 ],
-                "exec": ["sh /etc/frr/set-aliases.sh"],
+                "exec": [f"sh {LAB_DIR_PATH}/set-aliases.sh"],
             }
         elif vendor == "srl":
             nodes[host] = {

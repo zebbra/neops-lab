@@ -159,3 +159,19 @@ def test_subnet_params_match_committed(scenario):
     assert gen.render_subnet_params(_topology(scenario)["devices"]) == _committed(
         scenario, "discover-params-subnet.json"
     )
+
+
+def test_frr_nodes_mount_the_scenario_config_at_lab():
+    """frr.conf and daemons are no longer baked into the image, so every FRR
+    node binds them from the resolved scenario tree. The paths are relative to
+    the topology file's own directory (generated/<scenario>/clab), not the repo
+    root — containerlab resolves them from there before handing absolute host
+    paths to the daemon."""
+    devices = {"r1": {"mgmt_ip": "172.30.0.11", "vendor": "frr", "loopback": "lo", "interfaces": []}}
+    node = gen.render_clab(devices)["topology"]["nodes"]["r1"]
+
+    assert "../scenario/devices/frr/frr.conf:/lab/frr.conf:ro" in node["binds"]
+    assert "../scenario/devices/frr/daemons:/lab/daemons:ro" in node["binds"]
+    assert "../scenario/devices/frr/set-aliases.sh:/lab/set-aliases.sh:ro" in node["binds"]
+    assert node["exec"] == ["sh /lab/set-aliases.sh"]
+    assert "frr/r1.iface:/etc/frr/lab-interfaces/r1.iface:ro" in node["binds"]
