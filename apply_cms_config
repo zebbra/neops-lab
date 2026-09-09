@@ -24,7 +24,10 @@
 #   then verify via GraphQL.
 #
 # The scope's table columns, location drill-down and dashboard come from JSON
-# files under scope/Global/ — edit those to change the lab's initial views.
+# files under scenarios/_base/scope/Global/ — edit those to change the lab's
+# initial views, or override any of them in a scenario. This script reads the
+# RESOLVED copies under generated/$SCENARIO/scenario/scope/, so it needs
+# `make scenario-resolve` to have run.
 #
 # Re-runnable: every step is idempotent (get_or_create + explicit re-set).
 
@@ -37,7 +40,8 @@ USERNAME=${CMS_USERNAME:-neops}
 ROLE_NAME=${ROLE_NAME:-lab-admin}
 SCOPE_NAME=${SCOPE_NAME:-Global}
 
-# Per-scope UI config lives as JSON files under scope/<name>/. It is applied
+# Per-scope UI config lives as JSON files under the scenario's scope/<name>/.
+# It is applied
 # in two ways because the CMS reseeds part of the `Global` scope on every
 # `manage.py` invocation:
 #
@@ -52,7 +56,8 @@ SCOPE_NAME=${SCOPE_NAME:-Global}
 #     the already-running server avoids the init_scopes race that a shell write
 #     would lose. (These reset to image defaults on a CMS restart / any later
 #     manage.py run; re-run this script to reapply.)
-SCOPE_DIR="scope/${SCOPE_NAME}"
+: "${SCENARIO:?SCENARIO must be set (the Makefile exports it; see 'make scenarios')}"
+SCOPE_DIR="generated/${SCENARIO}/scenario/scope/${SCOPE_NAME}"
 # Portable across GNU and BSD/macOS base64: read from stdin (BSD base64 takes no
 # file operand, and GNU's `-i` means --ignore-garbage, so neither `base64 FILE`
 # nor `base64 -i FILE` works on both) and strip the line wrapping GNU adds

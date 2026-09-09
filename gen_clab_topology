@@ -1,28 +1,23 @@
 #!/usr/bin/env python3
-"""Render the containerlab lab from `topology.json` (stdlib-only, run on the host).
+"""Render the containerlab lab from a scenario's topology (stdlib-only, run on the host).
 
-Writes the containerlab topology + device configs under `generated/` (git-ignored)
-and the committed `workflow-execution-parameters/discover-params.json`. Reuses the
+Writes the containerlab topology + device configs under
+`generated/<scenario>/clab/` (git-ignored) and the committed
+`scenarios/<scenario>/workflow-execution-parameters/*.json`. Reuses the
 per-device renderers from the sibling `gen_device_configs`.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
-import pathlib
 import sys
 
 import labscripts
 
-HERE = pathlib.Path(__file__).resolve().parent
-TOPOLOGY = HERE / "topology.json"
-FRR_DIR = HERE / "generated" / "frr"
-SRL_DIR = HERE / "generated" / "srl"
-CLAB_DIR = HERE / "generated"
-CLAB_FILE = CLAB_DIR / "neops-lab.clab.json"
-DISCOVER_PARAMS = HERE / "workflow-execution-parameters" / "discover-params.json"
-AUTODETECT_PARAMS = HERE / "workflow-execution-parameters" / "discover-params-autodetect.json"
-SUBNET_PARAMS = HERE / "workflow-execution-parameters" / "discover-params-subnet.json"
+# Generated parameter files keep their committed names; only the directory they
+# live in is per-scenario.
+PARAM_FILES = ("discover-params.json", "discover-params-autodetect.json", "discover-params-subnet.json")
 
 # The lab management network: containerlab's mgmt block, the /24 discovery
 # target and docker-compose.worker.yml must agree; tests/test_host_invariants.py
@@ -37,6 +32,17 @@ render_frr = gen_device_configs.render_frr
 render_srl = gen_device_configs.render_srl
 _write = gen_device_configs._write
 _prune_stale = gen_device_configs._prune_stale
+
+
+def scenario_paths(scenario: str) -> dict:
+    """Return every path this generator writes for one scenario."""
+    return {
+        "clab_file": gen_device_configs.resolve_scenario.output_dir(scenario) / "clab" / "neops-lab.clab.json",
+        "params": {
+            name: gen_device_configs.resolve_scenario.source_dir(scenario) / "workflow-execution-parameters" / name
+            for name in PARAM_FILES
+        },
+    }
 
 
 def mgmt_creds(vendor: str) -> tuple[str, str]:
@@ -194,19 +200,12 @@ def render_autodetect_params(devices: dict) -> dict:
 
 
 def render_subnet_params(devices: dict) -> dict:
-    """One subnet target for the complete lab management network."""
-    del devices
-    return {
-        "subnets": [
-            {
-                "cidr": LAB_SUBNET,
-                "credentials": [
-                    {"username": "frr", "password": "frr"},
-                    {"username": "admin", "password": "NokiaSrl1!"},
-                ],
-            }
-        ]
-    }
+    """One subnet target for the complete lab management network.
+
+    The credentials sit on the subnet here rather than on the document, because
+    a wide prefix carries no platform to scope them against.
+    """
+    return {"subnets": [{"cidr": LAB_SUBNET, "credentials": _credentials(devices)}]}
 
 
 def _credentials(devices: dict, scoped: bool = False) -> list:
@@ -253,9 +252,18 @@ def _dump_subnet_params(data: dict) -> str:
     return json.dumps(data, indent=2) + "\n"
 
 
-def main() -> int:
-    data = json.loads(TOPOLOGY.read_text())
-    devices = data["devices"]
+def parse_args(argv: list) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render the containerlab lab for a scenario.")
+    parser.add_argument("--scenario", help="scenario to render; defaults to $SCENARIO")
+    return parser.parse_args(argv)
+
+
+def main(argv: list | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    scenario = gen_device_configs.resolve_scenario.scenario_name(args.scenario)
+    devices = gen_device_configs.load_topology(scenario)
+    frr_dir, srl_dir = gen_device_configs.device_dirs(scenario)
+    paths = scenario_paths(scenario)
 
     frr_hosts = set()
     srl_hosts = set()
@@ -263,34 +271,33 @@ def main() -> int:
     for host, dev in devices.items():
         vendor = dev["vendor"]
         if vendor == "frr":
-            _write(FRR_DIR / f"{host}.iface", render_frr(host, dev))
+            _write(frr_dir / f"{host}.iface", render_frr(host, dev))
             frr_hosts.add(host)
         elif vendor == "srl":
-            _write(SRL_DIR / f"{host}.cli", render_srl(host, dev))
+            _write(srl_dir / f"{host}.cli", render_srl(host, dev))
             srl_hosts.add(host)
         else:
             print(f"unknown vendor {vendor!r} for {host}", file=sys.stderr)
             return 1
 
-    _prune_stale(FRR_DIR, ".iface", frr_hosts)
-    _prune_stale(SRL_DIR, ".cli", srl_hosts)
+    _prune_stale(frr_dir, ".iface", frr_hosts)
+    _prune_stale(srl_dir, ".cli", srl_hosts)
 
-    CLAB_DIR.mkdir(parents=True, exist_ok=True)
     clab = render_clab(devices)
-    CLAB_FILE.write_text(json.dumps(clab, indent=2) + "\n")
+    _write(paths["clab_file"], json.dumps(clab, indent=2) + "\n")
 
-    _write(DISCOVER_PARAMS, _dump_discover_params(render_discover_params(devices)))
-    _write(AUTODETECT_PARAMS, _dump_discover_params(render_autodetect_params(devices)))
-    _write(SUBNET_PARAMS, _dump_subnet_params(render_subnet_params(devices)))
+    _write(paths["params"]["discover-params.json"], _dump_discover_params(render_discover_params(devices)))
+    _write(paths["params"]["discover-params-autodetect.json"], _dump_discover_params(render_autodetect_params(devices)))
+    _write(paths["params"]["discover-params-subnet.json"], _dump_subnet_params(render_subnet_params(devices)))
 
     veth_count = sum(1 for link in clab["topology"]["links"] if link.get("type") != "dummy")
     dummy_count = sum(1 for link in clab["topology"]["links"] if link.get("type") == "dummy")
     print(
-        f"generated clab topology: {len(clab['topology']['nodes'])} nodes, "
+        f"scenario {scenario!r}: {len(clab['topology']['nodes'])} nodes, "
         f"{veth_count} veth links, {dummy_count} dummy links"
     )
     print(f"generated {len(frr_hosts)} FRR + {len(srl_hosts)} SRL device configs")
-    print("generated discover-params.json + discover-params-autodetect.json + discover-params-subnet.json")
+    print(f"generated {', '.join(PARAM_FILES)}")
     return 0
 
 

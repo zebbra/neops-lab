@@ -114,10 +114,10 @@ make doc-build    # what to run before pushing docs changes
       `make doc-update-assets`.** Project-specific styling must go in a
       differently named file.
 
-`docs/` contains symlinks to the repo's source directories (`workflows/`, `devices/`, `clab/`, `workflow-execution-parameters/`, …) created by the setup script. That is what makes `--8<--` snippet includes work without referencing paths outside `docs/`:
+`docs/` contains symlinks to the repo's source directories (`scenarios/`, `devices/`, `clab/`, `tests/`, …) created by the setup script. That is what makes `--8<--` snippet includes work without referencing paths outside `docs/`:
 
 ```markdown
---8<-- "../workflows/simple-lab-discovery.workflow.yaml"
+--8<-- "../scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
 ```
 
 Snippets are configured with `check_paths: true`, so a broken include fails `make doc-build` rather than rendering an empty block. Keep code blocks longer than a few lines as includes from real files — that is what stops the docs drifting from the source.

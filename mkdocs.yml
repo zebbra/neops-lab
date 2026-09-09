@@ -101,13 +101,9 @@ plugins:
     - '**/.venv/*'
     - bootstrap/*
     - clab/*
-    - cms/*
     - devices/*
-    - function_blocks/*
-    - scope/*
+    - scenarios/*
     - tests/*
-    - workflows/*
-    - workflow-execution-parameters/*
     regex:
     - .*\.(tmp|bin|tar)$
 repo_url: https://github.com/zebbra/neops-lab

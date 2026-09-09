@@ -94,12 +94,8 @@ plugins:
         # include targets, not pages.
         - bootstrap/*
         - clab/*
-        - cms/*
         - devices/*
-        - function_blocks/*
-        - scope/*
+        - scenarios/*
         - tests/*
-        - workflows/*
-        - workflow-execution-parameters/*
       regex:
         - .*\.(tmp|bin|tar)$

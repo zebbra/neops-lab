@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 
 # Generated containerlab topology, per-device configs + the per-lab runtime dir
-# (generated/clab-neops-lab). Everything under here is rebuilt from topology.json
+# (generated/<scenario>/clab/clab-neops-lab). Everything under here is rebuilt
 # by `./gen_clab_topology`; the runtime dir also holds containerlab-minted TLS
 # private keys, which must never be committed.
 generated/
