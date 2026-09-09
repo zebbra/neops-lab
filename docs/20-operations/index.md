@@ -28,13 +28,19 @@ tags: [operations]
 
     ---
 
-    The four-step loop: edit `topology.json`, regenerate, redeploy, commit the regenerated parameter files — because the generator tests will fail until you do.
+    The four-step loop: edit the scenario's `topology.json`, regenerate, redeploy, commit the regenerated parameter files — because the generator tests will fail until you do.
 
 -   :material-lifebuoy:{ .lg .middle } &nbsp; **[Troubleshooting](40-troubleshooting.md)**
 
     ---
 
     Indexed by symptom. Most failures here are one of three boot-order races, each with a distinctive error string and a wait that already exists to prevent it.
+
+-   :material-kubernetes:{ .lg .middle } &nbsp; **[Kubernetes lab](50-kubernetes-lab.md)**
+
+    ---
+
+    The FRR devices as pods in a local KIND cluster, reached by in-cluster DNS. A second flavour of the lab that needs neither containerlab nor the control plane.
 
 </div>
 
@@ -53,3 +59,5 @@ stateDiagram-v2
 ```
 
 `local-lab-down` destroys the devices and stops the containers but **keeps** the Elasticsearch and Postgres volumes, so the CMS data survives. `local-env-prune` is the real reset.
+
+Every target above acts on one scenario, selected with `SCENARIO` and defaulting to `wan-and-fabric`. One scenario runs at a time — see [Scenarios](../30-scenarios/index.md).
