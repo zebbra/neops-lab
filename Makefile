@@ -26,17 +26,32 @@ GEN_DIR := generated/$(SCENARIO)
 # SR Linux nodes against a shared VM raises these rather than removing a wait.
 WAIT_READY_TIMEOUT ?= 180
 WAIT_DEVICES_TIMEOUT ?= 240
+
+# Kubernetes flavour of the lab (`make kind-lab-*`): the cluster to load the FRR
+# image into, and the namespace the device pods live in. The cluster is shared
+# with other projects — these targets only ever touch $(KIND_LAB_NAMESPACE).
+KIND_CLUSTER ?= kind
+KIND_LAB_NAMESPACE ?= neops-lab
+KIND_LAB_TIMEOUT ?= 180
+KIND_MANIFEST := $(GEN_DIR)/kind/lab.yaml
+
+# Extra flags for every docker build, e.g. DOCKER_BUILD_FLAGS=--network=host when the bridge network has no DNS.
+DOCKER_BUILD_FLAGS ?=
 # -----------------------------------------------------------------------------
 # Images built from this repo. Local tags only — nothing here is published to a
 # registry; the lab always builds its two helper images on the machine that runs
 # it. (The worker, CMS, engine and web client all come from quay.io.)
 # -----------------------------------------------------------------------------
-build-docker:
-	# Custom FRR image (frrouting/frr + sshd + frr/frr login) that containerlab
-	# runs as `kind: linux`.
-	docker build -t neops-lab-frr:latest devices/frr
-	# One-shot container that POSTs the scenario's workflows/*.yaml to the engine.
-	docker build -t neops-lab-bootstrap:latest bootstrap
+build-docker: build-docker-frr build-docker-bootstrap
+
+# Custom FRR image (frrouting/frr + sshd + frr/frr login) that containerlab runs
+# as `kind: linux` and that the Kubernetes lab runs as a pod.
+build-docker-frr:
+	docker build $(DOCKER_BUILD_FLAGS) -t neops-lab-frr:latest devices/frr
+
+# One-shot container that POSTs the scenario's workflows/*.yaml to the engine.
+build-docker-bootstrap:
+	docker build $(DOCKER_BUILD_FLAGS) -t neops-lab-bootstrap:latest bootstrap
 
 lint:
 	uv run ruff format --check .
@@ -291,7 +306,45 @@ apply-cms-config: scenario-resolve
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
-.PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt lab-env clab-suid \
+# -----------------------------------------------------------------------------
+# Kubernetes Lab — the FRR devices as pods in a local KIND cluster.
+#
+# Standalone: no containerlab, no docker-compose, no local-env-* stack. Only the
+# 10 FRR devices are rendered; the 5 SR Linux nodes are far too heavy for a
+# shared local cluster (see gen_kind_manifests). Devices carry no mgmt IP here —
+# they are reached by in-cluster DNS, `<device>.$(KIND_LAB_NAMESPACE).svc.cluster.local`.
+# -----------------------------------------------------------------------------
+
+kind-lab-up: build-docker-frr scenario-resolve
+	# The cluster has no registry, so the image is pushed straight onto the
+	# nodes; that is what makes the manifests' `imagePullPolicy: IfNotPresent`
+	# resolve without a pull.
+	kind load docker-image neops-lab-frr:latest --name $(KIND_CLUSTER)
+	@./gen_kind_manifests --namespace $(KIND_LAB_NAMESPACE)
+	kubectl apply -f $(KIND_MANIFEST)
+	# Not `wait_devices`, which is the containerlab flavour's TCP-22 poll: its
+	# check already runs here as each pod's `tcpSocket: 22` readinessProbe, from
+	# inside the cluster where the addresses actually resolve. A host-side poll
+	# cannot reach a ClusterIP or a *.svc.cluster.local name at all.
+	@echo "Waiting for the device pods to become ready..."
+	kubectl -n $(KIND_LAB_NAMESPACE) wait --for=condition=Available --timeout=$(KIND_LAB_TIMEOUT)s deployment --all
+	@echo ""
+	@echo "Kubernetes lab is up in namespace $(KIND_LAB_NAMESPACE) (scenario: $(SCENARIO), FRR devices only, login frr / frr)."
+	@kubectl -n $(KIND_LAB_NAMESPACE) get svc -o jsonpath='{range .items[*]}  {.metadata.name}.{.metadata.namespace}.svc.cluster.local{"\n"}{end}'
+	@echo ""
+	@echo "  Run 'make kind-lab-status' for pods and services."
+
+kind-lab-down:
+	# Deleting the namespace takes every device with it and touches nothing else
+	# in this shared cluster.
+	kubectl delete namespace $(KIND_LAB_NAMESPACE) --ignore-not-found
+
+kind-lab-status:
+	@kubectl -n $(KIND_LAB_NAMESPACE) get pods,svc
+
+.PHONY: build-docker build-docker-frr build-docker-bootstrap doctor lint format typeCheck test py39-check \
+	shell-syntax check lab-jwt lab-env clab-suid \
 	scenarios scenario-resolve generate \
 	local-env-init local-env-up local-env-down local-env-prune \
-	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config
+	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config \
+	kind-lab-up kind-lab-down kind-lab-status

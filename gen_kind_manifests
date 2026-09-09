@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Render the Kubernetes flavour of the lab from a scenario's topology (stdlib-only, run on the host).
+
+Writes one deterministic multi-document manifest to `generated/<scenario>/kind/lab.yaml`:
+a namespace, one ConfigMap carrying every device's rendered interface config,
+and a Deployment + ClusterIP Service per device. Each device is then reachable
+over SSH at `<device>.<namespace>.svc.cluster.local`.
+
+Only `vendor: "frr"` devices are rendered. The five Nokia SR Linux nodes are
+deliberately skipped: each wants several GB of RAM and a slow management-stack
+boot, which a shared local KIND cluster cannot carry.
+
+Interface descriptions come from the same `render_frr` renderer the containerlab
+flow uses, applied by the same `set-aliases.sh` the scenario resolves.
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import sys
+
+import labscripts
+
+DEFAULT_NAMESPACE = "neops-lab"
+DEFAULT_IMAGE = "neops-lab-frr:latest"
+
+APP_LABEL = "neops-lab-frr"
+DEVICE_LABEL = "neops.io/device"
+CONFIG_MAP = "neops-lab-device-config"
+IFACE_DIR = "/etc/frr/lab-interfaces"
+
+# Reuse the per-device render helpers from the extension-less sibling module.
+gen_device_configs = labscripts.load("gen_device_configs")
+
+render_frr = gen_device_configs.render_frr
+
+# The same files the containerlab flavour binds at /lab, from the one place that
+# decides them, so one entrypoint and one alias script serve both flavours.
+LAB_FILE_KEYS = gen_device_configs.resolve_scenario.LAB_FILE_KEYS
+LAB_DIR_PATH = gen_device_configs.resolve_scenario.LAB_DIR_PATH
+ALIAS_SCRIPT_PATH = f"{LAB_DIR_PATH}/set-aliases.sh"
+
+
+def frr_devices(devices: dict) -> dict:
+    """Return the FRR devices in declaration order; other vendors are skipped."""
+    return {host: dev for host, dev in devices.items() if dev["vendor"] == "frr"}
+
+
+def iface_key(host: str) -> str:
+    """Return the ConfigMap key holding a device's rendered interface config."""
+    return f"{host}.iface"
+
+
+def render_config_map(devices: dict, namespace: str, lab_files: dict) -> dict:
+    """Render the ConfigMap: the /lab files plus one `.iface` file per device."""
+    data = dict(lab_files)
+    for host, dev in devices.items():
+        data[iface_key(host)] = render_frr(host, dev)
+    return {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": CONFIG_MAP, "namespace": namespace, "labels": {"app.kubernetes.io/name": APP_LABEL}},
+        "data": data,
+    }
+
+
+def _device_mounts(host: str) -> list:
+    """Mount every /lab file plus this device's own interface config.
+
+    Both containers get the same set: the init container runs `set-aliases.sh`,
+    and the device container's entrypoint installs `frr.conf` and `daemons`
+    before FRR starts.
+    """
+    mounts = [
+        {"name": "device-config", "mountPath": f"{LAB_DIR_PATH}/{name}", "subPath": name} for name in LAB_FILE_KEYS
+    ]
+    mounts.append({"name": "device-config", "mountPath": f"{IFACE_DIR}/{iface_key(host)}", "subPath": iface_key(host)})
+    return mounts
+
+
+def render_pod_spec(host: str, image: str) -> dict:
+    """Render the pod spec for one device.
+
+    A pod has only `eth0`, so the topology's `swpN` ports are created as dummy
+    links by an init container — `set-aliases.sh` already falls back to
+    `ip link add ... type dummy` for a name that is not present, and an init
+    container shares the pod network namespace, so the links survive into the
+    FRR container. Running it before FRR starts means zebra reads the finished
+    interface list, aliases included, on its first netlink dump.
+
+    `hostname` is what `set-aliases.sh` resolves its `.iface` file by, and
+    `LAB_HOSTNAME` is what the image writes into `frr.conf`.
+
+    Capabilities are the smallest set that works, measured against this image:
+    the init container needs `NET_ADMIN` to create the links, and FRR refuses
+    to start without `SYS_ADMIN` on top of it (`privs_init: initial
+    cap_set_proc failed`) even with no VRFs configured.
+    """
+    return {
+        "hostname": host,
+        "initContainers": [
+            {
+                "name": "interfaces",
+                "image": image,
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["/bin/sh", ALIAS_SCRIPT_PATH],
+                "securityContext": {"capabilities": {"add": ["NET_ADMIN"]}},
+                "volumeMounts": _device_mounts(host),
+            }
+        ],
+        "containers": [
+            {
+                "name": "frr",
+                "image": image,
+                "imagePullPolicy": "IfNotPresent",
+                "env": [{"name": "LAB_HOSTNAME", "value": host}],
+                "ports": [{"name": "ssh", "containerPort": 22, "protocol": "TCP"}],
+                "securityContext": {"capabilities": {"add": ["NET_ADMIN", "SYS_ADMIN"]}},
+                "resources": {
+                    "requests": {"cpu": "25m", "memory": "64Mi"},
+                    "limits": {"memory": "256Mi"},
+                },
+                "readinessProbe": {
+                    "tcpSocket": {"port": 22},
+                    "initialDelaySeconds": 2,
+                    "periodSeconds": 3,
+                },
+                "volumeMounts": _device_mounts(host),
+            }
+        ],
+        "volumes": [{"name": "device-config", "configMap": {"name": CONFIG_MAP}}],
+    }
+
+
+def render_deployment(host: str, namespace: str, image: str) -> dict:
+    """Render the Deployment for one device."""
+    labels = {"app.kubernetes.io/name": APP_LABEL, DEVICE_LABEL: host}
+    return {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": host, "namespace": namespace, "labels": labels},
+        "spec": {
+            "replicas": 1,
+            "selector": {"matchLabels": {DEVICE_LABEL: host}},
+            "template": {"metadata": {"labels": labels}, "spec": render_pod_spec(host, image)},
+        },
+    }
+
+
+def render_service(host: str, namespace: str) -> dict:
+    """Render the ClusterIP Service giving one device stable in-cluster DNS."""
+    labels = {"app.kubernetes.io/name": APP_LABEL, DEVICE_LABEL: host}
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": host, "namespace": namespace, "labels": labels},
+        "spec": {
+            "type": "ClusterIP",
+            "selector": {DEVICE_LABEL: host},
+            "ports": [{"name": "ssh", "port": 22, "targetPort": 22, "protocol": "TCP"}],
+        },
+    }
+
+
+def render_manifests(devices: dict, namespace: str, image: str, lab_files: dict) -> list:
+    """Render every document, in the order they must be applied."""
+    docs = [
+        {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}},
+        render_config_map(devices, namespace, lab_files),
+    ]
+    for host in devices:
+        docs.append(render_deployment(host, namespace, image))
+        docs.append(render_service(host, namespace))
+    return docs
+
+
+def _scalar(value) -> str:
+    """Serialize a leaf value. Strings are always quoted, so nothing is ever
+    reinterpreted as a bool, a number or a YAML octal."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _block_scalar(text: str, pad: str) -> list:
+    """Serialize multi-line text as a literal block, one trailing newline."""
+    return [f"{pad}{line}" if line else "" for line in text.rstrip("\n").split("\n")]
+
+
+def _dump_mapping(mapping: dict, indent: int) -> list:
+    pad = "  " * indent
+    lines = []
+    for key, value in mapping.items():
+        if isinstance(value, dict):
+            lines.append(f"{pad}{key}:")
+            lines.extend(_dump_mapping(value, indent + 1))
+        elif isinstance(value, list):
+            lines.append(f"{pad}{key}:")
+            lines.extend(_dump_sequence(value, indent + 1))
+        elif isinstance(value, str) and "\n" in value:
+            lines.append(f"{pad}{key}: |")
+            lines.extend(_block_scalar(value, pad + "  "))
+        else:
+            lines.append(f"{pad}{key}: {_scalar(value)}")
+    return lines
+
+
+def _dump_sequence(items: list, indent: int) -> list:
+    pad = "  " * indent
+    lines = []
+    for item in items:
+        if isinstance(item, dict):
+            first, *rest = _dump_mapping(item, indent + 1)
+            lines.append(f"{pad}- {first[len(pad) + 2 :]}")
+            lines.extend(rest)
+        else:
+            lines.append(f"{pad}- {_scalar(item)}")
+    return lines
+
+
+def dump_documents(docs: list) -> str:
+    """Serialize documents as one `---`-separated YAML stream.
+
+    A hand-rolled emitter rather than PyYAML: the host scripts are stdlib-only
+    (see AGENTS.md), and emitting in insertion order with no sorting is what
+    makes re-running the generator byte-identical.
+    """
+    chunks = ["---\n" + "\n".join(_dump_mapping(doc, 0)) + "\n" for doc in docs]
+    return "".join(chunks)
+
+
+def parse_args(argv: list) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render the KIND manifests for the FRR lab devices.")
+    parser.add_argument("--scenario", help="scenario to render; defaults to $SCENARIO")
+    parser.add_argument("--namespace", default=DEFAULT_NAMESPACE, help="target namespace (default: %(default)s)")
+    parser.add_argument("--image", default=DEFAULT_IMAGE, help="FRR device image (default: %(default)s)")
+    parser.add_argument(
+        "--output", type=pathlib.Path, default=None, help="manifest path (default: generated/<scenario>/kind/lab.yaml)"
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    resolver = gen_device_configs.resolve_scenario
+    scenario = resolver.scenario_name(args.scenario)
+    output = args.output or resolver.output_dir(scenario) / "kind" / "lab.yaml"
+
+    devices = frr_devices(gen_device_configs.load_topology(scenario))
+    if not devices:
+        print(f"scenario {scenario!r} has no frr devices to render", file=sys.stderr)
+        return 1
+
+    frr_dir = resolver.require_resolved(scenario) / "devices" / "frr"
+    lab_files = {name: (frr_dir / name).read_text() for name in LAB_FILE_KEYS}
+    docs = render_manifests(devices, args.namespace, args.image, lab_files)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(dump_documents(docs))
+
+    print(f"generated {output}: {len(devices)} FRR devices, {len(docs)} documents, namespace {args.namespace}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

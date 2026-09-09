@@ -18,3 +18,8 @@ Discovery against two NOS families in one run, from four different parameter
 shapes: declared platforms, autodetected platforms, a summarising subnet, and a
 hand-written mixed file. LLDP neighbour discovery is real on the SR Linux
 fabric only; the FRR nodes do not run LLDP.
+
+## Flavours
+
+Both. `make kind-lab-up` renders the 10 FRR devices only — the SR Linux nodes
+are far too heavy for a shared local cluster.
