@@ -72,6 +72,29 @@ if [ -z "$NEOPS_CMS_TOKEN" ]; then
     exit 1
 fi
 
+# `local-env-prune` drops the database the key lives in but leaves
+# cms_api_key.env on disk, so the file-exists guard above still passes and the
+# stale key only fails at the LAST step of this script — after every role grant
+# has been applied — as a bare `GraphQL error: invalid access token`. Probe it
+# here instead, where the fix is still one target away.
+# `users` and not a cheaper query: an unauthenticated read is not refused, it is
+# answered from the anonymous scope, so `{ scopes { results { id } } }` comes
+# back as an empty list on a bad key and the probe would pass.
+key_probe=$(curl -sS \
+    -H "Authorization: Api-Key $NEOPS_CMS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -X POST "$CMS_URL/graphql" \
+    -d '{"query":"{ users { results { username } } }"}' 2>&1) || true
+case "$key_probe" in
+    *"invalid access token"*)
+        echo "error: the key in cms_api_key.env is not valid for this CMS database." >&2
+        echo "       'make local-env-prune' drops the database that key was minted" >&2
+        echo "       against; 'make local-env-up' does not mint a new one. Run" >&2
+        echo "       'make local-env-init' to mint a fresh key, then retry." >&2
+        exit 1
+        ;;
+esac
+
 echo "==> Seeding role '$ROLE_NAME' and scope '$SCOPE_NAME' via manage.py shell"
 docker compose exec -T \
     -e SCOPE_NAME="$SCOPE_NAME" \
