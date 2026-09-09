@@ -96,6 +96,8 @@ plugins:
         - clab/*
         - devices/*
         - scenarios/*
+        # Design specs are process scaffolding, not operator documentation.
+        - superpowers/*
         - tests/*
       regex:
         - .*\.(tmp|bin|tar)$

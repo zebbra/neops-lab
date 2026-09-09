@@ -103,6 +103,7 @@ plugins:
     - clab/*
     - devices/*
     - scenarios/*
+    - superpowers/*
     - tests/*
     regex:
     - .*\.(tmp|bin|tar)$
