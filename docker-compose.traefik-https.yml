@@ -1,0 +1,54 @@
+# HTTPS overlay for host mode. Loaded by the Makefile when LAB_SCHEME is
+# unset or `https` (not when LAB_SCHEME=http).
+#
+# Adds :443, HTTP→HTTPS redirect on entrypoint `web`, and moves every router
+# (including the Traefik dashboard) to `websecure` with TLS. Without
+# TRAEFIK_CERTRESOLVER Traefik uses its default self-signed certificate;
+# with it, docker-compose.traefik-acme.yml attaches the certresolver labels.
+
+services:
+  traefik:
+    command: !override
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --api.dashboard=true
+      - --certificatesresolvers.letsencrypt.acme.email=${TRAEFIK_ACME_EMAIL:-noreply@localhost}
+      - --certificatesresolvers.letsencrypt.acme.storage=/acme/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    ports: !override
+      - "80:80"
+      - "443:443"
+    volumes: !override
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_acme:/acme
+    labels:
+      - traefik.http.routers.dashboard.entrypoints=websecure
+      - traefik.http.routers.dashboard.tls=true
+
+  cms:
+    labels:
+      - traefik.http.routers.cms.entrypoints=websecure
+      - traefik.http.routers.cms.tls=true
+
+  workflow_engine:
+    labels:
+      - traefik.http.routers.engine.entrypoints=websecure
+      - traefik.http.routers.engine.tls=true
+
+  workflow-engine-client:
+    labels:
+      - traefik.http.routers.monitor.entrypoints=websecure
+      - traefik.http.routers.monitor.tls=true
+
+  web_client:
+    labels:
+      - traefik.http.routers.web.entrypoints=websecure
+      - traefik.http.routers.web.tls=true
+
+volumes:
+  traefik_acme:
+    driver: local

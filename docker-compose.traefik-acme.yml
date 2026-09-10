@@ -6,6 +6,9 @@
 # Without this file Traefik serves its default self-signed certificate.
 
 services:
+  traefik:
+    labels:
+      - traefik.http.routers.dashboard.tls.certresolver=${TRAEFIK_CERTRESOLVER}
   cms:
     labels:
       - traefik.http.routers.cms.tls.certresolver=${TRAEFIK_CERTRESOLVER}

@@ -148,16 +148,25 @@ local-env-prune:
 # -----------------------------------------------------------------------------
 # Host mode — same stack behind bundled Traefik (path prefixes on LAB_HOST)
 # -----------------------------------------------------------------------------
-# Overlay: docker-compose.traefik.yml (+ optional traefik-acme.yml). Laptop
-# local-* targets never load these. See docs/20-operations/50-host-proxy.md.
+# Overlay: docker-compose.traefik.yml (+ traefik-https.yml unless LAB_SCHEME=http,
+# + optional traefik-acme.yml). Laptop local-* targets never load these.
+# See docs/20-operations/50-host-proxy.md.
 
 HOST_ENV_COMPOSE_FILES := docker-compose.yml:docker-compose.traefik.yml
 HOST_LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml:docker-compose.traefik.yml
 
-# Append the ACME label overlay when TRAEFIK_CERTRESOLVER is set in the
-# environment or .env (docker compose reads .env; make must grep it itself).
+# LAB_SCHEME from the environment wins over .env; default https (TLS + :443).
+HOST_SCHEME := $(or $(LAB_SCHEME),$(shell sed -n 's/^LAB_SCHEME=//p' .env 2>/dev/null | tr -d '\r' | head -1),https)
+ifneq ($(HOST_SCHEME),http)
+HOST_ENV_COMPOSE_FILES := $(HOST_ENV_COMPOSE_FILES):docker-compose.traefik-https.yml
+HOST_LAB_COMPOSE_FILES := $(HOST_LAB_COMPOSE_FILES):docker-compose.traefik-https.yml
+endif
+
+# Append the ACME label overlay when TRAEFIK_CERTRESOLVER is set (HTTPS only).
 HOST_ACME_RESOLVER := $(or $(TRAEFIK_CERTRESOLVER),$(shell sed -n 's/^TRAEFIK_CERTRESOLVER=//p' .env 2>/dev/null | tr -d '\r' | head -1))
-ifneq ($(strip $(HOST_ACME_RESOLVER)),)
+ifeq ($(HOST_SCHEME),http)
+# ACME needs :443 / websecure — ignore TRAEFIK_CERTRESOLVER in HTTP mode.
+else ifneq ($(strip $(HOST_ACME_RESOLVER)),)
 HOST_ENV_COMPOSE_FILES := $(HOST_ENV_COMPOSE_FILES):docker-compose.traefik-acme.yml
 HOST_LAB_COMPOSE_FILES := $(HOST_LAB_COMPOSE_FILES):docker-compose.traefik-acme.yml
 endif
@@ -182,6 +191,7 @@ host-print-urls:
 	echo "  Engine API:   $$origin/engine/"; \
 	echo "  CMS admin:    $$origin/cms/admin/ (neops / neops)"; \
 	echo "  CMS GraphQL:  $$origin/cms/graphql"; \
+	echo "  Traefik UI:   $$origin/traefik/dashboard/"; \
 	echo "  (loopback)    http://127.0.0.1:8001  http://127.0.0.1:3030"
 
 host-env-init: lab-jwt host-oidc

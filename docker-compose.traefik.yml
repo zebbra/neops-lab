@@ -1,16 +1,17 @@
-# Host-mode overlay: bundled Traefik on :80/:443 with path-prefix routing.
+# Host-mode overlay: bundled Traefik with path-prefix routing (HTTP on :80).
 #
-# Combined with the base stack via COMPOSE_FILE (see Makefile host-* targets):
-#   docker-compose.yml:docker-compose.worker.yml:docker-compose.traefik.yml
+# Combined via COMPOSE_FILE (see Makefile host-* targets). Laptop local-* never
+# loads this. Requires LAB_HOST in .env.
 #
-# Laptop targets (local-*) never load this file. Requires LAB_HOST in .env
-# (or the environment). Optional: LAB_SCHEME (default https).
-# Let's Encrypt: set TRAEFIK_CERTRESOLVER=letsencrypt and TRAEFIK_ACME_EMAIL;
-# the Makefile then also loads docker-compose.traefik-acme.yml. Otherwise
-# Traefik serves its default self-signed certificate.
+# Default here is plain HTTP (entrypoint `web`, no TLS, no :443). When
+# LAB_SCHEME=https (or unset — Makefile defaults to https), make also loads
+# docker-compose.traefik-https.yml which adds :443, HTTP→HTTPS redirect, and
+# switches every router to `websecure` + tls. Optional ACME via
+# docker-compose.traefik-acme.yml when TRAEFIK_CERTRESOLVER is set.
 #
 # Path map (Host(${LAB_HOST}) only — access by bare IP returns 404):
-#   /cms      -> cms:8000          StripPrefix  (admin, graphql, static, file API)
+#   /traefik  -> Traefik dashboard (api@internal, StripPrefix)
+#   /cms      -> cms:8000          StripPrefix
 #   /engine   -> workflow_engine   StripPrefix
 #   /monitor  -> monitor app       no strip; Vite --base /monitor/
 #   /         -> web_client        catch-all
@@ -25,20 +26,11 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --entrypoints.web.address=:80
-      - --entrypoints.web.http.redirections.entrypoint.to=websecure
-      - --entrypoints.web.http.redirections.entrypoint.scheme=https
-      - --entrypoints.websecure.address=:443
-      # ACME resolver is always registered; routers pick it up via
-      # docker-compose.traefik-acme.yml when TRAEFIK_CERTRESOLVER is set.
-      - --certificatesresolvers.letsencrypt.acme.email=${TRAEFIK_ACME_EMAIL:-noreply@localhost}
-      - --certificatesresolvers.letsencrypt.acme.storage=/acme/acme.json
-      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --api.dashboard=true
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - traefik_acme:/acme
     depends_on:
       cms:
         condition: service_healthy
@@ -46,6 +38,15 @@ services:
         condition: service_healthy
       workflow_engine:
         condition: service_healthy
+    labels:
+      - traefik.enable=true
+      # Dashboard: http(s)://$LAB_HOST/traefik/dashboard/
+      - traefik.http.routers.dashboard.rule=Host(`${LAB_HOST}`) && PathPrefix(`/traefik`)
+      - traefik.http.routers.dashboard.entrypoints=web
+      - traefik.http.routers.dashboard.priority=200
+      - traefik.http.routers.dashboard.service=api@internal
+      - traefik.http.routers.dashboard.middlewares=dashboard-strip
+      - traefik.http.middlewares.dashboard-strip.stripprefix.prefixes=/traefik
 
   cms:
     environment:
@@ -63,9 +64,8 @@ services:
     labels:
       - traefik.enable=true
       - traefik.http.routers.cms.rule=Host(`${LAB_HOST}`) && PathPrefix(`/cms`)
-      - traefik.http.routers.cms.entrypoints=websecure
+      - traefik.http.routers.cms.entrypoints=web
       - traefik.http.routers.cms.priority=100
-      - traefik.http.routers.cms.tls=true
       - traefik.http.routers.cms.middlewares=cms-strip
       - traefik.http.middlewares.cms-strip.stripprefix.prefixes=/cms
       - traefik.http.services.cms.loadbalancer.server.port=8000
@@ -79,9 +79,8 @@ services:
     labels:
       - traefik.enable=true
       - traefik.http.routers.engine.rule=Host(`${LAB_HOST}`) && PathPrefix(`/engine`)
-      - traefik.http.routers.engine.entrypoints=websecure
+      - traefik.http.routers.engine.entrypoints=web
       - traefik.http.routers.engine.priority=100
-      - traefik.http.routers.engine.tls=true
       - traefik.http.routers.engine.middlewares=engine-strip
       - traefik.http.middlewares.engine-strip.stripprefix.prefixes=/engine
       - traefik.http.services.engine.loadbalancer.server.port=3030
@@ -101,9 +100,8 @@ services:
     labels:
       - traefik.enable=true
       - traefik.http.routers.monitor.rule=Host(`${LAB_HOST}`) && PathPrefix(`/monitor`)
-      - traefik.http.routers.monitor.entrypoints=websecure
+      - traefik.http.routers.monitor.entrypoints=web
       - traefik.http.routers.monitor.priority=100
-      - traefik.http.routers.monitor.tls=true
       - traefik.http.services.monitor.loadbalancer.server.port=5173
 
   web_client:
@@ -116,11 +114,6 @@ services:
     labels:
       - traefik.enable=true
       - traefik.http.routers.web.rule=Host(`${LAB_HOST}`) && PathPrefix(`/`)
-      - traefik.http.routers.web.entrypoints=websecure
+      - traefik.http.routers.web.entrypoints=web
       - traefik.http.routers.web.priority=1
-      - traefik.http.routers.web.tls=true
       - traefik.http.services.web.loadbalancer.server.port=8080
-
-volumes:
-  traefik_acme:
-    driver: local
