@@ -26,6 +26,10 @@
 services:
   traefik:
     image: traefik:v3.3
+    environment:
+      # Newer Docker daemons (min API ≥ 1.40) reject the client's default 1.24;
+      # without this the docker provider never sees labels → every route 404s.
+      DOCKER_API_VERSION: ${TRAEFIK_DOCKER_API_VERSION:-1.44}
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false

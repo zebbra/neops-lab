@@ -135,7 +135,8 @@ The CMS Elasticsearch data volume is named `elasticsearch_lab` (not `elasticsear
 | Symptom | Likely cause |
 |---|---|
 | `docker compose logs traefik` → `no such service` | Bare compose only sees `docker-compose.yml`. Use `make host-logs` / `make host-ps`, or `docker logs neops-lab-traefik-1` |
-| Traefik 404 on every path | Stale labels (recreate: `make host-env-up`) or Docker socket blocked (SELinux — socket is mounted `:ro,z`) |
+| Traefik 404 on every path | Stale labels (`make host-env-up`) or Docker socket blocked (SELinux — socket is `:ro,z`) or docker provider API too old — see log `client version 1.24 is too old` → set `DOCKER_API_VERSION` (compose default `1.44`) and recreate Traefik |
+| `client version 1.24 is too old` | Host Docker requires API ≥ 1.40; Traefik defaults too low. Compose sets `DOCKER_API_VERSION=1.44`; override with `TRAEFIK_DOCKER_API_VERSION` if needed, then `make host-env-up` |
 | Browser jumps to HTTPS / 404 on HTTPS | `LAB_SCHEME=http` but old Traefik still has the HTTPS overlay — recreate Traefik; clear HSTS if the browser cached HTTPS |
 | Blank `<app-root>` | Missing/stale `cms/oidc-config.host.json` — run `make host-oidc`; `LAB_HOST` must match the URL you type in the browser |
 | `LAB_HOST is required` | Set it in `.env` or the environment before `host-*` |
