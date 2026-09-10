@@ -11,8 +11,10 @@ generated/
 clab-*/
 # Dev-only RSA keypair for the CMS, minted by `make lab-jwt`.
 cms/jwt/
-# CMS API key minted by `make local-env-init`.
+# CMS API key minted by `make local-env-init` / `make host-env-init`.
 cms_api_key.env
+# Host-mode OIDC config rendered by `./gen_host_oidc` from LAB_HOST/LAB_SCHEME.
+cms/oidc-config.host.json
 
 # -----------------------------------------------------------------------------
 # Python bytecode and caches

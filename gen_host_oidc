@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Render cms/oidc-config.host.json from the host-mode template (stdlib-only).
+
+The laptop oidc-config.json stays hard-coded to localhost:8080. Host mode
+serves the web client behind Traefik at LAB_SCHEME://LAB_HOST, so the noop
+OIDC authority/redirect URLs must match that origin or the Angular bootstrap
+fails with a blank <app-root>.
+
+Reads LAB_HOST (required) and LAB_SCHEME (default https) from the environment
+or from a .env file in the repo root (docker-compose style KEY=VALUE lines).
+Writes cms/oidc-config.host.json (git-ignored).
+"""
+
+from __future__ import annotations
+
+import os
+import pathlib
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+TEMPLATE = HERE / "cms" / "oidc-config.host.json.template"
+OUTPUT = HERE / "cms" / "oidc-config.host.json"
+DOTENV = HERE / ".env"
+
+
+def _load_dotenv(path: pathlib.Path) -> dict[str, str]:
+    """Parse KEY=VALUE lines; ignore comments and blank lines. No shell expansion."""
+    if not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        if key:
+            values[key] = value
+    return values
+
+
+def main() -> int:
+    dotenv = _load_dotenv(DOTENV)
+    # Real environment wins over .env so `LAB_HOST=… make host-env-init` works.
+    lab_host = os.environ.get("LAB_HOST") or dotenv.get("LAB_HOST", "")
+    lab_scheme = os.environ.get("LAB_SCHEME") or dotenv.get("LAB_SCHEME", "https")
+
+    if not lab_host:
+        print(
+            "error: LAB_HOST is required (set it in .env or the environment).",
+            file=sys.stderr,
+        )
+        return 2
+    if lab_scheme not in ("http", "https"):
+        print(
+            f"error: LAB_SCHEME must be 'http' or 'https', got {lab_scheme!r}.",
+            file=sys.stderr,
+        )
+        return 2
+
+    origin = f"{lab_scheme}://{lab_host}"
+    text = TEMPLATE.read_text().replace("{{LAB_ORIGIN}}", origin)
+    OUTPUT.write_text(text)
+    print(f"wrote {OUTPUT.relative_to(HERE)} (origin {origin})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

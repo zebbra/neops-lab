@@ -130,10 +130,109 @@ local-env-down:
 	docker compose down
 
 local-env-prune:
-	# `-v` removes the elasticsearch + postgres_data volumes too — leftover
+	# `-v` removes the elasticsearch_lab + postgres_data volumes too — leftover
 	# state across down/up cycles caused `elastic_index --create` to fail
 	# and stale CMS data to confuse re-inits.
 	docker compose down -v
+
+# -----------------------------------------------------------------------------
+# Host mode — same stack behind bundled Traefik (path prefixes on LAB_HOST)
+# -----------------------------------------------------------------------------
+# Overlay: docker-compose.traefik.yml (+ optional traefik-acme.yml). Laptop
+# local-* targets never load these. See docs/20-operations/50-host-proxy.md.
+
+HOST_ENV_COMPOSE_FILES := docker-compose.yml:docker-compose.traefik.yml
+HOST_LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml:docker-compose.traefik.yml
+
+# Append the ACME label overlay when TRAEFIK_CERTRESOLVER is set in the
+# environment or .env (docker compose reads .env; make must grep it itself).
+HOST_ACME_RESOLVER := $(or $(TRAEFIK_CERTRESOLVER),$(shell sed -n 's/^TRAEFIK_CERTRESOLVER=//p' .env 2>/dev/null | tr -d '\r' | head -1))
+ifneq ($(strip $(HOST_ACME_RESOLVER)),)
+HOST_ENV_COMPOSE_FILES := $(HOST_ENV_COMPOSE_FILES):docker-compose.traefik-acme.yml
+HOST_LAB_COMPOSE_FILES := $(HOST_LAB_COMPOSE_FILES):docker-compose.traefik-acme.yml
+endif
+
+host-env-init host-env-up host-env-down host-env-prune: export COMPOSE_FILE := $(HOST_ENV_COMPOSE_FILES)
+host-env-init host-env-up host-env-down host-env-prune: export COMPOSE_PATH_SEPARATOR := :
+host-lab-up host-lab-down host-lab-discover host-lab-logs: export COMPOSE_FILE := $(HOST_LAB_COMPOSE_FILES)
+host-lab-up host-lab-down host-lab-discover host-lab-logs: export COMPOSE_PATH_SEPARATOR := :
+
+# Render cms/oidc-config.host.json; fails if LAB_HOST is missing.
+host-oidc: lab-env
+	@./gen_host_oidc
+
+# Resolve LAB_SCHEME://LAB_HOST for banners (env wins over .env).
+host-print-urls:
+	@scheme=$${LAB_SCHEME:-$$(sed -n 's/^LAB_SCHEME=//p' .env 2>/dev/null | tr -d '\r' | head -1)}; \
+	scheme=$${scheme:-https}; \
+	host=$${LAB_HOST:-$$(sed -n 's/^LAB_HOST=//p' .env 2>/dev/null | tr -d '\r' | head -1)}; \
+	origin="$$scheme://$$host"; \
+	echo "  Web client:   $$origin/"; \
+	echo "  Monitor:      $$origin/monitor/"; \
+	echo "  Engine API:   $$origin/engine/"; \
+	echo "  CMS admin:    $$origin/cms/admin/ (neops / neops)"; \
+	echo "  CMS GraphQL:  $$origin/cms/graphql"; \
+	echo "  (loopback)    http://127.0.0.1:8001  http://127.0.0.1:3030"
+
+host-env-init: lab-jwt host-oidc
+	touch cms_api_key.env
+	# Same pull/init sequence as local-env-init; COMPOSE_FILE adds Traefik.
+	docker compose pull --policy always --ignore-pull-failures
+	docker compose up -d
+	@pk=$$(docker compose exec -T cms ./manage.py shell -c "from django.contrib.auth import get_user_model; print('PK=%s' % get_user_model().objects.get(username='neops').pk)" 2>/dev/null | sed -n 's/^PK=//p' | tr -d '\r'); \
+	test -n "$$pk" || { echo "error: could not resolve the CMS user 'neops'"; exit 1; }; \
+	key=$$(docker compose exec -T cms ./manage.py generate_api_key $$pk workflow 2>/dev/null | awk 'NF{l=$$0}END{print l}' | tr -d '\r'); \
+	test -n "$$key" || { echo "error: generate_api_key returned an empty key"; exit 1; }; \
+	echo "NEOPS_CMS_TOKEN=$$key" > cms_api_key.env; \
+	echo "wrote cms_api_key.env (user pk $$pk)"
+	./apply_cms_config
+	docker compose up -d --force-recreate workflow_engine
+	@echo ""
+	@echo "Host control plane is up."
+	@$(MAKE) --no-print-directory host-print-urls
+
+host-env-up: lab-jwt host-oidc
+	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make host-env-init' first."; exit 1; fi
+	docker compose pull --policy always --ignore-pull-failures
+	docker compose up -d
+	@echo ""
+	@$(MAKE) --no-print-directory host-print-urls
+
+host-env-down:
+	docker compose down
+
+host-env-prune:
+	docker compose down -v
+
+host-lab-up: build-docker lab-env host-oidc
+	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make host-env-init' first."; exit 1; fi
+	@./gen_clab_topology
+	docker compose pull --policy always --ignore-pull-failures worker
+	docker compose up -d
+	@echo "Waiting for workflow registration (lab_bootstrap) to finish..."
+	docker compose wait lab_bootstrap
+	@echo "Deploying containerlab devices (real links)..."
+	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO)
+	@echo "Waiting for the worker to register its function blocks..."
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
+	@echo "Waiting for all devices to accept SSH..."
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@echo ""
+	@echo "Host lab is up (containerlab: 10 FRR + 5 Nokia SR Linux, real links)."
+	@$(MAKE) --no-print-directory host-print-urls
+	@echo "  Run 'make host-lab-discover' to populate the CMS (15 devices with interfaces)."
+
+host-lab-down:
+	-$(CONTAINERLAB) destroy -t $(CLAB_TOPO) --cleanup
+	docker compose down
+
+host-lab-discover:
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB)
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @$(DISCOVER_PARAMS)
+
+host-lab-logs:
+	docker compose logs -f worker lab_bootstrap
 
 # -----------------------------------------------------------------------------
 # Simple Lab — see README.md
@@ -259,4 +358,7 @@ local-lab-logs:
 
 .PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt lab-env clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
-	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config
+	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config \
+	host-oidc host-print-urls \
+	host-env-init host-env-up host-env-down host-env-prune \
+	host-lab-up host-lab-down host-lab-discover host-lab-logs

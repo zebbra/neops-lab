@@ -210,6 +210,9 @@ wait_devices            # blocks until every lab device (topology.json) accepts 
 workflow-execution-parameters/   # generated discovery inputs
 docker-compose.yml               # base stack (CMS, engine, monitor app, web client, postgres, ES, redis)
 docker-compose.worker.yml        # worker + lab_bootstrap + the lab-net network definition
+docker-compose.traefik.yml       # host-mode overlay: bundled Traefik + path-prefix routing
+docker-compose.traefik-acme.yml  # optional Let's Encrypt labels (when TRAEFIK_CERTRESOLVER is set)
+gen_host_oidc                    # renders cms/oidc-config.host.json for host mode
 tests/                  # unit tests for the two generators
 ```
 
@@ -250,6 +253,7 @@ skipped for hosts declared as another one.
 | `make local-lab-logs` | Tails worker + bootstrap logs. |
 | `make local-lab-down` | `containerlab destroy --cleanup` (removes devices + runtime dir) then `docker compose down` (preserves volumes). |
 | `make local-env-prune` | `docker compose down -v` — the true reset, drops the ES + postgres volumes. |
+| `make host-env-init` / `host-lab-up` / … | Host-mode counterparts behind bundled Traefik — see [Host mode](docs/20-operations/50-host-proxy.md). |
 | `make test` | `pytest tests` — unit tests for the two generators, incl. that they still reproduce the committed `workflow-execution-parameters/*.json`. |
 | `make lint` / `make format` / `make typeCheck` / `make check` | ruff / pyrefly over the repo, including the extension-less host scripts. |
 
@@ -262,6 +266,11 @@ Full reset from scratch:
 - Engine UI: <http://localhost:3031>
 - CMS admin: <http://localhost:8001/admin/> (login `neops` / `neops`)
 - Engine REST: <http://localhost:3030>
+
+To publish the same stack on a shared host behind a bundled Traefik (one
+hostname, path prefixes `/cms`, `/engine`, `/monitor`), see
+[Host mode (Traefik)](docs/20-operations/50-host-proxy.md) and the `make host-*`
+targets.
 
 ## Adding a device
 

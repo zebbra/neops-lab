@@ -16,6 +16,8 @@ The lab is declared in two files:
 |---|---|
 | `docker-compose.yml` | The **base stack**: CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis, plus a `wait_health` helper |
 | `docker-compose.worker.yml` | The **worker overlay**: the `worker`, the one-shot `lab_bootstrap`, and the `lab-net` network definition |
+| `docker-compose.traefik.yml` | **Host-mode only**: bundled Traefik on :80/:443 and path-prefix labels (`make host-*`) |
+| `docker-compose.traefik-acme.yml` | **Host-mode optional**: Let's Encrypt `certresolver` labels when `TRAEFIK_CERTRESOLVER` is set |
 
 They are combined through docker compose's `COMPOSE_FILE` environment variable, exported only for the lab targets in the `Makefile`:
 
@@ -25,6 +27,12 @@ local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_FI
 ```
 
 The scoping is deliberate: `local-env-*` targets keep using the base `docker-compose.yml` only, so you can run the control plane without the worker or the devices.
+
+Host mode adds a third (and optionally fourth) file — see [Host mode (Traefik)](../20-operations/50-host-proxy.md):
+
+```make
+HOST_LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml:docker-compose.traefik.yml
+```
 
 !!! warning "`docker compose` by hand needs the same environment"
     Running `docker compose logs worker` in a plain shell will not find the
@@ -46,7 +54,7 @@ The scoping is deliberate: `local-env-*` targets keep using the base `docker-com
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | — | On **both** networks; polls the engine's blackboard and drives the devices |
 | `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: POSTs every `workflows/*.yaml` to the engine, then exits |
 | `postgres` | `postgres:15-alpine` | — | Volume `postgres_data` |
-| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.9.2` | — | Volume `elasticsearch`; 2 CPU / 4 GB limits (2 GB heap) |
+| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.9.2` | — | Volume `elasticsearch_lab` (avoids colliding with a host ES volume named `elasticsearch`); 2 CPU / 4 GB limits (2 GB heap) |
 | `redis` | `redis:7-alpine` | — | The CMS's channel layer (GraphQL subscriptions), cache and Celery broker |
 | `wait_health` | `busybox` | — | Depends on CMS + engine + web client being *healthy*, so `up -d` blocks until they are |
 

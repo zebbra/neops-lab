@@ -185,7 +185,7 @@ services:
     cpus: 2
     mem_limit: 4g
     volumes:
-      - elasticsearch:/usr/share/elasticsearch/data
+      - elasticsearch_lab:/usr/share/elasticsearch/data
     healthcheck:
       test: [ "CMD-SHELL", "curl -s -f http://localhost:9200 || exit 1" ]
       interval: 15s
@@ -197,7 +197,7 @@ services:
       start_period: 90s
 
 volumes:
-  elasticsearch:
+  elasticsearch_lab:
     driver: local
   postgres_data:
     driver: local

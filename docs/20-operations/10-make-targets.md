@@ -52,6 +52,17 @@ make local-lab-discover \
 | `make local-env-prune` | `docker compose down -v` — the true reset; drops the Elasticsearch and Postgres volumes. |
 | `make apply-cms-config` | Runs `./apply_cms_config` on its own. Idempotent, and worth re-running after a CMS restart (see below). |
 
+## Host mode (Traefik)
+
+Parallel targets for a single-hostname deployment behind the bundled Traefik overlay. See [Host mode (Traefik)](50-host-proxy.md). Require `LAB_HOST` in `.env`.
+
+| Target | What it does |
+|---|---|
+| `make host-oidc` | Renders `cms/oidc-config.host.json` from `LAB_HOST` / `LAB_SCHEME`. |
+| `make host-env-init` | Same key setup as `local-env-init`, with `docker-compose.traefik.yml` (and ACME overlay when `TRAEFIK_CERTRESOLVER` is set). |
+| `make host-env-up` / `host-env-down` / `host-env-prune` | Base stack + Traefik lifecycle. |
+| `make host-lab-up` / `host-lab-down` / `host-lab-discover` / `host-lab-logs` | Lab lifecycle with worker + devices, banner prints path-prefix URLs. |
+
 !!! warning "Re-run `apply-cms-config` after a CMS restart"
     The CMS image seeds a scope named `Global` on every startup with
     `always_update_on_restart=True`, so a restart resets its columns and

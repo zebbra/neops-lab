@@ -1,0 +1,20 @@
+# Optional Let's Encrypt labels for host mode. Included automatically by the
+# Makefile when TRAEFIK_CERTRESOLVER is set (typically `letsencrypt`). Requires
+# TRAEFIK_ACME_EMAIL in .env and a publicly resolvable LAB_HOST so the HTTP-01
+# challenge on entrypoint `web` can complete.
+#
+# Without this file Traefik serves its default self-signed certificate.
+
+services:
+  cms:
+    labels:
+      - traefik.http.routers.cms.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+  workflow_engine:
+    labels:
+      - traefik.http.routers.engine.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+  workflow-engine-client:
+    labels:
+      - traefik.http.routers.monitor.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+  web_client:
+    labels:
+      - traefik.http.routers.web.tls.certresolver=${TRAEFIK_CERTRESOLVER}

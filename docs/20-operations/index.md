@@ -36,6 +36,12 @@ tags: [operations]
 
     Indexed by symptom. Most failures here are one of three boot-order races, each with a distinctive error string and a wait that already exists to prevent it.
 
+-   :material-server-network:{ .lg .middle } &nbsp; **[Host mode (Traefik)](50-host-proxy.md)**
+
+    ---
+
+    Single-hostname path-prefix deployment behind a bundled Traefik on :80/:443. Parallel `host-*` make targets; laptop `local-*` unchanged.
+
 </div>
 
 ## The lifecycle at a glance
