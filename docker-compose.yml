@@ -93,7 +93,7 @@ services:
       - POSTGRES_PORT=5432
       - PORT=3030
       # How the engine authorizes each request: enforce | permissive | disabled.
-      - NEOPS_AUTHZ_MODE=enforce
+      - NEOPS_AUTHZ_MODE=disabled
       # SPKI PEM the engine verifies Neops RS256 tokens against — the public half
       # of the keypair `make lab-jwt` mints for the CMS, mounted below.
       - NEOPS_JWT_PUBLIC_KEY_PATH=/etc/neops/jwt/public.pem
