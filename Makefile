@@ -173,12 +173,29 @@ endif
 
 host-env-init host-env-up host-env-down host-env-prune: export COMPOSE_FILE := $(HOST_ENV_COMPOSE_FILES)
 host-env-init host-env-up host-env-down host-env-prune: export COMPOSE_PATH_SEPARATOR := :
-host-lab-up host-lab-down host-lab-discover host-lab-logs: export COMPOSE_FILE := $(HOST_LAB_COMPOSE_FILES)
-host-lab-up host-lab-down host-lab-discover host-lab-logs: export COMPOSE_PATH_SEPARATOR := :
+host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose: export COMPOSE_FILE := $(HOST_LAB_COMPOSE_FILES)
+host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose: export COMPOSE_PATH_SEPARATOR := :
 
 # Render cms/oidc-config.host.json; fails if LAB_HOST is missing.
 host-oidc: lab-env
 	@./gen_host_oidc
+
+# docker compose with the host-mode COMPOSE_FILE set. Examples:
+#   make host-ps
+#   make host-logs                          # traefik (default), follow
+#   make host-logs SERVICE=cms
+#   make host-compose CMD='exec cms ./manage.py shell'
+# Bare `docker compose logs traefik` fails — the base docker-compose.yml has
+# no traefik service; only these targets (or an exported COMPOSE_FILE) do.
+host-ps:
+	docker compose ps
+
+host-logs:
+	docker compose logs -f $(or $(SERVICE),traefik)
+
+host-compose:
+	@test -n "$(CMD)" || { echo "usage: make host-compose CMD='logs -f traefik'"; exit 1; }; \
+	docker compose $(CMD)
 
 # Resolve LAB_SCHEME://LAB_HOST for banners (env wins over .env).
 host-print-urls:
@@ -192,7 +209,8 @@ host-print-urls:
 	echo "  CMS admin:    $$origin/cms/admin/ (neops / neops)"; \
 	echo "  CMS GraphQL:  $$origin/cms/graphql"; \
 	echo "  Traefik UI:   $$origin/traefik/dashboard/"; \
-	echo "  (loopback)    http://127.0.0.1:8001  http://127.0.0.1:3030"
+	echo "  (loopback)    http://127.0.0.1:8001  http://127.0.0.1:3030"; \
+	echo "  compose:      make host-ps / make host-logs   (not bare docker compose)"
 
 host-env-init: lab-jwt host-oidc
 	touch cms_api_key.env
@@ -440,6 +458,6 @@ local-lab-logs:
 .PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt lab-env clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config lab-grant \
-	host-oidc host-print-urls \
+	host-oidc host-print-urls host-ps host-logs host-compose \
 	host-env-init host-env-up host-env-down host-env-prune \
 	host-lab-up host-lab-down host-lab-discover host-lab-logs

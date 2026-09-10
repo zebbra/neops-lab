@@ -1,7 +1,8 @@
 # Host-mode overlay: bundled Traefik with path-prefix routing (HTTP on :80).
 #
 # Combined via COMPOSE_FILE (see Makefile host-* targets). Laptop local-* never
-# loads this. Requires LAB_HOST in .env.
+# loads this. Requires LAB_HOST in .env (for app URLs / OIDC / CORS — routing
+# itself is PathPrefix-only so IP and any Host header work).
 #
 # Default here is plain HTTP (entrypoint `web`, no TLS, no :443). When
 # LAB_SCHEME=https (or unset — Makefile defaults to https), make also loads
@@ -9,7 +10,7 @@
 # switches every router to `websecure` + tls. Optional ACME via
 # docker-compose.traefik-acme.yml when TRAEFIK_CERTRESOLVER is set.
 #
-# Path map (Host(${LAB_HOST}) only — access by bare IP returns 404):
+# Path map (this Traefik is lab-only; no Host() gate):
 #   /traefik  -> Traefik dashboard (api@internal, StripPrefix)
 #   /cms      -> cms:8000          StripPrefix
 #   /engine   -> workflow_engine   StripPrefix
@@ -18,6 +19,9 @@
 #
 # Host ports 8080 and 3031 are closed; 8001 and 3030 stay on loopback so
 # apply_cms_config / wait_ready / run_workflow keep working unchanged.
+#
+# Bare `docker compose …` without COMPOSE_FILE does not see this file — use
+# `make host-ps` / `make host-logs` / `make host-compose -- …`.
 
 services:
   traefik:
@@ -27,10 +31,13 @@ services:
       - --providers.docker.exposedbydefault=false
       - --entrypoints.web.address=:80
       - --api.dashboard=true
+      - --log.level=INFO
+      - --accesslog=true
     ports:
       - "80:80"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # `:z` so SELinux (RHEL/CentOS) allows the container to read the socket.
+      - /var/run/docker.sock:/var/run/docker.sock:ro,z
     depends_on:
       cms:
         condition: service_healthy
@@ -40,8 +47,8 @@ services:
         condition: service_healthy
     labels:
       - traefik.enable=true
-      # Dashboard: http(s)://$LAB_HOST/traefik/dashboard/
-      - traefik.http.routers.dashboard.rule=Host(`${LAB_HOST}`) && PathPrefix(`/traefik`)
+      # Dashboard: http(s)://<any-host>/traefik/dashboard/
+      - traefik.http.routers.dashboard.rule=PathPrefix(`/traefik`)
       - traefik.http.routers.dashboard.entrypoints=web
       - traefik.http.routers.dashboard.priority=200
       - traefik.http.routers.dashboard.service=api@internal
@@ -63,7 +70,7 @@ services:
       - "127.0.0.1:8001:8000"
     labels:
       - traefik.enable=true
-      - traefik.http.routers.cms.rule=Host(`${LAB_HOST}`) && PathPrefix(`/cms`)
+      - traefik.http.routers.cms.rule=PathPrefix(`/cms`)
       - traefik.http.routers.cms.entrypoints=web
       - traefik.http.routers.cms.priority=100
       - traefik.http.routers.cms.middlewares=cms-strip
@@ -78,7 +85,7 @@ services:
       - "127.0.0.1:3030:3030"
     labels:
       - traefik.enable=true
-      - traefik.http.routers.engine.rule=Host(`${LAB_HOST}`) && PathPrefix(`/engine`)
+      - traefik.http.routers.engine.rule=PathPrefix(`/engine`)
       - traefik.http.routers.engine.entrypoints=web
       - traefik.http.routers.engine.priority=100
       - traefik.http.routers.engine.middlewares=engine-strip
@@ -99,7 +106,7 @@ services:
       sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --base /monitor/ --allowedHosts ${LAB_HOST}"
     labels:
       - traefik.enable=true
-      - traefik.http.routers.monitor.rule=Host(`${LAB_HOST}`) && PathPrefix(`/monitor`)
+      - traefik.http.routers.monitor.rule=PathPrefix(`/monitor`)
       - traefik.http.routers.monitor.entrypoints=web
       - traefik.http.routers.monitor.priority=100
       - traefik.http.services.monitor.loadbalancer.server.port=5173
@@ -113,7 +120,7 @@ services:
     ports: !reset []
     labels:
       - traefik.enable=true
-      - traefik.http.routers.web.rule=Host(`${LAB_HOST}`) && PathPrefix(`/`)
+      - traefik.http.routers.web.rule=PathPrefix(`/`)
       - traefik.http.routers.web.entrypoints=web
       - traefik.http.routers.web.priority=1
       - traefik.http.services.web.loadbalancer.server.port=8080

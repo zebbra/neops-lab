@@ -16,7 +16,7 @@ Do not mix the two compose file sets in one shell — export `COMPOSE_FILE` only
 
 ## Path map
 
-Routers match `Host(${LAB_HOST})` only — opening the host by IP returns 404. Point DNS or `/etc/hosts` at the box first.
+Routers match on **path prefix only** (this Traefik is dedicated to the lab), so access by IP or any hostname works. `LAB_HOST` still matters for browser-facing URLs (OIDC, GraphQL, CORS, monitor config) — set it to the name (or IP) clients actually use.
 
 | Public path | Backend | Notes |
 |---|---|---|
@@ -134,9 +134,10 @@ The CMS Elasticsearch data volume is named `elasticsearch_lab` (not `elasticsear
 
 | Symptom | Likely cause |
 |---|---|
-| Browser jumps to HTTPS / 404 on HTTPS | `LAB_SCHEME=http` but old Traefik still running with redirect — recreate Traefik; clear HSTS if the browser cached HTTPS for this host |
-| Traefik 404 on the IP | Routers require `Host(${LAB_HOST})` — use the name from `.env` |
-| Blank `<app-root>` | Missing/stale `cms/oidc-config.host.json` — run `make host-oidc` |
+| `docker compose logs traefik` → `no such service` | Bare compose only sees `docker-compose.yml`. Use `make host-logs` / `make host-ps`, or `docker logs neops-lab-traefik-1` |
+| Traefik 404 on every path | Stale labels (recreate: `make host-env-up`) or Docker socket blocked (SELinux — socket is mounted `:ro,z`) |
+| Browser jumps to HTTPS / 404 on HTTPS | `LAB_SCHEME=http` but old Traefik still has the HTTPS overlay — recreate Traefik; clear HSTS if the browser cached HTTPS |
+| Blank `<app-root>` | Missing/stale `cms/oidc-config.host.json` — run `make host-oidc`; `LAB_HOST` must match the URL you type in the browser |
 | `LAB_HOST is required` | Set it in `.env` or the environment before `host-*` |
 | ACME challenge fails | Host not publicly reachable on :80, or DNS not pointing here, or `LAB_SCHEME=http` |
 | `apply_cms_config` / `wait_ready` fail | Loopback `8001`/`3030` not published — confirm the traefik overlay is in `COMPOSE_FILE` |
