@@ -9,7 +9,7 @@
       "label": "vlans",
       "runOn": "device",
       "condition": {
-        "jmes": "context.device.id == `3`",
+        "jmes": "context.device.hostname == 'netbox.netcreed.ch'",
         "type": "jmes"
       },
       "parameters": {
@@ -26,7 +26,7 @@
       "label": "global_vlans",
       "runOn": "global",
       "parameters": {
-        "input": "{{ to_string(vlans.results.\"3\".data) }}"
+        "input": "{{ to_string(values(vlans.results)[0].data) }}"
       },
       "functionBlock": "fb.base.neops.io/global_execute_restricted_python:0.1.0",
       "rawParameters": {
@@ -38,7 +38,7 @@
       "label": "network_device_apply_configuration",
       "runOn": "device",
       "condition": {
-        "jmes": "context.device.id != `3`",
+        "jmes": "context.device.hostname != 'netbox.netcreed.ch' && contains(['ios', 'procurve'], context.device.platform.shortName)",
         "type": "jmes"
       },
       "parameters": {
@@ -56,7 +56,7 @@
   "acquire": [
     {
       "type": "elastic",
-      "query": "id: (1 OR 2 OR 3)",
+      "query": "hostname: \"netbox.netcreed.ch\" OR id: (1 OR 2)",
       "entity": "device",
       "assertNotEmpty": true
     }
@@ -65,7 +65,7 @@
   "parameters": {},
   "seedEntity": "group",
   "majorVersion": 1,
-  "minorVersion": 0,
+  "minorVersion": 2,
   "patchVersion": 0,
   "rawParameters": {}
 }
