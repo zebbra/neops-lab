@@ -85,6 +85,7 @@ services:
     <<: *workflow-engine-image
     environment:
       - DEBUG=True
+      - NODE_ENV=development
       - NEOPS_CMS_URL=http://cms:8000/graphql
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=unsafe
