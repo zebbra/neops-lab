@@ -98,7 +98,14 @@ local-env-init: lab-jwt
 	# `docker compose up -d` needs no such care — the compose files set
 	# `pull_policy: missing`, so a local image already present is used as-is.
 	docker compose pull --policy always --ignore-pull-failures
-	docker compose up -d
+	# Only the CMS (and the datastores it depends on), not the whole stack: the
+	# engine reads NEOPS_CMS_TOKEN from cms_api_key.env, which is still the empty
+	# file touched above, so it would boot on the image's built-in `unsafe`
+	# placeholder — which a current engine refuses outright ("NEOPS_CMS_TOKEN is
+	# still the built-in placeholder"). Its exit fails the whole `up`, before the
+	# block below ever gets to mint the key it was waiting for. The key comes
+	# from the CMS, so the CMS is all that has to be running to mint it.
+	docker compose up -d --wait cms
 	# Mint the engine's CMS API key for the `neops` user, resolving the pk by
 	# name (a re-init over a preserved volume can hold a different pk).
 	# generate_api_key prints the key on the last non-empty line (current CMS
@@ -116,8 +123,11 @@ local-env-init: lab-jwt
 	# for up to 10 min ("scope not available when first used"). Granting first
 	# means the first neops query caches the grant.
 	./apply_cms_config
-	# env_file changes don't trigger recreate on their own; force it so the engine picks up the new token
+	# Now that cms_api_key.env holds a real key, bring up the rest of the stack.
+	# env_file changes don't trigger recreate on their own, so a re-init over an
+	# engine left from a previous run needs the force to pick up the new token.
 	docker compose up -d --force-recreate workflow_engine
+	docker compose up -d
 
 local-env-up: lab-jwt
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make local-env-init' first."; exit 1; fi
