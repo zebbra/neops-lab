@@ -78,3 +78,7 @@ In the Makefile (`$(CONTAINERLAB)`) and in every doc. The launcher runs `ghcr.io
 ## 15. Host scripts import under Python 3.9
 
 A stock macOS ships `/usr/bin/python3` 3.9, where a PEP 604 `X | None` annotation is evaluated at import time and raises. Every host script therefore starts with `from __future__ import annotations`. `make py39-check` (in `make check` and CI) proves it at runtime; ruff at `target-version = "py312"` will **not** warn you.
+
+## 16. The monitor's runtime config reaches it through a bind mount
+
+`monitor/config.js` is mounted over `/app/rest/monitor-app/static/config.js` on the `workflow-engine-client` service, and that mount is the only path by which `window.__NEOPS_CONFIG__.webclientOrigin` reaches the monitor in this lab. The image's own `docker-entrypoint.d/40-runtime-config.sh` regenerates that file from `WEBCLIENT_ORIGIN`, and it runs under nginx; this service runs the engine image with `npm install && npm run dev`, where the entrypoint plays no part. **Setting `WEBCLIENT_ORIGIN` on the service has no effect here — edit `monitor/config.js`.** The mount is cross-checked by `tests/test_compose_authz.py`.

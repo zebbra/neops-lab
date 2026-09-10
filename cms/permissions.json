@@ -1,0 +1,14 @@
+{
+  "roles": {
+    "lab-admin": "admin",
+    "workflow-author": "author",
+    "workflow-operator": "operator",
+    "workflow-admin": "admin"
+  },
+  "users": {
+    "neops": ["lab-admin"],
+    "author": ["workflow-author"],
+    "operator": ["workflow-operator"],
+    "admin": ["workflow-admin"]
+  }
+}

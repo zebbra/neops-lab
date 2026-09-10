@@ -46,6 +46,7 @@ extend-include = [
   "gen_clab_topology",
   "gen_device_configs",
   "gen_host_oidc",
+  "lab_token",
   "run_workflow",
   "wait_devices",
   "wait_ready",
@@ -112,6 +113,7 @@ convention = "google"
   "ARG001",
 ]
 # Host scripts open URLs built from local CLI arguments, not user input.
+"lab_token" = ["S310"]
 "run_workflow" = ["S310"]
 "tools/check_subnets.py" = [
   "S603", "S607", # runs the local docker CLI with fixed arguments
@@ -132,6 +134,7 @@ project-includes = [
   "gen_clab_topology",
   "gen_device_configs",
   "gen_host_oidc",
+  "lab_token",
   "run_workflow",
   "wait_devices",
   "wait_ready",

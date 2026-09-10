@@ -15,6 +15,10 @@ cms/jwt/
 cms_api_key.env
 # Host-mode OIDC config rendered by `./gen_host_oidc` from LAB_HOST/LAB_SCHEME.
 cms/oidc-config.host.json
+# Host-mode monitor runtime config (same generator).
+monitor/config.host.js
+# Host-mode monitor runtime config (same generator).
+monitor/config.host.js
 
 # -----------------------------------------------------------------------------
 # Python bytecode and caches

@@ -71,6 +71,9 @@ services:
       - traefik.http.services.cms.loadbalancer.server.port=8000
 
   workflow_engine:
+    environment:
+      # Browser origin is the single LAB_HOST (web + monitor share it via path prefixes).
+      - NEOPS_CORS_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST}
     ports: !override
       - "127.0.0.1:3030:3030"
     labels:
@@ -86,12 +89,12 @@ services:
   workflow-engine-client:
     # Serve under /monitor so Traefik can PathPrefix-match without stripping;
     # the Vite base path must match the public URL prefix.
-    # PUBLIC_ENGINE_URL / VITE_ENGINE_URL are passed when the image supports
-    # them; otherwise open Settings and set the engine to
-    # ${LAB_SCHEME}://${LAB_HOST}/engine after first load.
     environment:
+      NODE_ENV: development
       PUBLIC_ENGINE_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/engine
       VITE_ENGINE_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/engine
+    volumes: !override
+      - ./monitor/config.host.js:/app/rest/monitor-app/static/config.js:ro
     ports: !reset []
     command: >
       sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --base /monitor/ --allowedHosts ${LAB_HOST}"
