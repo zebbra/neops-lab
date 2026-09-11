@@ -2,6 +2,10 @@
 #
 # Adds :443, HTTP→HTTPS redirect, ACME resolver registration, and swaps the
 # file-provider config to traefik/dynamic.https.yml (self-signed TLS).
+#
+# Also publishes :8443 (entrypoint `monitor`) so the web client's monitor
+# iframe can load a **different origin** over TLS — required for postMessage
+# auth and to avoid mixed-content blocking of http://HOST:3031.
 
 services:
   traefik:
@@ -12,6 +16,7 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --entrypoints.websecure.address=:443
+      - --entrypoints.monitor.address=:8443
       - --api.dashboard=true
       - --api.basePath=/traefik
       - --log.level=INFO
@@ -22,9 +27,22 @@ services:
     ports: !override
       - "80:80"
       - "443:443"
+      - "8443:8443"
     volumes: !override
       - ./traefik/dynamic.https.yml:/etc/traefik/dynamic.yml:ro
       - traefik_acme:/acme
+
+  workflow_engine:
+    environment: !override
+      - NEOPS_CORS_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:3031,https://${LAB_HOST}:8443
+
+  web_client:
+    environment: !override
+      FRONTEND_GRAPHQL_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/graphql
+      FRONTEND_FILEAPI_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/
+      FRONTEND_DEVMODE: "true"
+      # TLS cross-origin iframe (not same-origin /monitor on :443).
+      FRONTEND_WORKFLOW_MANAGER_URL: https://${LAB_HOST}:8443/monitor/
 
 volumes:
   traefik_acme:

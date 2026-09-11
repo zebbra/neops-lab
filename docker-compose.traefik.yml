@@ -13,12 +13,13 @@
 #   /cms      -> cms-proxy (nginx) -> cms:8000  (rewrites redirects under /cms)
 #   /djstatic -> cms:8000  (Django STATIC_URL; root-absolute in admin HTML)
 #   /engine   -> workflow_engine:3030
-#   /monitor  -> workflow-engine-client:5173
+#   /monitor  -> workflow-engine-client:5173  (browse-only; same origin as /)
 #   /         -> web_client:8080
 #
-# App ports are also published on the host (same numbers as laptop mode) so
-# you can bypass Traefik while debugging redirects / Vite. Prefer
-# make host-direct-* when you want that as the primary access path.
+# Monitor iframe auth (postMessage) requires a **different origin** than the
+# web client. Same-host `/monitor` is rejected by design. The iframe URL is
+# therefore the published monitor port (:3031), not the Traefik path. HTTPS
+# mode adds :8443 (TLS) so the iframe is not mixed-content blocked.
 #
 # Use `make host-ps` / `make host-logs` (bare docker compose has no traefik).
 
@@ -78,6 +79,7 @@ services:
 
   workflow_engine:
     environment:
+      # Include the monitor iframe origin (:3031). HTTPS overlay adds :8443.
       - NEOPS_CORS_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:3031
     ports: !override
       - "3030:3030"
@@ -92,7 +94,7 @@ services:
     volumes: !override
       - ./monitor/config.host.js:/app/rest/monitor-app/static/config.js:ro
     ports: !override
-      # Direct: http://HOST:3031/monitor/  (Vite --base /monitor/)
+      # Cross-origin iframe target for HTTP host mode (Vite --base /monitor/).
       - "3031:5173"
     command: >
       sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --base /monitor/"
@@ -102,6 +104,8 @@ services:
       FRONTEND_GRAPHQL_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/graphql
       FRONTEND_FILEAPI_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/
       FRONTEND_DEVMODE: "true"
-      FRONTEND_WORKFLOW_MANAGER_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/monitor/
+      # Must differ in origin from the web client (scheme/host/port). Same-host
+      # Traefik /monitor hides the menu and disables the token broker.
+      FRONTEND_WORKFLOW_MANAGER_URL: http://${LAB_HOST}:3031/monitor/
     ports: !override
       - "8080:8080"

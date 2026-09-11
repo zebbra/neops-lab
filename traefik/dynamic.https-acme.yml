@@ -57,6 +57,16 @@ http:
       tls:
         certResolver: letsencrypt
 
+    # Separate origin for iframe auth (web client on :443 → monitor on :8443).
+    monitor-iframe:
+      rule: PathPrefix(`/monitor`)
+      entryPoints:
+        - monitor
+      priority: 100
+      service: monitor
+      tls:
+        certResolver: letsencrypt
+
     web:
       rule: PathPrefix(`/`)
       entryPoints:

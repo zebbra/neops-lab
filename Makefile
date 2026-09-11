@@ -208,7 +208,12 @@ host-print-urls:
 	host=$${LAB_HOST:-$$(sed -n 's/^LAB_HOST=//p' .env 2>/dev/null | tr -d '\r' | head -1)}; \
 	origin="$$scheme://$$host"; \
 	echo "  Web client:   $$origin/"; \
-	echo "  Monitor:      $$origin/monitor/"; \
+	echo "  Monitor:      $$origin/monitor/  (browse; iframe auth uses other origin)"; \
+	if [ "$$scheme" = https ]; then \
+	  echo "  Monitor iframe: https://$$host:8443/monitor/  (open web client at $$origin/ — not :8080)"; \
+	else \
+	  echo "  Monitor iframe: http://$$host:3031/monitor/  (open web client at $$origin/ — not :8080)"; \
+	fi; \
 	echo "  Engine API:   $$origin/engine/"; \
 	echo "  CMS admin:    $$origin/cms/admin/ (neops / neops)"; \
 	echo "  CMS GraphQL:  $$origin/cms/graphql"; \

@@ -28,19 +28,33 @@ reject API 1.24 do not break host mode.
 | `/cms` | `cms-proxy` → CMS `:8000` | nginx strips `/cms` toward Django and rewrites `Location` / admin HTML back under `/cms` (CMS ignores `FORCE_SCRIPT_NAME` env) |
 | `/djstatic` | CMS `:8000` | Django `STATIC_URL`; root-absolute in admin HTML — routed so it does not hit the web client |
 | `/engine` | workflow engine `:3030` | StripPrefix |
-| `/monitor` | monitor app `:5173` | No strip; Vite `--base /monitor/` |
+| `/monitor` | monitor app `:5173` | Browse-only on the web-client origin; **iframe auth uses `:3031` (http) or `:8443` (https)** — same-origin postMessage is rejected by design |
 | `/traefik` | Traefik dashboard | `--api.basePath=/traefik`; open `/traefik/dashboard/` (trailing slash) |
 
 Static assets of the CMS (`/cms/djstatic/…` or `/djstatic/…`) and of the web client (`/assets/…`) do not collide. The file API is the CMS root, so `FRONTEND_FILEAPI_ENDPOINT` is `${LAB_SCHEME}://${LAB_HOST}/cms/`.
 
 OIDC noop endpoints (`/auth`, `/token`, `/jwks`, …) stay on the web client origin — they are not under `/cms`.
 
-**Direct ports** (same numbers as laptop mode) stay published for debugging — Traefik is still the intended public path:
+**Direct ports** (same numbers as laptop mode) stay published for debugging — Traefik is still the intended public path for the web client:
 
-- `:8080` → web client
+- `:8080` → web client (OIDC/monitor relay expect the Traefik origin, not this port)
 - `:8001` → CMS (no `/cms` prefix; admin at `/admin/`, static at `/djstatic/`)
 - `:3030` → engine
-- `:3031` → monitor (**under** `/monitor/` because Vite `--base /monitor/`)
+- `:3031` → monitor (`/monitor/`); **HTTP host mode** uses this as the iframe origin
+- `:8443` → monitor via Traefik TLS; **HTTPS host mode** iframe origin (avoids mixed content)
+
+### Monitor authentication (iframe)
+
+The monitor has no login of its own. The web client embeds it and relays the
+access token over `postMessage`. That only works when the iframe URL is a
+**different origin** (scheme/host/port) than the web client — path prefixes on
+the same host do not count. Lab config therefore sets
+`FRONTEND_WORKFLOW_MANAGER_URL` to `:3031` or `:8443`, while
+`monitor/config.host.js` keeps `webclientOrigin` at `${LAB_SCHEME}://${LAB_HOST}`.
+
+Open the web client at `https://LAB_HOST/` (or `http://…` in HTTP mode), not
+`:8080`, or the relay origin check fails. There is no alternate auth path
+without changing the web client / monitor apps.
 
 Worker and bootstrap still talk to `http://workflow_engine:3030` on the compose network.
 
@@ -154,3 +168,6 @@ The CMS Elasticsearch data volume is named `elasticsearch_lab` (not `elasticsear
 | ACME challenge fails | Host not publicly reachable on :80, or DNS not pointing here, or `LAB_SCHEME=http` |
 | `apply_cms_config` / `wait_ready` fail | `:8001` / `:3030` not published — confirm the traefik overlay is in `COMPOSE_FILE` |
 | Prefer no path prefixes | `make host-env-down` then [host-direct](55-host-direct.md) |
+| Monitor link missing on Traefik URL | Same-origin `/monitor` — pull so iframe URL is `:3031`/`:8443`; recreate `web_client` |
+| Monitor iframe loads but stays logged out | Open web client at `${LAB_SCHEME}://${LAB_HOST}/`, not `:8080`; `webclientOrigin` must match that origin |
+| Firewall | Open **8443** (HTTPS iframe) in addition to 80/443 |

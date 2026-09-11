@@ -51,6 +51,19 @@ def test_host_direct_overlay_publishes_ports():
     assert "docker-compose.host-direct.yml" in makefile
 
 
+def test_host_monitor_iframe_is_cross_origin():
+    """postMessage auth rejects same-origin /monitor under Traefik."""
+    http = (LAB_DIR / "docker-compose.traefik.yml").read_text()
+    assert "FRONTEND_WORKFLOW_MANAGER_URL: http://${LAB_HOST}:3031/monitor/" in http
+    https = (LAB_DIR / "docker-compose.traefik-https.yml").read_text()
+    assert "FRONTEND_WORKFLOW_MANAGER_URL: https://${LAB_HOST}:8443/monitor/" in https
+    assert "8443:8443" in https
+    assert "--entrypoints.monitor.address=:8443" in https
+    dyn = (LAB_DIR / "traefik" / "dynamic.https.yml").read_text()
+    assert "monitor-iframe:" in dyn
+    assert "- monitor" in dyn
+
+
 def test_host_traefik_uses_api_base_path():
     """Dashboard JS calls /traefik/api — needs api.basePath, not StripPrefix alone."""
     for path in (
