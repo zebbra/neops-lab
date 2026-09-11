@@ -238,8 +238,13 @@ host-env-up: lab-jwt host-oidc
 	docker compose pull --policy always --ignore-pull-failures
 	# Always recreate Traefik + cms-proxy so bind-mounted dynamic.yml / cms-proxy.conf
 	# are not left pointing at a stale route (e.g. cms:8000 instead of cms-proxy).
-	docker compose up -d --force-recreate traefik cms-proxy
+	# Recreate the monitor too — a licensed engine image override used to leave it exited.
+	docker compose up -d --force-recreate traefik cms-proxy workflow-engine-client
 	docker compose up -d
+	@docker compose ps --status running --services 2>/dev/null | grep -qx workflow-engine-client \
+		|| { echo "error: workflow-engine-client is not running (monitor)."; \
+		     echo "hint: licensed NEOPS_WORKFLOW_ENGINE_IMAGE lacks rest/monitor-app — use preview for the monitor (default NEOPS_MONITOR_IMAGE)."; \
+		     docker compose logs --no-log-prefix --tail 40 workflow-engine-client; exit 1; }
 	@echo ""
 	@$(MAKE) --no-print-directory host-print-urls
 

@@ -49,3 +49,30 @@ def test_host_direct_overlay_publishes_ports():
     makefile = (LAB_DIR / "Makefile").read_text()
     assert "host-direct-env-init" in makefile
     assert "docker-compose.host-direct.yml" in makefile
+
+
+def test_host_traefik_uses_api_base_path():
+    """Dashboard JS calls /traefik/api — needs api.basePath, not StripPrefix alone."""
+    for path in (
+        "docker-compose.traefik.yml",
+        "docker-compose.traefik-https.yml",
+    ):
+        text = (LAB_DIR / path).read_text()
+        assert "--api.basePath=/traefik" in text, path
+    for name in ("dynamic.http.yml", "dynamic.https.yml", "dynamic.https-acme.yml"):
+        text = (LAB_DIR / "traefik" / name).read_text()
+        assert "dashboard-strip" not in text, name
+        assert "PathPrefix(`/traefik`)" in text, name
+
+
+def test_local_lab_up_mints_the_jwt_keypair_first():
+    """The engine service bind-mounts `cms/jwt/public.pem` as a file. Docker
+    creates a directory under that name when the file is absent, which the
+    engine cannot read as a key and which `make lab-jwt` cannot write over.
+    """
+    compose = (LAB_DIR / "docker-compose.yml").read_text()
+    assert "./cms/jwt/public.pem:" in compose, "the engine service mounts no key file"
+    makefile = (LAB_DIR / "Makefile").read_text()
+    match = re.search(r"^local-lab-up:(.*)$", makefile, re.MULTILINE)
+    assert match, "the Makefile declares no local-lab-up target"
+    assert "lab-jwt" in match.group(1).split(), "local-lab-up starts the stack without lab-jwt"

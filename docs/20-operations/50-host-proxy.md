@@ -29,7 +29,7 @@ reject API 1.24 do not break host mode.
 | `/djstatic` | CMS `:8000` | Django `STATIC_URL`; root-absolute in admin HTML — routed so it does not hit the web client |
 | `/engine` | workflow engine `:3030` | StripPrefix |
 | `/monitor` | monitor app `:5173` | No strip; Vite `--base /monitor/` |
-| `/traefik` | Traefik dashboard | StripPrefix → `api@internal`; open `/traefik/dashboard/` |
+| `/traefik` | Traefik dashboard | `--api.basePath=/traefik`; open `/traefik/dashboard/` (trailing slash) |
 
 Static assets of the CMS (`/cms/djstatic/…` or `/djstatic/…`) and of the web client (`/assets/…`) do not collide. The file API is the CMS root, so `FRONTEND_FILEAPI_ENDPOINT` is `${LAB_SCHEME}://${LAB_HOST}/cms/`.
 
@@ -144,7 +144,8 @@ The CMS Elasticsearch data volume is named `elasticsearch_lab` (not `elasticsear
 | `docker compose logs traefik` → `no such service` | Bare compose only sees `docker-compose.yml`. Use `make host-logs` / `make host-ps`, or `docker logs neops-lab-traefik-1` |
 | CMS admin redirect lands on web client (`/admin/login/`) | Stale Traefik without `cms-proxy` — pull and `make host-env-up`; redirects must become `/cms/admin/login/` |
 | `/djstatic/…` → 404 on web client | Stale dynamic.yml without `djstatic` router — pull and recreate Traefik; or open `http://HOST:8001/djstatic/…` directly |
-| `/monitor/` → 502 | Vite still on `npm install` — `make host-logs SERVICE=workflow-engine-client`; wait until it listens on `:5173` |
+| `/monitor/` → 502 | `workflow-engine-client` not running — often licensed engine image without `rest/monitor-app`. Defaults use preview for the monitor; `make host-logs SERVICE=workflow-engine-client`. Vite `npm install` can also take a few minutes. |
+| Traefik dashboard JSON / doctype error | Stale Traefik without `--api.basePath=/traefik` — pull and `make host-env-up`; open `/traefik/dashboard/` |
 | Traefik 404 on every path | Stale container — `make host-env-up` after pulling; confirm file provider mount (`./traefik/dynamic.*.yml`) |
 | `client version 1.24 is too old` | Old setup used the Docker provider. Current compose uses the **file** provider (no socket). Pull latest, recreate Traefik. |
 | Browser jumps to HTTPS / 404 on HTTPS | `LAB_SCHEME=http` but old Traefik still has the HTTPS overlay — recreate Traefik; clear HSTS if the browser cached HTTPS |

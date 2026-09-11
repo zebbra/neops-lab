@@ -56,7 +56,8 @@ A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `re
 | Service | Default image | Override with |
 |---|---|---|
 | `cms` | `quay.io/zebbra/neops-cms-free:develop` | `NEOPS_CMS_IMAGE` |
-| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image — e.g. the full licensed `quay.io/zebbra/neops-workflow-engine:develop`) |
+| `workflow_engine` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (e.g. licensed `quay.io/zebbra/neops-workflow-engine:develop`) |
+| `workflow-engine-client` (monitor) | same preview default | `NEOPS_MONITOR_IMAGE` — **defaults to preview even when the engine image is the licensed one** (that image often has no `rest/monitor-app`) |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` ⚠️ **unusable — build locally** | `NEOPS_WORKER_SDK_IMAGE` |
 

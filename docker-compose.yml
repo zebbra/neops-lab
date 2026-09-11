@@ -121,6 +121,13 @@ services:
 
   workflow-engine-client:
     <<: *workflow-engine-image
+    # The monitor app (`rest/monitor-app`) ships in the **developer preview**
+    # image. The licensed `neops-workflow-engine` image often lacks that tree,
+    # so overriding NEOPS_WORKFLOW_ENGINE_IMAGE alone used to leave this
+    # service exited and `/monitor` as Traefik 502. Pin the monitor separately
+    # (defaults to preview); set NEOPS_MONITOR_IMAGE to share a custom build.
+    image: ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}}
+    pull_policy: ${NEOPS_MONITOR_PULL_POLICY:-${NEOPS_WORKFLOW_ENGINE_PULL_POLICY:-missing}}
     environment:
       # `npm run dev` needs vite, @sveltejs/kit and svelte, which are
       # devDependencies of rest/monitor-app; `npm install` omits

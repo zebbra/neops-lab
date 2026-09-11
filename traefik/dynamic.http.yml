@@ -3,6 +3,7 @@
 #
 # /cms goes to cms-proxy (nginx), which strips the prefix toward Django and
 # rewrites redirects/HTML back under /cms — do not StripPrefix here.
+# Traefik dashboard uses static --api.basePath=/traefik (no StripPrefix).
 
 http:
   middlewares:
@@ -10,10 +11,6 @@ http:
       stripPrefix:
         prefixes:
           - /engine
-    dashboard-strip:
-      stripPrefix:
-        prefixes:
-          - /traefik
 
   routers:
     dashboard:
@@ -21,8 +18,6 @@ http:
       entryPoints:
         - web
       priority: 200
-      middlewares:
-        - dashboard-strip
       service: api@internal
 
     cms:

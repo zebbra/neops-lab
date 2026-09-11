@@ -31,6 +31,9 @@ services:
       - --providers.file.watch=true
       - --entrypoints.web.address=:80
       - --api.dashboard=true
+      # Dashboard JS fetches /traefik/api/… (not bare /api). Without basePath,
+      # those calls hit the web-client catch-all and return HTML → JSON errors.
+      - --api.basePath=/traefik
       - --log.level=INFO
       - --accesslog=true
     ports:

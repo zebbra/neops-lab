@@ -1,4 +1,5 @@
 # Like dynamic.https.yml but routers use the letsencrypt certResolver.
+# Dashboard: static --api.basePath=/traefik (no StripPrefix).
 
 http:
   middlewares:
@@ -6,10 +7,6 @@ http:
       stripPrefix:
         prefixes:
           - /engine
-    dashboard-strip:
-      stripPrefix:
-        prefixes:
-          - /traefik
 
   routers:
     dashboard:
@@ -17,8 +14,6 @@ http:
       entryPoints:
         - websecure
       priority: 200
-      middlewares:
-        - dashboard-strip
       service: api@internal
       tls:
         certResolver: letsencrypt

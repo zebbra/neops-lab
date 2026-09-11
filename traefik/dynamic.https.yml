@@ -1,5 +1,6 @@
 # Traefik dynamic config for LAB_SCHEME=https (entrypoint websecure + TLS).
 # /cms → cms-proxy (see dynamic.http.yml). Default self-signed TLS.
+# Dashboard: static --api.basePath=/traefik (no StripPrefix).
 
 http:
   middlewares:
@@ -7,10 +8,6 @@ http:
       stripPrefix:
         prefixes:
           - /engine
-    dashboard-strip:
-      stripPrefix:
-        prefixes:
-          - /traefik
 
   routers:
     dashboard:
@@ -18,8 +15,6 @@ http:
       entryPoints:
         - websecure
       priority: 200
-      middlewares:
-        - dashboard-strip
       service: api@internal
       tls: {}
 
