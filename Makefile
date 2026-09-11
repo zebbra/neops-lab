@@ -193,6 +193,10 @@ host-ps:
 host-logs:
 	docker compose logs -f $(or $(SERVICE),traefik)
 
+# Smoke-test /cms admin redirect keeps the /cms prefix (needs host stack up).
+host-check-cms:
+	@./host_check_cms
+
 host-compose:
 	@test -n "$(CMD)" || { echo "usage: make host-compose CMD='logs -f traefik'"; exit 1; }; \
 	docker compose $(CMD)
@@ -458,6 +462,6 @@ local-lab-logs:
 .PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt lab-env clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config lab-grant \
-	host-oidc host-print-urls host-ps host-logs host-compose \
+	host-oidc host-print-urls host-ps host-logs host-compose host-check-cms \
 	host-env-init host-env-up host-env-down host-env-prune \
 	host-lab-up host-lab-down host-lab-discover host-lab-logs

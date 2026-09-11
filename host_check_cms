@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Smoke-check host-mode CMS path prefix (Traefik → cms-proxy → Location rewrite).
+# Requires the host stack to be up (make host-env-up). Stdlib curl only.
+
+set -euo pipefail
+
+scheme=${LAB_SCHEME:-$(sed -n 's/^LAB_SCHEME=//p' .env 2>/dev/null | tr -d '\r' | head -1)}
+scheme=${scheme:-http}
+host=${LAB_HOST:-$(sed -n 's/^LAB_HOST=//p' .env 2>/dev/null | tr -d '\r' | head -1)}
+host=${host:-127.0.0.1}
+
+if [ "$scheme" = https ]; then
+  curl_base=(curl -skI)
+  origin="https://${host}"
+else
+  curl_base=(curl -sI)
+  origin="http://${host}"
+fi
+
+url="${origin}/cms/admin/"
+echo "==> GET $url"
+headers=$("${curl_base[@]}" "$url")
+echo "$headers" | head -20
+
+loc=$(printf '%s\n' "$headers" | tr -d '\r' | sed -n 's/^[Ll]ocation: //p' | head -1)
+case "$loc" in
+  /cms/admin/login*|*/cms/admin/login*)
+    echo "OK: Location keeps /cms prefix ($loc)"
+    ;;
+  "")
+    echo "error: no Location header (got HTTP $(printf '%s\n' "$headers" | head -1))" >&2
+    exit 1
+    ;;
+  *)
+    echo "error: Location missing /cms prefix: $loc" >&2
+    echo "hint: is cms-proxy running? make host-ps | grep cms-proxy" >&2
+    echo "hint: does Traefik mount dynamic.*.yml with url: http://cms-proxy:80?" >&2
+    exit 1
+    ;;
+esac
