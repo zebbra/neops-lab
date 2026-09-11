@@ -87,6 +87,8 @@ services:
       NODE_ENV: development
       PUBLIC_ENGINE_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/engine
       VITE_ENGINE_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/engine
+      # Vite host check (no --allowedHosts CLI on older Vite in the image).
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${LAB_HOST}
     volumes: !override
       - ./monitor/config.host.js:/app/rest/monitor-app/static/config.js:ro
     ports: !override
