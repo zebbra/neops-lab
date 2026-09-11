@@ -82,3 +82,5 @@ Thumbs.db
 site/
 
 docs/assets/document_dates/
+
+.playwright-mcp
