@@ -210,15 +210,15 @@ host-print-urls:
 	echo "  Web client:   $$origin/"; \
 	echo "  Monitor:      $$origin/monitor/  (browse; iframe auth uses other origin)"; \
 	if [ "$$scheme" = https ]; then \
-	  echo "  Monitor iframe: https://$$host:8443/monitor/  (open web client at $$origin/ — not :8080)"; \
+	  echo "  Monitor iframe: https://$$host:8443/  (accept TLS once in the browser; open web client at $$origin/)"; \
 	else \
-	  echo "  Monitor iframe: http://$$host:3031/monitor/  (open web client at $$origin/ — not :8080)"; \
+	  echo "  Monitor iframe: http://$$host:3031/  (open web client at $$origin/ — not :8080)"; \
 	fi; \
 	echo "  Engine API:   $$origin/engine/"; \
 	echo "  CMS admin:    $$origin/cms/admin/ (neops / neops)"; \
 	echo "  CMS GraphQL:  $$origin/cms/graphql"; \
 	echo "  Traefik UI:   $$origin/traefik/dashboard/"; \
-	echo "  (direct)      http://$$host:8080  :8001  :3030  :3031/monitor/"; \
+	echo "  (direct)      http://$$host:8080  :8001  :3030  :3031/"; \
 	echo "  compose:      make host-ps / make host-logs   (not bare docker compose)"
 
 host-env-init: lab-jwt host-oidc

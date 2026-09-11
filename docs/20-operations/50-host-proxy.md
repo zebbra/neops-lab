@@ -28,7 +28,7 @@ reject API 1.24 do not break host mode.
 | `/cms` | `cms-proxy` → CMS `:8000` | nginx strips `/cms` toward Django and rewrites `Location` / admin HTML back under `/cms` (CMS ignores `FORCE_SCRIPT_NAME` env) |
 | `/djstatic` | CMS `:8000` | Django `STATIC_URL`; root-absolute in admin HTML — routed so it does not hit the web client |
 | `/engine` | workflow engine `:3030` | StripPrefix |
-| `/monitor` | monitor app `:5173` | Browse-only on the web-client origin; **iframe auth uses `:3031` (http) or `:8443` (https)** — same-origin postMessage is rejected by design |
+| `/monitor` | monitor app `:5173` | StripPrefix; Vite at **site root**. Iframe auth uses `:3031` (http) or `:8443` (https) — same-origin postMessage is rejected by design |
 | `/traefik` | Traefik dashboard | `--api.basePath=/traefik`; open `/traefik/dashboard/` (trailing slash) |
 
 Static assets of the CMS (`/cms/djstatic/…` or `/djstatic/…`) and of the web client (`/assets/…`) do not collide. The file API is the CMS root, so `FRONTEND_FILEAPI_ENDPOINT` is `${LAB_SCHEME}://${LAB_HOST}/cms/`.
@@ -40,8 +40,8 @@ OIDC noop endpoints (`/auth`, `/token`, `/jwks`, …) stay on the web client ori
 - `:8080` → web client (OIDC/monitor relay expect the Traefik origin, not this port)
 - `:8001` → CMS (no `/cms` prefix; admin at `/admin/`, static at `/djstatic/`)
 - `:3030` → engine
-- `:3031` → monitor (`/monitor/`); **HTTP host mode** uses this as the iframe origin
-- `:8443` → monitor via Traefik TLS; **HTTPS host mode** iframe origin (avoids mixed content)
+- `:3031` → monitor at site root; **HTTP host mode** iframe origin
+- `:8443` → monitor via Traefik TLS (catch-all); **HTTPS host mode** iframe origin
 
 ### Monitor authentication (iframe)
 
@@ -49,12 +49,15 @@ The monitor has no login of its own. The web client embeds it and relays the
 access token over `postMessage`. That only works when the iframe URL is a
 **different origin** (scheme/host/port) than the web client — path prefixes on
 the same host do not count. Lab config therefore sets
-`FRONTEND_WORKFLOW_MANAGER_URL` to `:3031` or `:8443`, while
-`monitor/config.host.js` keeps `webclientOrigin` at `${LAB_SCHEME}://${LAB_HOST}`.
+`FRONTEND_WORKFLOW_MANAGER_URL` to `http://LAB_HOST:3031/` or
+`https://LAB_HOST:8443/`, while `monitor/config.host.js` keeps
+`webclientOrigin` at `${LAB_SCHEME}://${LAB_HOST}`.
 
 Open the web client at `https://LAB_HOST/` (or `http://…` in HTTP mode), not
-`:8080`, or the relay origin check fails. There is no alternate auth path
-without changing the web client / monitor apps.
+`:8080`. With self-signed TLS, visit `https://LAB_HOST:8443/` once and accept
+the certificate, then reload the web client — otherwise the iframe stays blank
+or the relay never starts. Opening `:8443/dashboard` in a top-level tab shows
+“Not signed in” by design (no parent to relay from).
 
 Worker and bootstrap still talk to `http://workflow_engine:3030` on the compose network.
 

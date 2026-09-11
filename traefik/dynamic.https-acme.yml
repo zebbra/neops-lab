@@ -1,5 +1,4 @@
 # Like dynamic.https.yml but routers use the letsencrypt certResolver.
-# Dashboard: static --api.basePath=/traefik (no StripPrefix).
 
 http:
   middlewares:
@@ -7,6 +6,10 @@ http:
       stripPrefix:
         prefixes:
           - /engine
+    monitor-strip:
+      stripPrefix:
+        prefixes:
+          - /monitor
 
   routers:
     dashboard:
@@ -53,16 +56,17 @@ http:
       entryPoints:
         - websecure
       priority: 100
+      middlewares:
+        - monitor-strip
       service: monitor
       tls:
         certResolver: letsencrypt
 
-    # Separate origin for iframe auth (web client on :443 → monitor on :8443).
     monitor-iframe:
-      rule: PathPrefix(`/monitor`)
+      rule: PathPrefix(`/`)
       entryPoints:
         - monitor
-      priority: 100
+      priority: 1
       service: monitor
       tls:
         certResolver: letsencrypt

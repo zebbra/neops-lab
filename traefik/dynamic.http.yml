@@ -11,6 +11,10 @@ http:
       stripPrefix:
         prefixes:
           - /engine
+    monitor-strip:
+      stripPrefix:
+        prefixes:
+          - /monitor
 
   routers:
     dashboard:
@@ -49,6 +53,8 @@ http:
       entryPoints:
         - web
       priority: 100
+      middlewares:
+        - monitor-strip
       service: monitor
 
     web:

@@ -94,10 +94,12 @@ services:
     volumes: !override
       - ./monitor/config.host.js:/app/rest/monitor-app/static/config.js:ro
     ports: !override
-      # Cross-origin iframe target for HTTP host mode (Vite --base /monitor/).
+      # Cross-origin iframe target (HTTP). Root base — not /monitor/.
       - "3031:5173"
+    # No --base /monitor/: the iframe origin is :3031 / :8443 at site root so
+    # in-app links like /dashboard work. Traefik :80/:443 /monitor uses StripPrefix.
     command: >
-      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --base /monitor/"
+      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
 
   web_client:
     environment:
@@ -106,6 +108,6 @@ services:
       FRONTEND_DEVMODE: "true"
       # Must differ in origin from the web client (scheme/host/port). Same-host
       # Traefik /monitor hides the menu and disables the token broker.
-      FRONTEND_WORKFLOW_MANAGER_URL: http://${LAB_HOST}:3031/monitor/
+      FRONTEND_WORKFLOW_MANAGER_URL: http://${LAB_HOST}:3031/
     ports: !override
       - "8080:8080"

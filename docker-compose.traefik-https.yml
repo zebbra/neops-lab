@@ -43,8 +43,8 @@ services:
       FRONTEND_GRAPHQL_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/graphql
       FRONTEND_FILEAPI_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/
       FRONTEND_DEVMODE: "true"
-      # TLS cross-origin iframe (not same-origin /monitor on :443).
-      FRONTEND_WORKFLOW_MANAGER_URL: https://${LAB_HOST}:8443/monitor/
+      # TLS cross-origin iframe at site root (Vite has no --base /monitor/).
+      FRONTEND_WORKFLOW_MANAGER_URL: https://${LAB_HOST}:8443/
 
 volumes:
   traefik_acme:

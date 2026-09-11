@@ -1,6 +1,9 @@
 # Traefik dynamic config for LAB_SCHEME=https (entrypoint websecure + TLS).
 # /cms → cms-proxy (see dynamic.http.yml). Default self-signed TLS.
 # Dashboard: static --api.basePath=/traefik (no StripPrefix).
+#
+# Monitor runs Vite at site root (no --base). :443 /monitor strips the prefix;
+# :8443 is monitor-only (catch-all) for the cross-origin iframe.
 
 http:
   middlewares:
@@ -8,6 +11,10 @@ http:
       stripPrefix:
         prefixes:
           - /engine
+    monitor-strip:
+      stripPrefix:
+        prefixes:
+          - /monitor
 
   routers:
     dashboard:
@@ -50,15 +57,17 @@ http:
       entryPoints:
         - websecure
       priority: 100
+      middlewares:
+        - monitor-strip
       service: monitor
       tls: {}
 
-    # Separate origin for iframe auth (web client on :443 → monitor on :8443).
+    # Entire :8443 is the monitor origin used by the web-client iframe.
     monitor-iframe:
-      rule: PathPrefix(`/monitor`)
+      rule: PathPrefix(`/`)
       entryPoints:
         - monitor
-      priority: 100
+      priority: 1
       service: monitor
       tls: {}
 
