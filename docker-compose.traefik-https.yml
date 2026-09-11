@@ -33,11 +33,13 @@ services:
       - traefik_acme:/acme
 
   workflow_engine:
-    environment: !override
-      - NEOPS_CORS_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:3031,https://${LAB_HOST}:8443
+    # Mapping form merges with the base list — never !override (that wipes
+    # NEOPS_CMS_URL / JWT / Postgres and the engine exits immediately).
+    environment:
+      NEOPS_CORS_ORIGINS: ${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:3031,https://${LAB_HOST}:8443
 
   web_client:
-    environment: !override
+    environment:
       FRONTEND_GRAPHQL_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/graphql
       FRONTEND_FILEAPI_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/
       FRONTEND_DEVMODE: "true"

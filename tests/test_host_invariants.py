@@ -51,6 +51,13 @@ def test_host_direct_overlay_publishes_ports():
     assert "docker-compose.host-direct.yml" in makefile
 
 
+def test_host_https_overlay_does_not_wipe_engine_env():
+    """environment: !override on workflow_engine drops JWT/CMS URL → exit 1."""
+    text = (LAB_DIR / "docker-compose.traefik-https.yml").read_text()
+    assert "environment: !override" not in text
+    assert "NEOPS_CORS_ORIGINS:" in text
+
+
 def test_host_monitor_iframe_is_cross_origin():
     """postMessage auth rejects same-origin /monitor under Traefik."""
     http = (LAB_DIR / "docker-compose.traefik.yml").read_text()

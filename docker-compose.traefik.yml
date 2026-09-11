@@ -78,9 +78,9 @@ services:
       - "8001:8000"
 
   workflow_engine:
+    # Mapping form merges with the base list — do not !override the whole env.
     environment:
-      # Include the monitor iframe origin (:3031). HTTPS overlay adds :8443.
-      - NEOPS_CORS_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:3031
+      NEOPS_CORS_ORIGINS: ${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:3031
     ports: !override
       - "3030:3030"
 
