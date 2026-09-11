@@ -173,8 +173,8 @@ endif
 
 host-env-init host-env-up host-env-down host-env-prune: export COMPOSE_FILE := $(HOST_ENV_COMPOSE_FILES)
 host-env-init host-env-up host-env-down host-env-prune: export COMPOSE_PATH_SEPARATOR := :
-host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose: export COMPOSE_FILE := $(HOST_LAB_COMPOSE_FILES)
-host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose: export COMPOSE_PATH_SEPARATOR := :
+host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose host-check-cms: export COMPOSE_FILE := $(HOST_LAB_COMPOSE_FILES)
+host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose host-check-cms: export COMPOSE_PATH_SEPARATOR := :
 
 # Render cms/oidc-config.host.json; fails if LAB_HOST is missing.
 host-oidc: lab-env
@@ -236,6 +236,9 @@ host-env-init: lab-jwt host-oidc
 host-env-up: lab-jwt host-oidc
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make host-env-init' first."; exit 1; fi
 	docker compose pull --policy always --ignore-pull-failures
+	# Always recreate Traefik + cms-proxy so bind-mounted dynamic.yml / cms-proxy.conf
+	# are not left pointing at a stale route (e.g. cms:8000 instead of cms-proxy).
+	docker compose up -d --force-recreate traefik cms-proxy
 	docker compose up -d
 	@echo ""
 	@$(MAKE) --no-print-directory host-print-urls

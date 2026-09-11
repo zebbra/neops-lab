@@ -4,10 +4,41 @@
 
 set -euo pipefail
 
+cd "$(dirname "$0")"
+
 scheme=${LAB_SCHEME:-$(sed -n 's/^LAB_SCHEME=//p' .env 2>/dev/null | tr -d '\r' | head -1)}
 scheme=${scheme:-http}
 host=${LAB_HOST:-$(sed -n 's/^LAB_HOST=//p' .env 2>/dev/null | tr -d '\r' | head -1)}
 host=${host:-127.0.0.1}
+
+dyn=traefik/dynamic.http.yml
+if [ "$scheme" != http ]; then
+  dyn=traefik/dynamic.https.yml
+fi
+if [ -n "${TRAEFIK_CERTRESOLVER:-}" ] || grep -qE '^TRAEFIK_CERTRESOLVER=.+' .env 2>/dev/null; then
+  dyn=traefik/dynamic.https-acme.yml
+fi
+
+echo "==> host file $dyn"
+if ! grep -q 'cms-proxy' "$dyn"; then
+  echo "error: $dyn has no cms-proxy — pull/sync the branch (traefik/dynamic.*.yml)." >&2
+  exit 1
+fi
+grep -n 'url:' "$dyn" || true
+
+echo "==> mounted config inside traefik"
+if ! mounted=$(docker compose exec -T traefik cat /etc/traefik/dynamic.yml 2>/dev/null); then
+  echo "error: cannot read /etc/traefik/dynamic.yml (is COMPOSE_FILE set? use make host-check-cms)." >&2
+  exit 1
+fi
+if ! printf '%s\n' "$mounted" | grep -q 'cms-proxy'; then
+  echo "error: Traefik's mounted dynamic.yml has no cms-proxy." >&2
+  echo "hint: make host-env-up  # force-recreates traefik + cms-proxy" >&2
+  echo "--- mounted file (urls) ---" >&2
+  printf '%s\n' "$mounted" | grep -n 'url:' >&2 || true
+  exit 1
+fi
+printf '%s\n' "$mounted" | grep -n 'url:' || true
 
 if [ "$scheme" = https ]; then
   curl_base=(curl -skI)
@@ -22,7 +53,19 @@ echo "==> GET $url"
 headers=$("${curl_base[@]}" "$url")
 echo "$headers" | head -20
 
+server=$(printf '%s\n' "$headers" | tr -d '\r' | sed -n 's/^[Ss]erver: //p' | head -1)
 loc=$(printf '%s\n' "$headers" | tr -d '\r' | sed -n 's/^[Ll]ocation: //p' | head -1)
+
+case "$server" in
+  openresty*|*/openresty*)
+    ;;
+  *)
+    echo "error: Server is '$server' (expected openresty). Request is not hitting cms-proxy." >&2
+    echo "hint: make host-env-up && make host-compose CMD='exec traefik cat /etc/traefik/dynamic.yml' | grep cms-proxy" >&2
+    exit 1
+    ;;
+esac
+
 case "$loc" in
   /cms/admin/login*|*/cms/admin/login*)
     echo "OK: Location keeps /cms prefix ($loc)"
@@ -33,8 +76,6 @@ case "$loc" in
     ;;
   *)
     echo "error: Location missing /cms prefix: $loc" >&2
-    echo "hint: is cms-proxy running? make host-ps | grep cms-proxy" >&2
-    echo "hint: does Traefik mount dynamic.*.yml with url: http://cms-proxy:80?" >&2
     exit 1
     ;;
 esac
