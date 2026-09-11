@@ -1,12 +1,11 @@
 # Traefik dynamic config for LAB_SCHEME=http (entrypoint web, no TLS).
 # Mounted by docker-compose.traefik.yml. Services are compose DNS names.
+#
+# /cms goes to cms-proxy (nginx), which strips the prefix toward Django and
+# rewrites redirects/HTML back under /cms — do not StripPrefix here.
 
 http:
   middlewares:
-    cms-strip:
-      stripPrefix:
-        prefixes:
-          - /cms
     engine-strip:
       stripPrefix:
         prefixes:
@@ -31,8 +30,6 @@ http:
       entryPoints:
         - web
       priority: 100
-      middlewares:
-        - cms-strip
       service: cms
 
     engine:
@@ -62,7 +59,7 @@ http:
     cms:
       loadBalancer:
         servers:
-          - url: http://cms:8000
+          - url: http://cms-proxy:80
     engine:
       loadBalancer:
         servers:

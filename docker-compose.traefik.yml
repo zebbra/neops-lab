@@ -10,7 +10,7 @@
 #
 # Path map:
 #   /traefik  -> Traefik dashboard
-#   /cms      -> cms:8000
+#   /cms      -> cms-proxy (nginx) -> cms:8000  (rewrites redirects under /cms)
 #   /engine   -> workflow_engine:3030
 #   /monitor  -> workflow-engine-client:5173
 #   /         -> web_client:8080
@@ -35,13 +35,26 @@ services:
     depends_on:
       cms:
         condition: service_healthy
+      cms-proxy:
+        condition: service_started
       web_client:
         condition: service_healthy
       workflow_engine:
         condition: service_healthy
 
+  # Rewrites Django's root-absolute redirects (/admin/login/ → /cms/admin/login/)
+  # so they do not fall through to the web-client catch-all. See cms-proxy.conf.
+  cms-proxy:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./traefik/cms-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      cms:
+        condition: service_healthy
+
   cms:
     environment:
+      # Kept for images that honour it; cms-proxy is the reliable path-prefix fix.
       - FORCE_SCRIPT_NAME=/cms
       - CSRF_TRUSTED_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST}
       - USE_X_FORWARDED_HOST=True

@@ -23,7 +23,7 @@ reject API 1.24 do not break host mode.
 | Public path | Backend | Notes |
 |---|---|---|
 | `/` | web client `:8080` | Catch-all (lowest priority) |
-| `/cms` | CMS `:8000` | StripPrefix; Django `FORCE_SCRIPT_NAME=/cms` |
+| `/cms` | `cms-proxy` → CMS `:8000` | nginx strips `/cms` toward Django and rewrites `Location` / admin HTML back under `/cms` (CMS ignores `FORCE_SCRIPT_NAME` env) |
 | `/engine` | workflow engine `:3030` | StripPrefix |
 | `/monitor` | monitor app `:5173` | No strip; Vite `--base /monitor/` |
 | `/traefik` | Traefik dashboard | StripPrefix → `api@internal`; open `/traefik/dashboard/` |
@@ -137,6 +137,7 @@ The CMS Elasticsearch data volume is named `elasticsearch_lab` (not `elasticsear
 | Symptom | Likely cause |
 |---|---|
 | `docker compose logs traefik` → `no such service` | Bare compose only sees `docker-compose.yml`. Use `make host-logs` / `make host-ps`, or `docker logs neops-lab-traefik-1` |
+| CMS admin redirect lands on web client (`/admin/login/`) | Stale Traefik without `cms-proxy` — pull and `make host-env-up`; redirects must become `/cms/admin/login/` |
 | Traefik 404 on every path | Stale container — `make host-env-up` after pulling; confirm file provider mount (`./traefik/dynamic.*.yml`) |
 | `client version 1.24 is too old` | Old setup used the Docker provider. Current compose uses the **file** provider (no socket). Pull latest, recreate Traefik. |
 | Browser jumps to HTTPS / 404 on HTTPS | `LAB_SCHEME=http` but old Traefik still has the HTTPS overlay — recreate Traefik; clear HSTS if the browser cached HTTPS |

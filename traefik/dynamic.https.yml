@@ -1,12 +1,8 @@
 # Traefik dynamic config for LAB_SCHEME=https (entrypoint websecure + TLS).
-# Default certificate (self-signed) unless dynamic.https-acme.yml is mounted.
+# /cms → cms-proxy (see dynamic.http.yml). Default self-signed TLS.
 
 http:
   middlewares:
-    cms-strip:
-      stripPrefix:
-        prefixes:
-          - /cms
     engine-strip:
       stripPrefix:
         prefixes:
@@ -32,8 +28,6 @@ http:
       entryPoints:
         - websecure
       priority: 100
-      middlewares:
-        - cms-strip
       service: cms
       tls: {}
 
@@ -67,7 +61,7 @@ http:
     cms:
       loadBalancer:
         servers:
-          - url: http://cms:8000
+          - url: http://cms-proxy:80
     engine:
       loadBalancer:
         servers:
