@@ -93,7 +93,7 @@ services:
       # Direct: http://HOST:3031/monitor/  (Vite --base /monitor/)
       - "3031:5173"
     command: >
-      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --base /monitor/ --allowedHosts ${LAB_HOST},localhost,127.0.0.1"
+      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --base /monitor/"
 
   web_client:
     environment:
