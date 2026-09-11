@@ -11,9 +11,14 @@
 # Path map:
 #   /traefik  -> Traefik dashboard
 #   /cms      -> cms-proxy (nginx) -> cms:8000  (rewrites redirects under /cms)
+#   /djstatic -> cms:8000  (Django STATIC_URL; root-absolute in admin HTML)
 #   /engine   -> workflow_engine:3030
 #   /monitor  -> workflow-engine-client:5173
 #   /         -> web_client:8080
+#
+# App ports are also published on the host (same numbers as laptop mode) so
+# you can bypass Traefik while debugging redirects / Vite. Prefer
+# make host-direct-* when you want that as the primary access path.
 #
 # Use `make host-ps` / `make host-logs` (bare docker compose has no traefik).
 
@@ -41,6 +46,8 @@ services:
         condition: service_healthy
       workflow_engine:
         condition: service_healthy
+      workflow-engine-client:
+        condition: service_started
 
   # Rewrites Django's root-absolute redirects (/admin/login/ → /cms/admin/login/)
   # so they do not fall through to the web-client catch-all. See cms-proxy.conf.
@@ -56,20 +63,21 @@ services:
     environment:
       # Kept for images that honour it; cms-proxy is the reliable path-prefix fix.
       - FORCE_SCRIPT_NAME=/cms
-      - CSRF_TRUSTED_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST}
+      - CSRF_TRUSTED_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:8001
       - USE_X_FORWARDED_HOST=True
       - SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https
     volumes: !override
       - ./cms/oidc-config.host.json:/etc/neops/oidc-config.json:ro
       - ./cms/jwt:/etc/neops/jwt:ro
     ports: !override
-      - "127.0.0.1:8001:8000"
+      # All interfaces — host scripts and remote debug both use :8001.
+      - "8001:8000"
 
   workflow_engine:
     environment:
-      - NEOPS_CORS_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST}
+      - NEOPS_CORS_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:3031
     ports: !override
-      - "127.0.0.1:3030:3030"
+      - "3030:3030"
 
   workflow-engine-client:
     environment:
@@ -78,9 +86,11 @@ services:
       VITE_ENGINE_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/engine
     volumes: !override
       - ./monitor/config.host.js:/app/rest/monitor-app/static/config.js:ro
-    ports: !reset []
+    ports: !override
+      # Direct: http://HOST:3031/monitor/  (Vite --base /monitor/)
+      - "3031:5173"
     command: >
-      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --base /monitor/ --allowedHosts ${LAB_HOST}"
+      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --base /monitor/ --allowedHosts ${LAB_HOST},localhost,127.0.0.1"
 
   web_client:
     environment:
@@ -88,4 +98,5 @@ services:
       FRONTEND_FILEAPI_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/
       FRONTEND_DEVMODE: "true"
       FRONTEND_WORKFLOW_MANAGER_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/monitor/
-    ports: !reset []
+    ports: !override
+      - "8080:8080"

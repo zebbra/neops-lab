@@ -31,6 +31,15 @@ http:
       service: cms
       tls: {}
 
+    # CMS STATIC_URL is /djstatic/ — root-absolute in HTML; must not hit web_client.
+    djstatic:
+      rule: PathPrefix(`/djstatic`)
+      entryPoints:
+        - websecure
+      priority: 100
+      service: cms-direct
+      tls: {}
+
     engine:
       rule: PathPrefix(`/engine`)
       entryPoints:
@@ -62,6 +71,10 @@ http:
       loadBalancer:
         servers:
           - url: http://cms-proxy:80
+    cms-direct:
+      loadBalancer:
+        servers:
+          - url: http://cms:8000
     engine:
       loadBalancer:
         servers:

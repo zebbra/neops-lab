@@ -8,11 +8,13 @@ tags: [operations, host, traefik]
 
 *Same control plane and devices as the laptop lab, published on a single hostname through a Traefik that ships with the stack. The `local-*` make targets are unchanged.*
 
+For **published ports without Traefik** (no `/cms` prefix pain), see [Host-direct mode](55-host-direct.md).
+
 ## When to use this
 
-Use **host mode** when the lab runs on a Linux box that should be reached by name (colleagues, a jump host, a demo VM) without wiring an external proxy. Use **laptop mode** (`make local-lab-up`) on a developer machine with published ports `8080` / `8001` / `3030` / `3031`.
+Use **host mode** when the lab runs on a Linux box that should be reached by name (colleagues, a jump host, a demo VM) without wiring an external proxy. Use **laptop mode** (`make local-lab-up`) on a developer machine with published ports `8080` / `8001` / `3030` / `3031`. Use **host-direct** when you want those same ports on a shared host with `LAB_HOST` in OIDC/CORS.
 
-Do not mix the two compose file sets in one shell — export `COMPOSE_FILE` only through the matching make targets.
+Do not mix the compose file sets in one shell — export `COMPOSE_FILE` only through the matching make targets. Tear down with `make host-env-down` before switching to `host-direct-*`.
 
 ## Path map
 
@@ -24,18 +26,21 @@ reject API 1.24 do not break host mode.
 |---|---|---|
 | `/` | web client `:8080` | Catch-all (lowest priority) |
 | `/cms` | `cms-proxy` → CMS `:8000` | nginx strips `/cms` toward Django and rewrites `Location` / admin HTML back under `/cms` (CMS ignores `FORCE_SCRIPT_NAME` env) |
+| `/djstatic` | CMS `:8000` | Django `STATIC_URL`; root-absolute in admin HTML — routed so it does not hit the web client |
 | `/engine` | workflow engine `:3030` | StripPrefix |
 | `/monitor` | monitor app `:5173` | No strip; Vite `--base /monitor/` |
 | `/traefik` | Traefik dashboard | StripPrefix → `api@internal`; open `/traefik/dashboard/` |
 
-Static assets of the CMS (`/cms/static/…`) and of the web client (`/assets/…`) do not collide. The file API is the CMS root, so `FRONTEND_FILEAPI_ENDPOINT` is `${LAB_SCHEME}://${LAB_HOST}/cms/`.
+Static assets of the CMS (`/cms/djstatic/…` or `/djstatic/…`) and of the web client (`/assets/…`) do not collide. The file API is the CMS root, so `FRONTEND_FILEAPI_ENDPOINT` is `${LAB_SCHEME}://${LAB_HOST}/cms/`.
 
 OIDC noop endpoints (`/auth`, `/token`, `/jwks`, …) stay on the web client origin — they are not under `/cms`.
 
-Loopback ports remain for host-side scripts:
+**Direct ports** (same numbers as laptop mode) stay published for debugging — Traefik is still the intended public path:
 
-- `127.0.0.1:8001` → CMS (used by `apply_cms_config`)
-- `127.0.0.1:3030` → engine (used by `wait_ready` / `run_workflow`)
+- `:8080` → web client
+- `:8001` → CMS (no `/cms` prefix; admin at `/admin/`, static at `/djstatic/`)
+- `:3030` → engine
+- `:3031` → monitor (**under** `/monitor/` because Vite `--base /monitor/`)
 
 Worker and bootstrap still talk to `http://workflow_engine:3030` on the compose network.
 
@@ -43,8 +48,8 @@ Worker and bootstrap still talk to `http://workflow_engine:3030` on the compose 
 
 | `LAB_SCHEME` | Ports | Behaviour |
 |---|---|---|
-| `http` | **:80 only** | No TLS, no redirect, no `:443` |
-| `https` (default if unset) | :80 + **:443** | HTTP→HTTPS redirect; TLS (self-signed unless ACME) |
+| `http` | **:80 only** (+ app ports above) | No TLS, no redirect, no `:443` |
+| `https` (default if unset) | :80 + **:443** (+ app ports) | HTTP→HTTPS redirect; TLS (self-signed unless ACME) |
 
 The base overlay [`docker-compose.traefik.yml`](../../docker-compose.traefik.yml) is always HTTP. Make appends [`docker-compose.traefik-https.yml`](../../docker-compose.traefik-https.yml) unless `LAB_SCHEME=http`.
 
@@ -89,7 +94,7 @@ HTTPS adds `:docker-compose.traefik-https.yml` (+ `:docker-compose.traefik-acme.
 
 `host-env-init` performs the **same key setup** as `local-env-init`: `make lab-jwt` → CMS starts with `cms/jwt` → `generate_api_key` → `cms_api_key.env` → `./apply_cms_config` (GraphQL via `http://localhost:8001`) → recreate `workflow_engine` so it picks up `NEOPS_CMS_TOKEN`.
 
-`./gen_host_oidc` writes git-ignored `cms/oidc-config.host.json` and `monitor/config.host.js` from `LAB_HOST` / `LAB_SCHEME` before every host `up`.
+`./gen_host_oidc` (via `make host-oidc`, `LAB_ACCESS=proxy`) writes git-ignored `cms/oidc-config.host.json` and `monitor/config.host.js` from `LAB_HOST` / `LAB_SCHEME` before every host `up`.
 
 ## First bring-up
 
@@ -123,8 +128,8 @@ If the monitor still talks to `http://localhost:3030`, open its Settings page an
 
 ## Ports
 
-- **`LAB_SCHEME=http`**: only **80**. Nothing binds 443.
-- **`LAB_SCHEME=https`**: **80** (redirect) and **443**. Anything else already on those ports will conflict.
+- **`LAB_SCHEME=http`**: Traefik **80** plus app ports `8080` / `8001` / `3030` / `3031`.
+- **`LAB_SCHEME=https`**: Traefik **80** (redirect) and **443**, plus the same app ports.
 
 This overlay does not attach to an external Traefik network.
 
@@ -138,10 +143,13 @@ The CMS Elasticsearch data volume is named `elasticsearch_lab` (not `elasticsear
 |---|---|
 | `docker compose logs traefik` → `no such service` | Bare compose only sees `docker-compose.yml`. Use `make host-logs` / `make host-ps`, or `docker logs neops-lab-traefik-1` |
 | CMS admin redirect lands on web client (`/admin/login/`) | Stale Traefik without `cms-proxy` — pull and `make host-env-up`; redirects must become `/cms/admin/login/` |
+| `/djstatic/…` → 404 on web client | Stale dynamic.yml without `djstatic` router — pull and recreate Traefik; or open `http://HOST:8001/djstatic/…` directly |
+| `/monitor/` → 502 | Vite still on `npm install` — `make host-logs SERVICE=workflow-engine-client`; wait until it listens on `:5173` |
 | Traefik 404 on every path | Stale container — `make host-env-up` after pulling; confirm file provider mount (`./traefik/dynamic.*.yml`) |
 | `client version 1.24 is too old` | Old setup used the Docker provider. Current compose uses the **file** provider (no socket). Pull latest, recreate Traefik. |
 | Browser jumps to HTTPS / 404 on HTTPS | `LAB_SCHEME=http` but old Traefik still has the HTTPS overlay — recreate Traefik; clear HSTS if the browser cached HTTPS |
 | Blank `<app-root>` | Missing/stale `cms/oidc-config.host.json` — run `make host-oidc`; `LAB_HOST` must match the URL you type in the browser |
 | `LAB_HOST is required` | Set it in `.env` or the environment before `host-*` |
 | ACME challenge fails | Host not publicly reachable on :80, or DNS not pointing here, or `LAB_SCHEME=http` |
-| `apply_cms_config` / `wait_ready` fail | Loopback `8001`/`3030` not published — confirm the traefik overlay is in `COMPOSE_FILE` |
+| `apply_cms_config` / `wait_ready` fail | `:8001` / `:3030` not published — confirm the traefik overlay is in `COMPOSE_FILE` |
+| Prefer no path prefixes | `make host-env-down` then [host-direct](55-host-direct.md) |

@@ -1,0 +1,53 @@
+# Host-direct overlay: published ports, no Traefik / cms-proxy.
+#
+# Same control plane as laptop mode, but OIDC / CORS / FRONTEND_* use LAB_HOST
+# so browsers reach the box by name on :8080 / :8001 / :3030 / :3031.
+# Loaded by make host-direct-* (never by local-* or host-* Traefik targets).
+#
+# Ports (HTTP only — terminate TLS elsewhere if needed):
+#   :8080  web client
+#   :8001  CMS (admin, GraphQL, /djstatic, file API)
+#   :3030  workflow engine
+#   :3031  monitor app (Vite root base — no /monitor prefix)
+#
+# Do not mix with host-* Traefik in one project without `make host-env-down`
+# first (shared service names / conflicting port intent).
+
+services:
+  cms:
+    environment:
+      - CSRF_TRUSTED_ORIGINS=http://${LAB_HOST}:8080,http://${LAB_HOST}:8001
+      - DJANGO_ALLOWED_HOSTS=*
+    volumes: !override
+      - ./cms/oidc-config.host.json:/etc/neops/oidc-config.json:ro
+      - ./cms/jwt:/etc/neops/jwt:ro
+    ports: !override
+      - "8001:8000"
+
+  workflow_engine:
+    environment:
+      - NEOPS_CORS_ORIGINS=http://${LAB_HOST}:8080,http://${LAB_HOST}:3031
+    ports: !override
+      - "3030:3030"
+
+  workflow-engine-client:
+    environment:
+      NODE_ENV: development
+      PUBLIC_ENGINE_URL: http://${LAB_HOST}:3030
+      VITE_ENGINE_URL: http://${LAB_HOST}:3030
+    volumes: !override
+      - ./monitor/config.host.js:/app/rest/monitor-app/static/config.js:ro
+    ports: !override
+      - "3031:5173"
+    # No --base /monitor/ — browsers hit http://LAB_HOST:3031/ directly.
+    command: >
+      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --allowedHosts ${LAB_HOST},localhost,127.0.0.1"
+
+  web_client:
+    environment:
+      FRONTEND_GRAPHQL_ENDPOINT: http://${LAB_HOST}:8001/graphql
+      FRONTEND_FILEAPI_ENDPOINT: http://${LAB_HOST}:8001/
+      FRONTEND_DEVMODE: "true"
+      FRONTEND_WORKFLOW_MANAGER_URL: http://${LAB_HOST}:3031
+    ports: !override
+      - "8080:8080"

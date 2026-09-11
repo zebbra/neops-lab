@@ -176,9 +176,9 @@ host-env-init host-env-up host-env-down host-env-prune: export COMPOSE_PATH_SEPA
 host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose host-check-cms: export COMPOSE_FILE := $(HOST_LAB_COMPOSE_FILES)
 host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose host-check-cms: export COMPOSE_PATH_SEPARATOR := :
 
-# Render cms/oidc-config.host.json; fails if LAB_HOST is missing.
+# Render cms/oidc-config.host.json for Traefik path-prefix origin.
 host-oidc: lab-env
-	@./gen_host_oidc
+	@LAB_ACCESS=proxy ./gen_host_oidc
 
 # docker compose with the host-mode COMPOSE_FILE set. Examples:
 #   make host-ps
@@ -213,7 +213,7 @@ host-print-urls:
 	echo "  CMS admin:    $$origin/cms/admin/ (neops / neops)"; \
 	echo "  CMS GraphQL:  $$origin/cms/graphql"; \
 	echo "  Traefik UI:   $$origin/traefik/dashboard/"; \
-	echo "  (loopback)    http://127.0.0.1:8001  http://127.0.0.1:3030"; \
+	echo "  (direct)      http://$$host:8080  :8001  :3030  :3031/monitor/"; \
 	echo "  compose:      make host-ps / make host-logs   (not bare docker compose)"
 
 host-env-init: lab-jwt host-oidc
@@ -277,6 +277,103 @@ host-lab-discover:
 	@./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @$(DISCOVER_PARAMS)
 
 host-lab-logs:
+	docker compose logs -f worker lab_bootstrap
+
+# -----------------------------------------------------------------------------
+# Host-direct mode — LAB_HOST + published ports, no Traefik
+# -----------------------------------------------------------------------------
+# Overlay: docker-compose.host-direct.yml. Use when path-prefix redirects are
+# painful or you want laptop-style :8080/:8001/:3030/:3031 on a shared host.
+# Tear down Traefik host mode first: make host-env-down.
+
+HOST_DIRECT_ENV_COMPOSE_FILES := docker-compose.yml:docker-compose.host-direct.yml
+HOST_DIRECT_LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml:docker-compose.host-direct.yml
+
+host-direct-env-init host-direct-env-up host-direct-env-down host-direct-env-prune: export COMPOSE_FILE := $(HOST_DIRECT_ENV_COMPOSE_FILES)
+host-direct-env-init host-direct-env-up host-direct-env-down host-direct-env-prune: export COMPOSE_PATH_SEPARATOR := :
+host-direct-lab-up host-direct-lab-down host-direct-lab-discover host-direct-lab-logs host-direct-ps host-direct-logs host-direct-compose: export COMPOSE_FILE := $(HOST_DIRECT_LAB_COMPOSE_FILES)
+host-direct-lab-up host-direct-lab-down host-direct-lab-discover host-direct-lab-logs host-direct-ps host-direct-logs host-direct-compose: export COMPOSE_PATH_SEPARATOR := :
+
+host-direct-oidc: lab-env
+	@LAB_ACCESS=direct ./gen_host_oidc
+
+host-direct-ps:
+	docker compose ps
+
+host-direct-logs:
+	docker compose logs -f $(or $(SERVICE),web_client)
+
+host-direct-compose:
+	@test -n "$(CMD)" || { echo "usage: make host-direct-compose CMD='logs -f cms'"; exit 1; }; \
+	docker compose $(CMD)
+
+host-direct-print-urls:
+	@host=$${LAB_HOST:-$$(sed -n 's/^LAB_HOST=//p' .env 2>/dev/null | tr -d '\r' | head -1)}; \
+	echo "  Web client:   http://$$host:8080/"; \
+	echo "  Monitor:      http://$$host:3031/"; \
+	echo "  Engine API:   http://$$host:3030/"; \
+	echo "  CMS admin:    http://$$host:8001/admin/ (neops / neops)"; \
+	echo "  CMS GraphQL:  http://$$host:8001/graphql"; \
+	echo "  CMS static:   http://$$host:8001/djstatic/"; \
+	echo "  compose:      make host-direct-ps / make host-direct-logs"
+
+host-direct-env-init: lab-jwt host-direct-oidc
+	touch cms_api_key.env
+	docker compose pull --policy always --ignore-pull-failures
+	docker compose up -d
+	@pk=$$(docker compose exec -T cms ./manage.py shell -c "from django.contrib.auth import get_user_model; print('PK=%s' % get_user_model().objects.get(username='neops').pk)" 2>/dev/null | sed -n 's/^PK=//p' | tr -d '\r'); \
+	test -n "$$pk" || { echo "error: could not resolve the CMS user 'neops'"; exit 1; }; \
+	key=$$(docker compose exec -T cms ./manage.py generate_api_key $$pk workflow 2>/dev/null | awk 'NF{l=$$0}END{print l}' | tr -d '\r'); \
+	test -n "$$key" || { echo "error: generate_api_key returned an empty key"; exit 1; }; \
+	echo "NEOPS_CMS_TOKEN=$$key" > cms_api_key.env; \
+	echo "wrote cms_api_key.env (user pk $$pk)"
+	./apply_cms_config
+	docker compose up -d --force-recreate workflow_engine
+	@echo ""
+	@echo "Host-direct control plane is up (no Traefik)."
+	@$(MAKE) --no-print-directory host-direct-print-urls
+
+host-direct-env-up: lab-jwt host-direct-oidc
+	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make host-direct-env-init' first."; exit 1; fi
+	docker compose pull --policy always --ignore-pull-failures
+	docker compose up -d
+	@echo ""
+	@$(MAKE) --no-print-directory host-direct-print-urls
+
+host-direct-env-down:
+	docker compose down
+
+host-direct-env-prune:
+	docker compose down -v
+
+host-direct-lab-up: build-docker lab-env host-direct-oidc
+	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make host-direct-env-init' first."; exit 1; fi
+	@./gen_clab_topology
+	docker compose pull --policy always --ignore-pull-failures worker
+	docker compose up -d
+	@echo "Waiting for workflow registration (lab_bootstrap) to finish..."
+	docker compose wait lab_bootstrap
+	@echo "Deploying containerlab devices (real links)..."
+	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO)
+	@echo "Waiting for the worker to register its function blocks..."
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
+	@echo "Waiting for all devices to accept SSH..."
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@echo ""
+	@echo "Host-direct lab is up (containerlab: 10 FRR + 5 Nokia SR Linux, real links)."
+	@$(MAKE) --no-print-directory host-direct-print-urls
+	@echo "  Run 'make host-direct-lab-discover' to populate the CMS (15 devices with interfaces)."
+
+host-direct-lab-down:
+	-$(CONTAINERLAB) destroy -t $(CLAB_TOPO) --cleanup
+	docker compose down
+
+host-direct-lab-discover:
+	@./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB)
+	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @$(DISCOVER_PARAMS)
+
+host-direct-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
 # -----------------------------------------------------------------------------
@@ -467,4 +564,7 @@ local-lab-logs:
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config lab-grant \
 	host-oidc host-print-urls host-ps host-logs host-compose host-check-cms \
 	host-env-init host-env-up host-env-down host-env-prune \
-	host-lab-up host-lab-down host-lab-discover host-lab-logs
+	host-lab-up host-lab-down host-lab-discover host-lab-logs \
+	host-direct-oidc host-direct-print-urls host-direct-ps host-direct-logs host-direct-compose \
+	host-direct-env-init host-direct-env-up host-direct-env-down host-direct-env-prune \
+	host-direct-lab-up host-direct-lab-down host-direct-lab-discover host-direct-lab-logs

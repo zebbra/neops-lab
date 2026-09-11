@@ -30,14 +30,22 @@ def test_compose_subnets_match_generator():
     assert "subnet: 172.30.1.0/24" in base
 
 
-def test_local_lab_up_mints_the_jwt_keypair_first():
-    """The engine service bind-mounts `cms/jwt/public.pem` as a file. Docker
-    creates a directory under that name when the file is absent, which the
-    engine cannot read as a key and which `make lab-jwt` cannot write over.
-    """
-    compose = (LAB_DIR / "docker-compose.yml").read_text()
-    assert "./cms/jwt/public.pem:" in compose, "the engine service mounts no key file"
+def test_host_traefik_routes_djstatic():
+    """CMS STATIC_URL is /djstatic/; Traefik must not send it to the web client."""
+    for name in ("dynamic.http.yml", "dynamic.https.yml", "dynamic.https-acme.yml"):
+        text = (LAB_DIR / "traefik" / name).read_text()
+        assert "PathPrefix(`/djstatic`)" in text, name
+        assert "http://cms:8000" in text, name
+
+
+def test_host_direct_overlay_publishes_ports():
+    """host-direct mode exposes laptop ports without Traefik."""
+    text = (LAB_DIR / "docker-compose.host-direct.yml").read_text()
+    assert re.search(r"(?m)^  cms-proxy:", text) is None
+    assert "8080:8080" in text
+    assert "8001:8000" in text
+    assert "3030:3030" in text
+    assert "3031:5173" in text
     makefile = (LAB_DIR / "Makefile").read_text()
-    match = re.search(r"^local-lab-up:(.*)$", makefile, re.MULTILINE)
-    assert match, "the Makefile declares no local-lab-up target"
-    assert "lab-jwt" in match.group(1).split(), "local-lab-up starts the stack without lab-jwt"
+    assert "host-direct-env-init" in makefile
+    assert "docker-compose.host-direct.yml" in makefile

@@ -61,10 +61,20 @@ Parallel targets for a single-hostname deployment behind the bundled Traefik ove
 
 | Target | What it does |
 |---|---|
-| `make host-oidc` | Renders `cms/oidc-config.host.json` from `LAB_HOST` / `LAB_SCHEME`. |
+| `make host-oidc` | Renders `cms/oidc-config.host.json` from `LAB_HOST` / `LAB_SCHEME` (`LAB_ACCESS=proxy`). |
 | `make host-env-init` | Same key setup as `local-env-init`, with `docker-compose.traefik.yml` (and ACME overlay when `TRAEFIK_CERTRESOLVER` is set). |
 | `make host-env-up` / `host-env-down` / `host-env-prune` | Base stack + Traefik lifecycle. |
 | `make host-lab-up` / `host-lab-down` / `host-lab-discover` / `host-lab-logs` | Lab lifecycle with worker + devices, banner prints path-prefix URLs. |
+| `make host-check-cms` | Smoke-test that `/cms/admin/` redirects keep the `/cms` prefix. |
+
+## Host-direct mode (ports)
+
+Published ports on `LAB_HOST` without Traefik — see [Host-direct mode](55-host-direct.md).
+
+| Target | What it does |
+|---|---|
+| `make host-direct-env-init` / `up` / `down` / `prune` | Base stack with `docker-compose.host-direct.yml`. |
+| `make host-direct-lab-up` / `down` / `discover` / `logs` | Lab lifecycle; URLs are `http://LAB_HOST:8080` etc. |
 
 !!! warning "Re-run `apply-cms-config` after a CMS restart"
     The CMS image seeds a scope named `Global` on every startup with

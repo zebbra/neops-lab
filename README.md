@@ -258,7 +258,8 @@ skipped for hosts declared as another one.
 | `make local-lab-logs` | Tails worker + bootstrap logs. |
 | `make local-lab-down` | `containerlab destroy --cleanup` (removes devices + runtime dir) then `docker compose down` (preserves volumes). |
 | `make local-env-prune` | `docker compose down -v` — the true reset, drops the ES + postgres volumes. |
-| `make host-env-init` / `host-lab-up` / … | Host-mode counterparts behind bundled Traefik — see [Host mode](docs/20-operations/50-host-proxy.md). |
+| `make host-env-init` / `host-lab-up` / … | Host-mode behind bundled Traefik — [Host mode](docs/20-operations/50-host-proxy.md). |
+| `make host-direct-env-init` / `host-direct-lab-up` / … | Same ports as laptop on `LAB_HOST`, no Traefik — [Host-direct](docs/20-operations/55-host-direct.md). |
 | `make test` | `pytest tests` — unit tests for the two generators, incl. that they still reproduce the committed `workflow-execution-parameters/*.json`. |
 | `make lint` / `make format` / `make typeCheck` / `make check` | ruff / pyrefly over the repo, including the extension-less host scripts. |
 
@@ -275,7 +276,8 @@ Full reset from scratch:
 To publish the same stack on a shared host behind a bundled Traefik (one
 hostname, path prefixes `/cms`, `/engine`, `/monitor`), see
 [Host mode (Traefik)](docs/20-operations/50-host-proxy.md) and the `make host-*`
-targets.
+targets. For laptop-style ports on that host without a reverse proxy, see
+[Host-direct mode](docs/20-operations/55-host-direct.md) (`make host-direct-*`).
 
 The engine is wired for NeOps authorization (`NEOPS_AUTHZ_MODE` in `docker-compose.yml`); when enforce is on, every call carries a token.
 Besides `neops`, the lab declares three personas in `cms/permissions.json`
