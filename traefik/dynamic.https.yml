@@ -1,0 +1,82 @@
+# Traefik dynamic config for LAB_SCHEME=https (entrypoint websecure + TLS).
+# Default certificate (self-signed) unless dynamic.https-acme.yml is mounted.
+
+http:
+  middlewares:
+    cms-strip:
+      stripPrefix:
+        prefixes:
+          - /cms
+    engine-strip:
+      stripPrefix:
+        prefixes:
+          - /engine
+    dashboard-strip:
+      stripPrefix:
+        prefixes:
+          - /traefik
+
+  routers:
+    dashboard:
+      rule: PathPrefix(`/traefik`)
+      entryPoints:
+        - websecure
+      priority: 200
+      middlewares:
+        - dashboard-strip
+      service: api@internal
+      tls: {}
+
+    cms:
+      rule: PathPrefix(`/cms`)
+      entryPoints:
+        - websecure
+      priority: 100
+      middlewares:
+        - cms-strip
+      service: cms
+      tls: {}
+
+    engine:
+      rule: PathPrefix(`/engine`)
+      entryPoints:
+        - websecure
+      priority: 100
+      middlewares:
+        - engine-strip
+      service: engine
+      tls: {}
+
+    monitor:
+      rule: PathPrefix(`/monitor`)
+      entryPoints:
+        - websecure
+      priority: 100
+      service: monitor
+      tls: {}
+
+    web:
+      rule: PathPrefix(`/`)
+      entryPoints:
+        - websecure
+      priority: 1
+      service: web
+      tls: {}
+
+  services:
+    cms:
+      loadBalancer:
+        servers:
+          - url: http://cms:8000
+    engine:
+      loadBalancer:
+        servers:
+          - url: http://workflow_engine:3030
+    monitor:
+      loadBalancer:
+        servers:
+          - url: http://workflow-engine-client:5173
+    web:
+      loadBalancer:
+        servers:
+          - url: http://web_client:8080

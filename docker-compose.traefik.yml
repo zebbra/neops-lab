@@ -1,38 +1,29 @@
 # Host-mode overlay: bundled Traefik with path-prefix routing (HTTP on :80).
 #
-# Combined via COMPOSE_FILE (see Makefile host-* targets). Laptop local-* never
-# loads this. Requires LAB_HOST in .env (for app URLs / OIDC / CORS — routing
-# itself is PathPrefix-only so IP and any Host header work).
+# Routing uses the **file provider** (traefik/dynamic.*.yml), not the Docker
+# provider — Traefik ≤3.6.0 hardcodes Docker API 1.24, which modern daemons
+# reject (min 1.40/1.44). Fixed service URLs via compose DNS need no socket.
 #
-# Default here is plain HTTP (entrypoint `web`, no TLS, no :443). When
-# LAB_SCHEME=https (or unset — Makefile defaults to https), make also loads
-# docker-compose.traefik-https.yml which adds :443, HTTP→HTTPS redirect, and
-# switches every router to `websecure` + tls. Optional ACME via
-# docker-compose.traefik-acme.yml when TRAEFIK_CERTRESOLVER is set.
+# LAB_SCHEME=https → Makefile also loads docker-compose.traefik-https.yml.
+# TRAEFIK_CERTRESOLVER set → docker-compose.traefik-acme.yml swaps in the ACME
+# dynamic file.
 #
-# Path map (this Traefik is lab-only; no Host() gate):
-#   /traefik  -> Traefik dashboard (api@internal, StripPrefix)
-#   /cms      -> cms:8000          StripPrefix
-#   /engine   -> workflow_engine   StripPrefix
-#   /monitor  -> monitor app       no strip; Vite --base /monitor/
-#   /         -> web_client        catch-all
+# Path map:
+#   /traefik  -> Traefik dashboard
+#   /cms      -> cms:8000
+#   /engine   -> workflow_engine:3030
+#   /monitor  -> workflow-engine-client:5173
+#   /         -> web_client:8080
 #
-# Host ports 8080 and 3031 are closed; 8001 and 3030 stay on loopback so
-# apply_cms_config / wait_ready / run_workflow keep working unchanged.
-#
-# Bare `docker compose …` without COMPOSE_FILE does not see this file — use
-# `make host-ps` / `make host-logs` / `make host-compose -- …`.
+# Use `make host-ps` / `make host-logs` (bare docker compose has no traefik).
 
 services:
   traefik:
-    image: traefik:v3.3
-    environment:
-      # Newer Docker daemons (min API ≥ 1.40) reject the client's default 1.24;
-      # without this the docker provider never sees labels → every route 404s.
-      DOCKER_API_VERSION: ${TRAEFIK_DOCKER_API_VERSION:-1.44}
+    # Pin a patch release; the floating `v3.3` / `v3.6` tags can lag the fix.
+    image: traefik:v3.6.4
     command:
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.watch=true
       - --entrypoints.web.address=:80
       - --api.dashboard=true
       - --log.level=INFO
@@ -40,8 +31,7 @@ services:
     ports:
       - "80:80"
     volumes:
-      # `:z` so SELinux (RHEL/CentOS) allows the container to read the socket.
-      - /var/run/docker.sock:/var/run/docker.sock:ro,z
+      - ./traefik/dynamic.http.yml:/etc/traefik/dynamic.yml:ro
     depends_on:
       cms:
         condition: service_healthy
@@ -49,20 +39,9 @@ services:
         condition: service_healthy
       workflow_engine:
         condition: service_healthy
-    labels:
-      - traefik.enable=true
-      # Dashboard: http(s)://<any-host>/traefik/dashboard/
-      - traefik.http.routers.dashboard.rule=PathPrefix(`/traefik`)
-      - traefik.http.routers.dashboard.entrypoints=web
-      - traefik.http.routers.dashboard.priority=200
-      - traefik.http.routers.dashboard.service=api@internal
-      - traefik.http.routers.dashboard.middlewares=dashboard-strip
-      - traefik.http.middlewares.dashboard-strip.stripprefix.prefixes=/traefik
 
   cms:
     environment:
-      # Django builds absolute paths (/cms/admin, /cms/static, /cms/graphql)
-      # while Traefik strips /cms before the request reaches the container.
       - FORCE_SCRIPT_NAME=/cms
       - CSRF_TRUSTED_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST}
       - USE_X_FORWARDED_HOST=True
@@ -72,33 +51,14 @@ services:
       - ./cms/jwt:/etc/neops/jwt:ro
     ports: !override
       - "127.0.0.1:8001:8000"
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.cms.rule=PathPrefix(`/cms`)
-      - traefik.http.routers.cms.entrypoints=web
-      - traefik.http.routers.cms.priority=100
-      - traefik.http.routers.cms.middlewares=cms-strip
-      - traefik.http.middlewares.cms-strip.stripprefix.prefixes=/cms
-      - traefik.http.services.cms.loadbalancer.server.port=8000
 
   workflow_engine:
     environment:
-      # Browser origin is the single LAB_HOST (web + monitor share it via path prefixes).
       - NEOPS_CORS_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST}
     ports: !override
       - "127.0.0.1:3030:3030"
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.engine.rule=PathPrefix(`/engine`)
-      - traefik.http.routers.engine.entrypoints=web
-      - traefik.http.routers.engine.priority=100
-      - traefik.http.routers.engine.middlewares=engine-strip
-      - traefik.http.middlewares.engine-strip.stripprefix.prefixes=/engine
-      - traefik.http.services.engine.loadbalancer.server.port=3030
 
   workflow-engine-client:
-    # Serve under /monitor so Traefik can PathPrefix-match without stripping;
-    # the Vite base path must match the public URL prefix.
     environment:
       NODE_ENV: development
       PUBLIC_ENGINE_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/engine
@@ -108,12 +68,6 @@ services:
     ports: !reset []
     command: >
       sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --base /monitor/ --allowedHosts ${LAB_HOST}"
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.monitor.rule=PathPrefix(`/monitor`)
-      - traefik.http.routers.monitor.entrypoints=web
-      - traefik.http.routers.monitor.priority=100
-      - traefik.http.services.monitor.loadbalancer.server.port=5173
 
   web_client:
     environment:
@@ -122,9 +76,3 @@ services:
       FRONTEND_DEVMODE: "true"
       FRONTEND_WORKFLOW_MANAGER_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/monitor/
     ports: !reset []
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.web.rule=PathPrefix(`/`)
-      - traefik.http.routers.web.entrypoints=web
-      - traefik.http.routers.web.priority=1
-      - traefik.http.services.web.loadbalancer.server.port=8080

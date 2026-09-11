@@ -1,0 +1,77 @@
+# Traefik dynamic config for LAB_SCHEME=http (entrypoint web, no TLS).
+# Mounted by docker-compose.traefik.yml. Services are compose DNS names.
+
+http:
+  middlewares:
+    cms-strip:
+      stripPrefix:
+        prefixes:
+          - /cms
+    engine-strip:
+      stripPrefix:
+        prefixes:
+          - /engine
+    dashboard-strip:
+      stripPrefix:
+        prefixes:
+          - /traefik
+
+  routers:
+    dashboard:
+      rule: PathPrefix(`/traefik`)
+      entryPoints:
+        - web
+      priority: 200
+      middlewares:
+        - dashboard-strip
+      service: api@internal
+
+    cms:
+      rule: PathPrefix(`/cms`)
+      entryPoints:
+        - web
+      priority: 100
+      middlewares:
+        - cms-strip
+      service: cms
+
+    engine:
+      rule: PathPrefix(`/engine`)
+      entryPoints:
+        - web
+      priority: 100
+      middlewares:
+        - engine-strip
+      service: engine
+
+    monitor:
+      rule: PathPrefix(`/monitor`)
+      entryPoints:
+        - web
+      priority: 100
+      service: monitor
+
+    web:
+      rule: PathPrefix(`/`)
+      entryPoints:
+        - web
+      priority: 1
+      service: web
+
+  services:
+    cms:
+      loadBalancer:
+        servers:
+          - url: http://cms:8000
+    engine:
+      loadBalancer:
+        servers:
+          - url: http://workflow_engine:3030
+    monitor:
+      loadBalancer:
+        servers:
+          - url: http://workflow-engine-client:5173
+    web:
+      loadBalancer:
+        servers:
+          - url: http://web_client:8080

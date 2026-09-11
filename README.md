@@ -213,7 +213,9 @@ workflow-execution-parameters/   # generated discovery inputs
 docker-compose.yml               # base stack (CMS, engine, monitor app, web client, postgres, ES, redis)
 docker-compose.worker.yml        # worker + lab_bootstrap + the lab-net network definition
 docker-compose.traefik.yml       # host-mode overlay: bundled Traefik + path-prefix routing
-docker-compose.traefik-acme.yml  # optional Let's Encrypt labels (when TRAEFIK_CERTRESOLVER is set)
+docker-compose.traefik-https.yml # host-mode HTTPS (:443 + redirect)
+docker-compose.traefik-acme.yml  # optional Let's Encrypt dynamic config
+traefik/                         # file-provider routes (dynamic.http.yml / .https.yml)
 gen_host_oidc                    # renders cms/oidc-config.host.json for host mode
 tests/                  # unit tests for the two generators
 ```
