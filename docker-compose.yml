@@ -17,10 +17,10 @@ services:
         condition: service_healthy
 
   cms:
-    # Override via NEOPS_CMS_IMAGE (e.g. a locally-built neops-cms-free:latest);
-    # defaults to the published develop image. `missing` means a local image that
-    # is already present is used as-is, with no registry call. Force with
-    # NEOPS_CMS_PULL_POLICY.
+    # Override via NEOPS_CMS_IMAGE (e.g. a locally-built neops-cms-free:latest,
+    # from `make -C ../neops-core build-docker flavor=cms-free`); defaults to the
+    # published develop image. `pull_policy: missing` finds a local image that is
+    # already present and skips the registry; force with NEOPS_CMS_PULL_POLICY.
     image: ${NEOPS_CMS_IMAGE:-quay.io/zebbra/neops-cms-free:develop}
     pull_policy: ${NEOPS_CMS_PULL_POLICY:-missing}
     environment:
@@ -52,7 +52,11 @@ services:
       - NEOPS_JWT_PRIVATE_KEY_PATH=/etc/neops/jwt/private.pem
       - NEOPS_JWT_PUBLIC_KEY_PATH=/etc/neops/jwt/public.pem
     volumes:
-      - ./cms/oidc-config.json:/etc/neops/oidc-config.json:ro
+      # The scenario's OIDC config, materialised by `make scenario-resolve`.
+      # `:?` and not `:-`: an unset SCENARIO must fail here, not silently pick
+      # a lab. Without it compose only warns and docker would create the
+      # missing bind source as an empty directory.
+      - ./generated/${SCENARIO:?set SCENARIO or drive compose through make; see 'make scenarios'}/scenario/cms/oidc-config.json:/etc/neops/oidc-config.json:ro
       - ./cms/jwt:/etc/neops/jwt:ro
     depends_on:
       postgres:
@@ -93,6 +97,9 @@ services:
       - POSTGRES_PORT=5432
       - PORT=3030
       # How the engine authorizes each request: enforce | permissive | disabled.
+      # @REVIEWER develop ships `disabled` (commit 6d29313, "disable authz"). Kept
+      # as-is through the merge; the docs now say `disabled` too. Flip both back
+      # to `enforce` if that commit was a temporary unblock for the spie work.
       - NEOPS_AUTHZ_MODE=disabled
       # SPKI PEM the engine verifies Neops RS256 tokens against — the public half
       # of the keypair `make lab-jwt` mints for the CMS, mounted below.
@@ -134,7 +141,7 @@ services:
     working_dir: /app/rest/monitor-app
     volumes:
       # The monitor reads window.__NEOPS_CONFIG__ from this file; see invariant
-      # 16 in docs/60-development/20-invariants.md.
+      # 21 in docs/60-development/20-invariants.md.
       - ./monitor/config.js:/app/rest/monitor-app/static/config.js:ro
     command: >
       sh -c "npm install && npm run dev"

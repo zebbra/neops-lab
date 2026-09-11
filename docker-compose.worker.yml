@@ -12,14 +12,16 @@ services:
     environment:
       URL_BLACKBOARD: http://workflow_engine:3030
       # In-container paths (the SDK image's WORKDIR is /app):
-      #   lab/function_blocks -> this repo, bind-mounted below at /app/lab
+      #   lab/generated/<scenario>/scenario/function_blocks -> the resolved
+      #                          scenario tree inside this repo, bind-mounted
+      #                          below at /app/lab
       #   neops/fb            -> the base function blocks, which ship INSIDE the
       #                          published neops-worker-sdk image (`COPY ./neops
       #                          neops/` in its base stage). FB discovery walks
       #                          these relative to the CWD. If discovery ever
       #                          fails with "Function block ... not found",
       #                          check the image you pinned carries /app/neops/fb.
-      DIR_FUNCTION_BLOCKS: lab/function_blocks,neops/fb
+      DIR_FUNCTION_BLOCKS: lab/generated/${SCENARIO:?set SCENARIO or drive compose through make; see 'make scenarios'}/scenario/function_blocks,neops/fb
       WORKER_NAME: simple-lab-worker
       NEOPS_BLOCKING_DETECTOR: "true"
     volumes:
@@ -45,7 +47,7 @@ services:
       # interpolated at `up -d`. The lab make targets export it.
       NEOPS_ENGINE_TOKEN: ${NEOPS_ENGINE_TOKEN:-}
     volumes:
-      - ./workflows:/workflows:ro
+      - ./generated/${SCENARIO:?set SCENARIO or drive compose through make; see 'make scenarios'}/scenario/workflows:/workflows:ro
     restart: "no"
 
 networks:

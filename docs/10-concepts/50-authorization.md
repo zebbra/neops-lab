@@ -1,12 +1,12 @@
 ---
 title: Authorization
-description: The lab runs the engine in enforce mode — what the three modes are, which identities exist, where their grants are declared, and how the monitor app gets a token.
+description: How the lab authorizes engine calls — what the three modes are, which identities exist, where their grants are declared, and how the monitor app gets a token.
 tags: [concept, security]
 ---
 
 # Authorization
 
-*The lab is the reference deployment for NeOps authorization: the engine enforces, every caller carries a token, and the whole model is declared in one committed file.*
+*The lab is the reference deployment for NeOps authorization: every caller carries a token, the whole model is declared in one committed file, and one variable decides how hard the engine gates.*
 
 ## The three modes
 
@@ -18,7 +18,9 @@ The engine reads `NEOPS_AUTHZ_MODE`, and rejects anything outside these three va
 | `permissive` | Requires a valid Neops JWT; a token reporting `authz_enforced: false` is allowed through, with a warning. Against a CMS running the permissions plugin it denies like `enforce`. |
 | `disabled` | Treats every caller as anonymous and gates nothing. |
 
-`docker-compose.yml` sets `enforce`. A lab that gates nothing would prove nothing about the deployments it stands in for, and the failure modes that matter — a missing grant, an expired token, a CORS origin nobody enumerated — only appear under enforcement.
+`docker-compose.yml` currently sets `disabled`. Everything `enforce` needs is wired up regardless — the mounted public key, the enumerated CORS origins, a bearer token on every lab caller — so turning gating on is editing that one value on the `workflow_engine` service and re-running `make local-env-up`.
+
+Leave it on `enforce` when you want the lab to stand in for a real deployment: the failure modes that matter — a missing grant, an expired token, a CORS origin nobody enumerated — only appear under enforcement.
 
 Two more variables travel with it on the `workflow_engine` service:
 
@@ -49,10 +51,11 @@ All four roles carry the same CMS visibility (`default_permission` 7 and a `Role
 
 ## Where the grants are declared
 
-`cms/permissions.json`:
+`scenarios/_base/cms/permissions.json`, resolved into the scenario tree like every
+other overridable asset:
 
 ```json
---8<-- "../cms/permissions.json"
+--8<-- "../scenarios/_base/cms/permissions.json"
 ```
 
 `apply_cms_config` reads it, creates each role and user, and then runs the CMS's own `manage.py grant_workflow_permissions --role <role> --profile <profile> --yes` once per role, printing the diff it applies. That command is the single mechanism: the script writes no grant row itself.
@@ -103,7 +106,7 @@ make lab-grant ROLE=workflow-operator PROFILE=admin
 
 The monitor app at <http://localhost:3031> holds no session of its own. The web client embeds it in an iframe (`FRONTEND_WORKFLOW_MANAGER_URL`) and relays its access token over `postMessage`; the monitor keeps it in memory only.
 
-The relay's trust anchor is `window.__NEOPS_CONFIG__.webclientOrigin`, which the lab supplies through `monitor/config.js`, bind-mounted over `rest/monitor-app/static/config.js`. Setting `WEBCLIENT_ORIGIN` on the service has no effect here: that variable is read by an nginx entrypoint, and this service runs the engine image with `npm run dev`. See [invariant 16](../60-development/20-invariants.md).
+The relay's trust anchor is `window.__NEOPS_CONFIG__.webclientOrigin`, which the lab supplies through `monitor/config.js`, bind-mounted over `rest/monitor-app/static/config.js`. Setting `WEBCLIENT_ORIGIN` on the service has no effect here: that variable is read by an nginx entrypoint, and this service runs the engine image with `npm run dev`. See [invariant 21](../60-development/20-invariants.md).
 
 Opening `http://localhost:3031` directly gives an unauthenticated monitor, because no web client is there to relay from. Reach it through the web client's workflow-monitor page.
 

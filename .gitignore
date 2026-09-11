@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 
 # Generated containerlab topology, per-device configs + the per-lab runtime dir
-# (generated/clab-neops-lab). Everything under here is rebuilt from topology.json
+# (generated/<scenario>/clab/clab-neops-lab). Everything under here is rebuilt
 # by `./gen_clab_topology`; the runtime dir also holds containerlab-minted TLS
 # private keys, which must never be committed.
 generated/
@@ -83,4 +83,9 @@ site/
 
 docs/assets/document_dates/
 
+# Design specs and implementation plans are working records, not deliverables.
+# They stay on disk and out of git; mkdocs_custom.yml also excludes them from the site.
+docs/superpowers/
+
+# Playwright MCP profile / trace output
 .playwright-mcp

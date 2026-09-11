@@ -1,6 +1,6 @@
 ---
 title: Topology as source of truth
-description: topology.json describes every device and link; gen_clab_topology renders the containerlab topology, the per-device configs and three discovery parameter files from it.
+description: Each scenario's topology.json describes every device and link; gen_clab_topology renders the containerlab topology, the per-device configs and three discovery parameter files from it.
 tags: [concept, topology]
 ---
 
@@ -8,7 +8,9 @@ tags: [concept, topology]
 
 *One JSON file describes the network. Everything else about the network is generated from it — and a test enforces that.*
 
-## `topology.json`
+Each [scenario](../30-scenarios/index.md) owns one. `scenarios/wan-and-fabric/topology.json` is the default; `scenarios/frr-only/topology.json` is the same WAN domain without the SR Linux fabric. A topology is never inherited from `scenarios/_base/` — a scenario *is* its topology.
+
+## `scenarios/<scenario>/topology.json`
 
 A single object, `devices`, keyed by hostname. Each device carries four fields:
 
@@ -55,52 +57,65 @@ Three name spellings coexist and the generator converts between them:
 
 ## What the generator produces
 
-`./gen_clab_topology` (stdlib-only, runs on the host) reads `topology.json` and writes:
+`make generate` (which resolves the scenario, then runs the stdlib-only host script `gen_clab_topology`) reads the selected scenario's `topology.json` and writes, for `SCENARIO=wan-and-fabric`:
 
 | Output | Tracked? | Contents |
 |---|---|---|
-| `generated/neops-lab.clab.json` | no | The containerlab topology: nodes, kinds, images, `veth` links, `dummy` links |
-| `generated/frr/<host>.iface` | no | `name|description` per line, loopback first |
-| `generated/srl/<host>.cli` | no | `set / interface … admin-state enable` + `… description "…"` per interface |
-| `workflow-execution-parameters/discover-params.json` | **yes** | 15 `/32`s with `platform` + platform-scoped credentials |
-| `workflow-execution-parameters/discover-params-autodetect.json` | **yes** | the same `/32`s without `platform` |
-| `workflow-execution-parameters/discover-params-subnet.json` | **yes** | the management `/24` with subnet-scoped credentials |
+| `generated/wan-and-fabric/clab/neops-lab.clab.json` | no | The containerlab topology: nodes, kinds, images, `veth` links, `dummy` links |
+| `generated/wan-and-fabric/clab/frr/<host>.iface` | no | `name|description` per line, loopback first |
+| `generated/wan-and-fabric/clab/srl/<host>.cli` | no | `set / interface … admin-state enable` + `… description "…"` per interface |
+| `scenarios/wan-and-fabric/workflow-execution-parameters/discover-params.json` | **yes** | one `/32` per device with `platform` + platform-scoped credentials |
+| `scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-autodetect.json` | **yes** | the same `/32`s without `platform` |
+| `scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-subnet.json` | **yes** | the management `/24` with subnet-scoped credentials |
 
-It also prunes stale `generated/frr/*.iface` and `generated/srl/*.cli` files for hostnames no longer in the topology, and prints a summary:
+The generated parameter files are written back beside the topology that produced them, so each scenario carries its own committed set.
+
+It also prunes stale `*.iface` and `*.cli` files for hostnames no longer in the topology, and prints a summary:
 
 ```text
-generated clab topology: 15 nodes, 18 veth links, 8 dummy links
+scenario 'wan-and-fabric': 15 nodes, 18 veth links, 8 dummy links
 generated 10 FRR + 5 SRL device configs
-generated discover-params.json + discover-params-autodetect.json + discover-params-subnet.json
+generated discover-params.json, discover-params-autodetect.json, discover-params-subnet.json
 ```
 
-`gen_device_configs` is the sibling module holding the per-device renderers (`render_frr`, `render_srl`); `gen_clab_topology` loads it by path and reuses them. It is also runnable on its own if you only want the device configs.
+`gen_device_configs` is the sibling module holding the per-device renderers (`render_frr`, `render_srl`) and the topology loader; `gen_clab_topology` loads it by path and reuses them. It is also runnable on its own if you only want the device configs.
 
 !!! warning "`discover-params-mixed.json` is hand-maintained"
     Three of the four parameter files are generated. **`discover-params-mixed.json`
     is not** — no generator emits it and no test covers it. It is a hand-written
-    scenario (the `/24` plus `/32` overrides for the SR Linux nodes, exercising
-    longest-prefix-match credential selection). If you change `topology.json`,
-    the other three files regenerate; this one you must update yourself, and
-    nothing will tell you that you forgot.
+    case (the `/24` plus `/32` overrides for the SR Linux nodes, exercising
+    longest-prefix-match credential selection) and it exists only for
+    `wan-and-fabric`, because mixing per-subnet platforms has nothing to express
+    when every device runs the same NOS. If you change that topology, the other
+    three files regenerate; this one you must update yourself, and nothing will
+    tell you that you forgot.
 
 ## How each vendor is configured
 
 === "FRRouting"
 
     containerlab runs the local image `neops-lab-frr:latest` as `kind: linux`
-    and binds two files into the node:
+    and binds four files into the node:
 
     - `frr/<host>.iface` → `/etc/frr/lab-interfaces/<host>.iface`
-    - `../devices/frr/set-aliases.sh` → `/etc/frr/set-aliases.sh`
+    - `../scenario/devices/frr/set-aliases.sh` → `/lab/set-aliases.sh`
+    - `../scenario/devices/frr/frr.conf` → `/lab/frr.conf`
+    - `../scenario/devices/frr/daemons` → `/lab/daemons`
+
+    The last two are the scenario's FRR configuration. The image does **not**
+    bake them: `devices/frr/entrypoint.sh` installs them from `/lab` before
+    `docker-start` and refuses to boot if they are absent, so one
+    `neops-lab-frr:latest` serves every scenario and a scenario wanting a
+    different routing baseline ships a `devices/frr/daemons` delta instead of a
+    second image.
 
     containerlab creates the `swpN` veths itself. A containerlab `exec` then
     runs `set-aliases.sh` **after wiring**, which sets each interface's Linux
     *alias* — that is what the SDK's FRR plugin reads as the interface
     description:
 
-    ```sh title="devices/frr/set-aliases.sh"
-    --8<-- "../devices/frr/set-aliases.sh"
+    ```sh title="scenarios/_base/devices/frr/set-aliases.sh"
+    --8<-- "../scenarios/_base/devices/frr/set-aliases.sh"
     ```
 
 === "Nokia SR Linux"
@@ -114,14 +129,18 @@ generated discover-params.json + discover-params-autodetect.json + discover-para
     many more ports than the topology wires. The wired ones carry descriptions;
     the rest show admin-disabled — which is realistic for a switch.
 
-!!! warning "`../devices/frr/set-aliases.sh` is relative to `generated/`"
-    The generator emits that bind path with a leading `../` because the
-    topology file it writes lives in `generated/`, and containerlab resolves
-    binds relative to the topology file. It is correct as written — do not
-    "fix" it to `devices/…`.
+!!! warning "The `../scenario/…` bind paths are relative to the topology file"
+    The generator emits those binds with a leading `../` because the topology
+    file it writes lives in `generated/<scenario>/clab/`, and containerlab
+    resolves binds relative to the topology file's own directory — not the repo
+    root — before handing absolute host paths to the daemon. `../scenario/…`
+    therefore reaches `generated/<scenario>/scenario/`, the resolved overlay.
+    They are correct as written; do not "fix" them to `devices/…`.
 
 ## The generator tests are the guard
 
-`tests/test_gen_clab_topology.py` and `tests/test_gen_device_configs.py` load the extension-less scripts by path and assert, among other things, that regenerating from `topology.json` reproduces the **committed** `workflow-execution-parameters/*.json` byte-for-byte. `_dump_discover_params` hand-rolls a compact per-entry layout that `json.dumps` cannot produce, so the check is exact.
+`tests/test_gen_clab_topology.py` and `tests/test_gen_device_configs.py` load the extension-less scripts by path and assert, among other things, that regenerating from a scenario's `topology.json` reproduces its **committed** `workflow-execution-parameters/*.json` byte-for-byte. `_dump_discover_params` hand-rolls a compact per-entry layout that `json.dumps` cannot produce, so the check is exact.
 
-The consequence for you: **change `topology.json` → run `./gen_clab_topology` → commit the regenerated JSON**, or `make test` fails. See [Adding a device](../20-operations/30-adding-a-device.md) for the full loop.
+The guard is **parametrised over `scenarios/*`**, so adding a scenario extends it automatically rather than leaving it covering only the first one. `tests/test_scenario_manifests.py` adds the structural checks: every manifest is complete, and every device-to-device link is symmetric — which is what catches a scenario derived by deleting devices and leaving a survivor pointing at something that is gone.
+
+The consequence for you: **change a `topology.json` → run `make generate SCENARIO=<name>` → commit the regenerated JSON**, or `make test` fails. See [Adding a device](../20-operations/30-adding-a-device.md) for the full loop.

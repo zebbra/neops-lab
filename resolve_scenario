@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Materialise one scenario's asset tree from `scenarios/` (stdlib-only, run on the host).
+
+A scenario is `scenarios/<name>/` overlaid on `scenarios/_base/`, file by file:
+the scenario's copy of a path wins, anything it does not carry comes from the
+base. The union is written to `generated/<name>/scenario/`, which is what the
+compose mounts, `apply_cms_config` and the generators actually read.
+
+The overlay is resolved once, here, because `docker compose` cannot express a
+fallback in a bind mount — and because a rule implemented in Python, in bash and
+in YAML three times is a rule with three chances to disagree.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import shutil
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+SCENARIOS_DIR = HERE / "scenarios"
+BASE_DIR = SCENARIOS_DIR / "_base"
+GENERATED_DIR = HERE / "generated"
+
+# A scenario *is* its topology, so that file is never inherited from the base;
+# the manifest names and describes it for `--list`.
+REQUIRED_FILES = ("scenario.json", "topology.json")
+
+# The scenario files every FRR device is handed at /lab: the alias script the
+# lab execs after wiring, and the FRR config its entrypoint installs. Both
+# deployment flavours mount exactly these, so the tuple lives here rather than
+# once per generator.
+LAB_FILE_KEYS = ("set-aliases.sh", "frr.conf", "daemons")
+LAB_DIR_PATH = "/lab"
+
+
+def scenario_name(explicit: str | None) -> str:
+    """Return the scenario to act on: the explicit name, else `$SCENARIO`.
+
+    Deliberately no built-in default. The Makefile holds the only one, so a
+    consumer reached without it fails instead of silently applying half of one
+    scenario and half of another.
+    """
+    name = explicit or os.environ.get("SCENARIO")
+    if not name:
+        raise SystemExit("no scenario: pass --scenario NAME or set SCENARIO (the Makefile exports it)")
+    return name
+
+
+def available() -> list:
+    """Return the scenario names, base excluded."""
+    if not SCENARIOS_DIR.is_dir():
+        return []
+    return sorted(p.name for p in SCENARIOS_DIR.iterdir() if p.is_dir() and p.name != BASE_DIR.name)
+
+
+def source_dir(name: str) -> pathlib.Path:
+    """Return `scenarios/<name>`, checked for the files a scenario must carry."""
+    path = SCENARIOS_DIR / name
+    if not path.is_dir():
+        raise SystemExit(f"unknown scenario {name!r}; available: {', '.join(available()) or '(none)'}")
+    for required in REQUIRED_FILES:
+        if not (path / required).is_file():
+            raise SystemExit(f"scenario {name!r} is missing {required}")
+    return path
+
+
+def resolved_dir(name: str) -> pathlib.Path:
+    """Return the directory the overlay is materialised into."""
+    return GENERATED_DIR / name / "scenario"
+
+
+def require_resolved(name: str) -> pathlib.Path:
+    """Return the resolved tree, insisting it has been materialised.
+
+    A consumer reading a half-resolved tree would silently mix scenarios, so an
+    absent one is an error naming the target that fixes it.
+    """
+    path = resolved_dir(name)
+    if not path.is_dir():
+        raise SystemExit(f"scenario {name!r} is not resolved: run `make scenario-resolve SCENARIO={name}`")
+    return path
+
+
+def output_dir(name: str) -> pathlib.Path:
+    """Return the scenario's generated-artifact root (clab/, kind/)."""
+    return GENERATED_DIR / name
+
+
+def _files(root: pathlib.Path) -> dict:
+    """Map every file under `root` to its path, keyed relative to `root`."""
+    if not root.is_dir():
+        return {}
+    return {path.relative_to(root): path for path in sorted(root.rglob("*")) if path.is_file()}
+
+
+def plan(name: str) -> dict:
+    """Map each resolved path to the file it comes from, scenario winning."""
+    resolved = _files(BASE_DIR)
+    resolved.update(_files(source_dir(name)))
+    return resolved
+
+
+def _prune(root: pathlib.Path, written: set) -> None:
+    """Delete what an earlier resolve left behind and this one did not write."""
+    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*"), reverse=True):
+        if path.is_file() and path not in written:
+            path.unlink()
+        elif path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+
+
+def resolve(name: str) -> dict:
+    """Materialise the overlay into `generated/<name>/scenario` and describe it."""
+    destination = resolved_dir(name)
+    resolved = plan(name)
+    written = set()
+    for relative, source in resolved.items():
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        shutil.copymode(source, target)
+        written.add(target)
+    _prune(destination, written)
+    return resolved
+
+
+def _print_resolution(resolved: dict) -> None:
+    for relative in sorted(resolved):
+        origin = "base" if resolved[relative].is_relative_to(BASE_DIR) else "scenario"
+        print(f"  {origin:8} {relative}")
+
+
+def _print_listing() -> int:
+    """Print one entry per scenario from its manifest."""
+    for name in available():
+        manifest = json.loads((SCENARIOS_DIR / name / "scenario.json").read_text())
+        devices = json.loads((SCENARIOS_DIR / name / "topology.json").read_text())["devices"]
+        flavours = ",".join(manifest["flavours"])
+        print(f"  {name:20} {len(devices):>3} devices  [{flavours}]  {manifest['title']}")
+        print(f"  {'':20} {manifest['summary']}")
+    return 0
+
+
+def parse_args(argv: list) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Resolve a lab scenario's asset tree.")
+    parser.add_argument("--scenario", help="scenario to resolve; defaults to $SCENARIO")
+    parser.add_argument("--list", action="store_true", help="list the available scenarios and exit")
+    parser.add_argument("--quiet", action="store_true", help="print only the summary line")
+    return parser.parse_args(argv)
+
+
+def main(argv: list | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    if args.list:
+        return _print_listing()
+
+    name = scenario_name(args.scenario)
+    resolved = resolve(name)
+    if not args.quiet:
+        _print_resolution(resolved)
+    print(f"resolved scenario {name!r}: {len(resolved)} files -> generated/{name}/scenario")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

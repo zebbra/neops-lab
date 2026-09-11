@@ -1,16 +1,18 @@
 ---
 title: NeOps Lab
-description: A turn-key local containerlab environment — 10 FRRouting routers and 5 Nokia SR Linux switches with real point-to-point wiring, plus the full NeOps control plane on docker compose.
+description: A turn-key local containerlab environment — multi-vendor device topologies with real point-to-point wiring, plus the full NeOps control plane on docker compose.
 tags: [overview, concept]
 ---
 
 # NeOps Lab
 
-*A turn-key **local** multi-vendor lab: 10 FRRouting routers + 5 Nokia SR Linux switches (15 devices) with real point-to-point wiring, provisioned by [containerlab](https://containerlab.dev), plus the full NeOps control plane on docker compose.*
+*A turn-key **local** multi-vendor lab: containerised routers and switches with real point-to-point wiring, provisioned by [containerlab](https://containerlab.dev), plus the full NeOps control plane on docker compose.*
 
-`neops-lab` gives you the whole platform on one machine. The control plane — CMS, workflow engine, monitor app, web client, worker — runs as containers; the devices attach to the same `lab-net` bridge (`172.30.0.0/24`) at fixed management IPs, so the worker can SSH to them exactly the way it would reach real hardware. Four make targets later, **15 `Device` rows — each with its interfaces — appear in the web client.**
+`neops-lab` gives you the whole platform on one machine. The control plane — CMS, workflow engine, monitor app, web client, worker — runs as containers; the devices attach to the same `lab-net` bridge (`172.30.0.0/24`) at fixed management IPs, so the worker can SSH to them exactly the way it would reach real hardware. Four make targets later, **one `Device` row per device — each with its interfaces — appears in the web client.**
 
-This repo owns *the lab*: the topology, the device configs, the workflow, the bootstrap sequencing and two small helper images. Everything else comes from published `quay.io/zebbra` images.
+Which network you get is a **scenario**. The default, `wan-and-fabric`, is 10 FRRouting routers plus a 5-node Nokia SR Linux fabric; `frr-only` is the same FRR network without the SR Linux nodes, and boots in a fraction of the time. `make scenarios` lists them, `SCENARIO=<name>` selects one, and [Scenarios](30-scenarios/index.md) explains how to add your own.
+
+This repo owns *the lab*: the scenarios, the device configs, the workflow, the bootstrap sequencing and two small helper images. Everything else comes from published `quay.io/zebbra` images.
 
 !!! danger "This is not `neops-remote-lab`"
     Two repos in the NeOps workspace have "lab" in the name and they share
@@ -18,8 +20,8 @@ This repo owns *the lab*: the topology, the device configs, the workflow, the bo
 
     - **`neops-lab`** (this repo) — a *local* containerlab dev/demo
       environment you run on your own machine. Docker compose + containerlab,
-      15 containerised devices, the full control plane. Nobody imports it; it
-      defines no API.
+      a scenario's worth of containerised devices, the full control plane.
+      Nobody imports it; it defines no API.
     - **`neops-remote-lab`** — a *shared, remote* FastAPI service that gives
       automated tests exclusive, FIFO-queued access to real
       [Netlab](https://netlab.tools/) topologies. It is a published PyPI
@@ -38,9 +40,9 @@ This repo owns *the lab*: the topology, the device configs, the workflow, the bo
 
     ---
 
-    *From a clean checkout to 15 discovered devices.*
+    *From a clean checkout to a discovered network.*
 
-    - What your host needs (containerlab, Docker, Quay pull access)
+    - What your host needs (containerlab, Docker; the default images pull anonymously)
     - Four commands, in order, and what each one waits for
     - The URLs the lab publishes and what to click first
 
@@ -53,7 +55,7 @@ This repo owns *the lab*: the topology, the device configs, the workflow, the bo
     *The mental model before you change anything.*
 
     - Which containers exist, on which networks, on which ports
-    - `topology.json` as the single source of truth, and what is generated from it
+    - A scenario's `topology.json` as the single source of truth, and what is generated from it
     - How discovery turns a CIDR list into `Device` + `Interface` rows
 
     [Concepts :material-arrow-right:](10-concepts/index.md)
@@ -65,7 +67,7 @@ This repo owns *the lab*: the topology, the device configs, the workflow, the bo
     *Day-to-day operation.*
 
     - Every make target, what it does, and when to reach for it
-    - The two local-only images and the three overridable published ones
+    - The two local-only images and the four overridable published ones
     - Race conditions, boot-order symptoms, and the full-reset recipe
 
     [Operate the lab :material-arrow-right:](20-operations/index.md)
@@ -85,6 +87,8 @@ This repo owns *the lab*: the topology, the device configs, the workflow, the bo
 </div>
 
 ## What the lab looks like
+
+The `wan-and-fabric` scenario, the one you get by default:
 
 ```mermaid
 graph TB
@@ -118,7 +122,7 @@ graph TB
   frr <-- "real veth links" --> srl
 ```
 
-The devices are **really cabled** to each other — a small SR Linux spine-leaf fabric plus an FRR WAN/core/edge domain. Interfaces on connected ports come up **UP** and LLDP neighbours are real, which is what makes the lab useful for neighbour- and topology-aware work rather than just row-counting.
+The devices are **really cabled** to each other — a small SR Linux spine-leaf fabric plus an FRR WAN/core/edge domain. Interfaces on connected ports come up **UP**, and on the SR Linux fabric LLDP neighbours are real too, which is what makes the lab useful for neighbour- and topology-aware work rather than just row-counting. The FRR nodes carry no LLDP daemon (`scenarios/_base/devices/frr/daemons` runs zebra and ospfd only), so neighbour discovery there has nothing to read.
 
 ## End state
 
@@ -126,7 +130,7 @@ Run [the quickstart](getting-started/20-quickstart.md) and you get:
 
 | URL | What it is |
 |---|---|
-| <http://localhost:8080/> | Web client — the entity browser where the 15 devices show up |
+| <http://localhost:8080/> | Web client — the entity browser where the scenario's devices show up |
 | <http://localhost:3031> | Monitor app — workflow authoring and execution monitoring |
 | <http://localhost:3030> | Workflow engine REST API |
 | <http://localhost:8001/admin/> | CMS Django admin (`neops` / `neops`) |
@@ -141,7 +145,12 @@ Run [the quickstart](getting-started/20-quickstart.md) and you get:
     [Troubleshooting](20-operations/40-troubleshooting.md) → [Make targets](20-operations/10-make-targets.md) → [Architecture](10-concepts/10-architecture.md). Most failures are a boot-order race with a very specific error string; the troubleshooting page indexes them by symptom.
 
 !!! info "You want to change the network"
-    [Topology as source of truth](10-concepts/20-topology.md) → [Adding a device](20-operations/30-adding-a-device.md) → [Dev setup](60-development/10-dev-setup.md). Everything flows from `topology.json`; the generator tests fail until you commit the regenerated JSON.
+    [Topology as source of truth](10-concepts/20-topology.md) → [Adding a device](20-operations/30-adding-a-device.md) → [Dev setup](60-development/10-dev-setup.md). Everything flows from the scenario's `topology.json`; the generator tests fail until you commit the regenerated JSON.
+
+!!! info "You want a *different* network"
+    [Scenarios](30-scenarios/index.md). Group a topology, its workflows and its
+    CMS scope configuration into `scenarios/<name>/`, then
+    `make local-lab-up SCENARIO=<name>`.
 
 !!! info "Discovery found nothing / found the wrong thing"
     [Discovery](10-concepts/30-discovery.md) → [The `/app/lab` mount](10-concepts/40-container-paths.md) → [Troubleshooting](20-operations/40-troubleshooting.md). The function block lives in the *worker image*, not in this repo.

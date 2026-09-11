@@ -1,6 +1,6 @@
 ---
 title: Concepts
-description: The mental model — what containers exist, how topology.json drives everything generated, how discovery works, and why in-container paths carry a lab/ prefix.
+description: The mental model — what containers exist, how a scenario's topology.json drives everything generated, how discovery works, and why in-container paths carry a lab/ prefix.
 tags: [concept]
 ---
 
@@ -22,7 +22,7 @@ tags: [concept]
 
     ---
 
-    `topology.json` holds every device, management IP, vendor, loopback and interface. `gen_clab_topology` renders the containerlab topology, the per-device configs and three of the four discovery parameter files from it. Nothing else is authored by hand.
+    `scenarios/<scenario>/topology.json` holds every device, management IP, vendor, loopback and interface. `make generate` renders the containerlab topology, the per-device configs and the three generated discovery parameter files from it. Nothing else is authored by hand.
 
 -   :material-radar:{ .lg .middle } &nbsp; **[Discovery](30-discovery.md)**
 
@@ -40,10 +40,10 @@ tags: [concept]
 
     ---
 
-    The engine runs in `enforce` mode: the three modes, the automation identity and the three personas, where their grants are declared, how the monitor app is handed a token, and how long one lasts.
+    The three `NEOPS_AUTHZ_MODE` modes, the automation identity and the three personas, where their grants are declared, how the monitor app is handed a token, and how long one lasts.
 
 </div>
 
 ## The one-paragraph version
 
-`topology.json` describes 15 devices. `gen_clab_topology` turns that into a containerlab topology plus per-device configs plus discovery parameters. containerlab deploys the devices onto the `lab-net` bridge at fixed management IPs. Docker compose runs the NeOps control plane, with the worker attached to *both* the default network (to reach the engine) and `lab-net` (to reach the devices). A one-shot bootstrap container registers the workflow definitions with the engine. Running the discovery workflow dispatches a function block onto the worker, which SSHes to every management IP and writes `Device` and `Interface` rows into the CMS.
+A scenario's `topology.json` describes its devices — 15 for the default `wan-and-fabric`, 10 for `frr-only`. `make generate` turns that into a containerlab topology plus per-device configs plus discovery parameters. containerlab deploys the devices onto the `lab-net` bridge at fixed management IPs. Docker compose runs the NeOps control plane, with the worker attached to *both* the default network (to reach the engine) and `lab-net` (to reach the devices). A one-shot bootstrap container registers the workflow definitions with the engine. Running the discovery workflow dispatches a function block onto the worker, which SSHes to every management IP and writes `Device` and `Interface` rows into the CMS.

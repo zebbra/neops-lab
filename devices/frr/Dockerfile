@@ -13,12 +13,11 @@ RUN apk add --no-cache openssh openssh-server bash shadow iproute2 \
  && sed -ri 's|^#?PasswordAuthentication .*|PasswordAuthentication yes|' /etc/ssh/sshd_config \
  && sed -ri 's|^#?PermitRootLogin .*|PermitRootLogin no|' /etc/ssh/sshd_config
 
-COPY frr.conf /etc/frr/frr.conf
-COPY daemons /etc/frr/daemons
+# frr.conf and daemons are NOT baked in: they are scenario data, mounted at
+# /lab and installed by the entrypoint. One image serves every scenario, and the
+# config lives in exactly one place (scenarios/*/devices/frr/).
 COPY entrypoint.sh /usr/local/bin/lab-entrypoint.sh
-RUN chmod 640 /etc/frr/frr.conf /etc/frr/daemons \
- && chown frr:frr /etc/frr/frr.conf /etc/frr/daemons \
- && chmod 755 /usr/local/bin/lab-entrypoint.sh
+RUN chmod 755 /usr/local/bin/lab-entrypoint.sh
 
 EXPOSE 22
 

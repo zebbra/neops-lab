@@ -7,7 +7,7 @@ Examples
     ./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 '{"subnets": []}'
 
     # Parameters from a file (curl-style "@file")
-    ./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 @workflow-execution-parameters/discover-params.json
+    ./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 @scenarios/<name>/workflow-execution-parameters/discover-params.json
 
     # Parameters from stdin
     echo '{"foo": "bar"}' | ./run_workflow wf.example/something:1.0.0 -

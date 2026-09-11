@@ -13,10 +13,11 @@ tags: [operations, debugging]
 ```bash
 make doctor                       # host preflight: RAM, subnets, mount, images
 export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
+export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
 docker compose ps                 # what is running, what exited
 make local-lab-logs               # worker + lab_bootstrap, followed
 docker compose logs cms           # CMS startup crashes land here
-./containerlab inspect -t generated/neops-lab.clab.json
+./containerlab inspect -t generated/wan-and-fabric/clab/neops-lab.clab.json
 ```
 
 Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the `worker` or `lab_bootstrap` services — the base compose file does not declare them. The make targets set it themselves.
@@ -89,32 +90,20 @@ See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10
 timeout: no online worker for fb.base.neops.io/global_discover_network:0.1.0 within 180s
 ```
 
-and `docker compose logs worker` ends in
+**Cause:** the worker image you pinned does not carry the base function blocks.
+They ship *inside* the image rather than being bind-mounted from here, so an
+image built without them registers nothing and `wait_ready` waits for a worker
+that will never announce the block.
 
-```
-OSError: Readme file does not exist: README.md
-```
-
-**Cause:** you are running the published `quay.io/zebbra/neops-worker-sdk:develop`
-image. It is built from `neops-worker-sdk-py`'s `develop` branch, where `neops/`
-contains only `.gitkeep` files and the Dockerfile copies neither `neops/` nor
-`README.md`. `CMD ["uv", "run", "neops_worker"]` installs the project at container
-start, hatchling reads `readme = "README.md"`, and the container dies before the
-worker ever connects. Even if it started, it would register no function blocks.
-
-**Fix:** build the image from the SDK branch that has the function blocks
-(open PR [zebbra/neops-worker-sdk-py#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127))
-and point the lab at it:
+**Fix:** check what the image actually holds, and fall back to the published tag
+or a fresh build of the SDK checkout:
 
 ```bash
-git -C ../neops-worker-sdk-py switch feature/technopark
+docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global'
 make -C ../neops-worker-sdk-py build-docker          # -> neops-worker-sdk:latest
-docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global'
 echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
 make local-lab-up
 ```
-
-This entry disappears once #127 merges and CI republishes the `develop` tag.
 
 ---
 
@@ -124,11 +113,12 @@ This entry disappears once #127 merges and CI republishes the `develop` tag.
 `docker compose logs lab_bootstrap` shows a `FAILED` line.
 
 - **`409`** — the version already exists with *different* content. Published
-  workflow definitions are **immutable**; editing `workflows/*.yaml` in place and
+  workflow definitions are **immutable**; editing a `scenarios/_base/workflows/` document in place and
   re-running is exactly what triggers this. Bump
   `majorVersion`/`minorVersion`/`patchVersion` in the YAML, and update the
   matching `wf.lab.neops.io/simple_lab_discovery:<version>` in the `Makefile`'s
-  `local-lab-discover` recipe.
+  `DISCOVER_WORKFLOW` variable, which both `local-lab-discover` and
+  `kind-lab-discover` read.
 - **`422`** — the document is publishable but the engine computed a higher
   version floor than the document declares. Raise the version.
 - **A `404` handled silently** — the engine predates
@@ -143,7 +133,7 @@ This entry disappears once #127 merges and CI republishes the `develop` tag.
 
 **Where:** `wait_ready`, `run_workflow` or `lab_bootstrap` stops with `401` or `403` and a line naming `NEOPS_ENGINE_TOKEN`.
 
-**Cause:** the engine runs `NEOPS_AUTHZ_MODE=enforce`, so every call to a gated route carries a bearer token. The make targets mint one per run; a hand-run script needs one in the environment. A `403` means the token is valid and its account lacks the route's permission.
+**Cause:** the engine is running `NEOPS_AUTHZ_MODE=enforce` or `permissive`, so every call to a gated route carries a bearer token. The make targets mint one per run; a hand-run script needs one in the environment. A `403` means the token is valid and its account lacks the route's permission.
 
 **Fix:**
 
@@ -188,7 +178,7 @@ See [Authorization](../10-concepts/50-authorization.md).
 
 ```bash
 docker logs spine-01
-./containerlab inspect -t generated/neops-lab.clab.json
+./containerlab inspect -t generated/wan-and-fabric/clab/neops-lab.clab.json
 ```
 
 !!! warning "Never replace a wait with a `sleep`"
@@ -217,7 +207,7 @@ Idempotent, and a prerequisite of `local-env-init` / `local-env-up` — so this 
 
 **Symptom:** <http://localhost:8080/> returns HTTP 200 and a blank `<app-root>`. **curl cannot see this failure** — the HTML is fine; the Angular bootstrap is what fails.
 
-**Cause:** `cms/oidc-config.json` must contain at least one well-formed `OpenIdConfiguration` entry with **inline** `authWellknownEndpoints` (no network discovery). The web client calls `OidcSecurityService.checkAuth()` in an `APP_INITIALIZER`; a `null` or `[]` config makes it fail before anything renders. The CMS serves the file through its `appSettings.oidcConfig` GraphQL resolver, so a missing `OIDC_CONFIG_PATH` produces the same result.
+**Cause:** `scenarios/_base/cms/oidc-config.json` must contain at least one well-formed `OpenIdConfiguration` entry with **inline** `authWellknownEndpoints` (no network discovery). The web client calls `OidcSecurityService.checkAuth()` in an `APP_INITIALIZER`; a `null` or `[]` config makes it fail before anything renders. The CMS serves the file through its `appSettings.oidcConfig` GraphQL resolver, so a missing `OIDC_CONFIG_PATH` produces the same result.
 
 **Fix:** check the file is present and non-empty, and that `OIDC_CONFIG_PATH=/etc/neops/oidc-config.json` is still set on the `cms` service.
 
@@ -261,7 +251,7 @@ make apply-cms-config
 
 With `CLAB_NATIVE` (a host binary) the classic failure is *"This containerlab command requires root privileges or root via SUID to run"* — usually after a **containerlab upgrade**: the new binary is installed without the SUID bit while your `clab_admins` membership survives, so `id` still looks right and only `ls -l "$(command -v containerlab)"` shows the missing `s`. `make clab-suid` restores it (idempotent).
 
-**Fix:** `make doctor`, or `make clab-suid` for the native path; details in [Prerequisites](../getting-started/10-prerequisites.md#containerlab--one-command-both-hosts-no-install). Then confirm with the two-node probe:
+**Fix:** `make doctor`, or `make clab-suid` for the native path; details in [Prerequisites](../getting-started/10-prerequisites.md#containerlab-one-command-both-hosts-no-install). Then confirm with the two-node probe:
 
 ```bash
 ./containerlab deploy  -t clab/probe.clab.yml

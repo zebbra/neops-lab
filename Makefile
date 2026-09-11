@@ -10,21 +10,109 @@ include .make_scripts/release-management/release-management-makefile
 # the same on Linux and macOS (see the header of ./containerlab).
 CONTAINERLAB ?= ./containerlab
 
+# Which lab this checkout runs. `make scenarios` lists them; everything a
+# scenario can own lives under scenarios/<name>/, overlaid on scenarios/_base/.
+# This is the ONLY default: every script, compose file and bash entry point
+# reads SCENARIO and fails when it is unset, so a scenario is never half-applied.
+SCENARIO ?= wan-and-fabric
+export SCENARIO
+# The scenario's source assets, its resolved overlay, and the artifacts the
+# generators write beside it.
+SCENARIO_SRC := scenarios/$(SCENARIO)
+# Which scenario is currently deployed, if any. Written after a successful
+# deploy, removed by the matching down target. Both flavours need this, for the
+# same reason: bringing up scenario B while A is deployed would otherwise leave
+# A's extra devices running and answering discovery.
+# `containerlab destroy` acts on the nodes named in the topology it is handed,
+# NOT on every container carrying the lab label — so swapping to a scenario with
+# fewer devices strands the rest and still leaves the lab registered, and the
+# next deploy fails with "lab has already been deployed". `--reconfigure` does
+# not help: it destroys the same handed set.
+# `kubectl apply` has the same gap from the other direction: it adds and updates
+# but never removes.
+CLAB_DEPLOYED_MARKER := generated/.deployed-scenario-clab
+KIND_DEPLOYED_MARKER := generated/.deployed-scenario-kind
+SCENARIO_DIR := generated/$(SCENARIO)/scenario
+GEN_DIR := generated/$(SCENARIO)
+
 # Wait budgets (seconds). Defaults suit a native Linux host; a Mac booting the
 # SR Linux nodes against a shared VM raises these rather than removing a wait.
 WAIT_READY_TIMEOUT ?= 180
 WAIT_DEVICES_TIMEOUT ?= 240
+
+# Kubernetes flavour of the lab (`make kind-lab-*`): the cluster to load the FRR
+# image into, and the namespace the device pods live in. The cluster is shared
+# with other projects — these targets only ever touch $(KIND_LAB_NAMESPACE).
+KIND_CLUSTER ?= kind
+KIND_LAB_NAMESPACE ?= neops-lab
+KIND_LAB_TIMEOUT ?= 180
+KIND_MANIFEST := $(GEN_DIR)/kind/lab.yaml
+# Discovery targets, regenerated on every run: the cluster hands out a fresh set
+# of Service ClusterIPs whenever the namespace is recreated, so this file is
+# never reused across a `kind-lab-down` / `kind-lab-up` cycle.
+KIND_DISCOVER_PARAMS := $(GEN_DIR)/kind/discover-params.json
+# 10 FRR devices over SSH; the containerlab flavour's 900s ceiling also covers
+# the 5 slower Nokia nodes, which this flavour does not render.
+KIND_DISCOVER_TIMEOUT ?= 600
+# How the workflow engine is reached. The CMS goes through a port-forward (see
+# kind-lab-cms-config); the engine cannot, because the definition is published
+# by the bootstrap container, which has no route to a port-forward bound on the
+# host. One address therefore has to serve the container and the host scripts.
+# The default is the umbrella's offline ingress name: every service is published
+# under a public name and a `*.neops.local` twin, and `make -C neops-helm
+# config-hosts` maps the twins to 127.0.0.1 — so it fits any deployment of the
+# stack without naming one. Point it at a public URL for a remote engine.
+KIND_ENGINE_URL ?= http://engine.neops.local
+# The engine's hostname and the container's route to it, both derived from that
+# one URL rather than repeated. A `*.neops.local` name resolves only through the
+# host's /etc/hosts, which a container does not share, so the mapping is handed
+# to `docker run` explicitly: the ingress listens on the host's port 80, and
+# host-gateway is the address a container reaches the host at. A public name
+# resolves through real DNS on both sides and needs no mapping; a port-forwarded
+# 127.0.0.1 needs DOCKER_RUN_FLAGS=--network=host instead.
+KIND_ENGINE_AUTHORITY := $(firstword $(subst /, ,$(patsubst http://%,%,$(patsubst https://%,%,$(KIND_ENGINE_URL)))))
+KIND_ENGINE_HOST := $(firstword $(subst :, ,$(KIND_ENGINE_AUTHORITY)))
+KIND_ENGINE_ADD_HOST := $(if $(filter %.local,$(KIND_ENGINE_HOST)),--add-host $(KIND_ENGINE_HOST):host-gateway)
+
+# The NeOps product stack `make kind-lab-cms-config` configures. It is a
+# separate deployment in its own namespace; nothing here installs, changes or
+# deletes it beyond the `neops` user's role and the Global scope.
+NEOPS_NAMESPACE ?= neops
+NEOPS_CMS_DEPLOYMENT ?= neops-neops-core
+# The workflow engine is issued a CMS API key at install; the lab borrows it
+# rather than minting a second one.
+NEOPS_CMS_TOKEN_SECRET ?= neops-neops-workflow-engine
+NEOPS_CMS_SERVICE ?= neops-neops-core
+NEOPS_CMS_PORT ?= 8000
+# The host talks to the CMS through a short-lived `kubectl port-forward`, not
+# through its ingress: no public DNS, no TLS and no ingress controller needed,
+# and it works on any cluster this kubectl can reach.
+CMS_PORT ?= 18000
+CMS_URL ?= http://127.0.0.1:$(CMS_PORT)
+# How apply_cms_config runs `manage.py` inside that CMS. Its own default is the
+# compose lab, so the Kubernetes flavour supplies the kubectl form here.
+CMS_EXEC ?= kubectl -n $(NEOPS_NAMESPACE) exec -i deploy/$(NEOPS_CMS_DEPLOYMENT) --
+
+# Extra flags for every docker build, e.g. DOCKER_BUILD_FLAGS=--network=host when the bridge network has no DNS.
+DOCKER_BUILD_FLAGS ?=
+# The same for `docker run` — the bootstrap container has to resolve the engine's
+# name, so a host whose docker bridge cannot resolve DNS needs --network=host here too.
+DOCKER_RUN_FLAGS ?=
 # -----------------------------------------------------------------------------
 # Images built from this repo. Local tags only — nothing here is published to a
 # registry; the lab always builds its two helper images on the machine that runs
 # it. (The worker, CMS, engine and web client all come from quay.io.)
 # -----------------------------------------------------------------------------
-build-docker:
-	# Custom FRR image (frrouting/frr + sshd + frr/frr login) that containerlab
-	# runs as `kind: linux`.
-	docker build -t neops-lab-frr:latest devices/frr
-	# One-shot container that POSTs every workflows/*.yaml to the engine.
-	docker build -t neops-lab-bootstrap:latest bootstrap
+build-docker: build-docker-frr build-docker-bootstrap
+
+# Custom FRR image (frrouting/frr + sshd + frr/frr login) that containerlab runs
+# as `kind: linux` and that the Kubernetes lab runs as a pod.
+build-docker-frr:
+	docker build $(DOCKER_BUILD_FLAGS) -t neops-lab-frr:latest devices/frr
+
+# One-shot container that POSTs the scenario's workflow documents to the engine.
+build-docker-bootstrap:
+	docker build $(DOCKER_BUILD_FLAGS) -t neops-lab-bootstrap:latest bootstrap
 
 lint:
 	uv run ruff format --check .
@@ -84,7 +172,7 @@ lab-env:
 		cp .env.example .env && echo "created .env from .env.example"; \
 	fi
 
-local-env-init: lab-jwt
+local-env-init: lab-jwt scenario-resolve
 	touch cms_api_key.env
 	# Refresh the published images. `--ignore-pull-failures` is load-bearing: if
 	# you override a service with a locally-built tag
@@ -129,7 +217,7 @@ local-env-init: lab-jwt
 	docker compose up -d --force-recreate workflow_engine
 	docker compose up -d
 
-local-env-up: lab-jwt
+local-env-up: lab-jwt scenario-resolve
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make local-env-init' first."; exit 1; fi
 	# See the note in local-env-init about --policy always / --ignore-pull-failures.
 	docker compose pull --policy always --ignore-pull-failures
@@ -146,6 +234,27 @@ local-env-prune:
 	docker compose down -v
 
 # -----------------------------------------------------------------------------
+# Scenarios — see docs/30-scenarios/
+# -----------------------------------------------------------------------------
+
+scenarios:
+	@./resolve_scenario --list
+
+# Materialise scenarios/_base + scenarios/$(SCENARIO) into $(SCENARIO_DIR), the
+# one flat directory the containers mount and the scripts read. docker compose
+# cannot express a fallback in a bind mount, so the overlay is resolved here
+# instead. Cheap enough to be a prerequisite of every scenario-consuming target,
+# which is what makes a stale overlay impossible.
+scenario-resolve:
+	@./resolve_scenario --quiet
+
+# Regenerate everything derived from the scenario's topology, including the
+# committed workflow-execution-parameters/*.json. Commit those: `make test`
+# asserts they reproduce byte-for-byte.
+generate: scenario-resolve
+	@./gen_clab_topology
+
+# -----------------------------------------------------------------------------
 # Simple Lab — see README.md
 # -----------------------------------------------------------------------------
 
@@ -157,7 +266,7 @@ LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml
 local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_FILE := $(LAB_COMPOSE_FILES)
 local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_PATH_SEPARATOR := :
 
-# The engine runs NEOPS_AUTHZ_MODE=enforce, so run_workflow, wait_ready and the
+# Whatever NEOPS_AUTHZ_MODE the engine runs in, run_workflow, wait_ready and the
 # lab_bootstrap container each send `Authorization: Bearer`. This snippet mints a
 # token unless NEOPS_ENGINE_TOKEN is already set, and exports it to every caller
 # after it in the recipe, so a step that needs a fresh one unsets the variable
@@ -169,22 +278,28 @@ MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$(./lab_token)}; 
 	export NEOPS_ENGINE_TOKEN; \
 	test -n "$$NEOPS_ENGINE_TOKEN" || { echo "error: minted an empty engine token; run ./lab_token to see why"; exit 1; }
 
-# Function block the discovery workflow dispatches to. The worker registers it
-# with the engine asynchronously after startup; `wait_ready` blocks on that.
+# The discovery workflow and the function block it dispatches to. Both flavours
+# run the same definition against the same block, so these are declared once.
+# The worker registers the block with the engine asynchronously after startup;
+# `wait_ready` blocks on that.
+# The version must match scenarios/_base/workflows/simple-lab-discovery.workflow.yaml, and
+# published versions are immutable: editing that file means bumping its
+# majorVersion/minorVersion/patchVersion and this variable together.
 DISCOVER_FB := fb.base.neops.io/global_discover_network:0.1.0
+DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.2.0
 
 # Execution parameters for the discovery workflow. Override to discover with a
 # different target form, e.g.
-#   make local-lab-discover DISCOVER_PARAMS=workflow-execution-parameters/discover-params-autodetect.json
-#   make local-lab-discover DISCOVER_PARAMS=workflow-execution-parameters/discover-params-subnet.json
-#   make local-lab-discover DISCOVER_PARAMS=workflow-execution-parameters/discover-params-mixed.json
-DISCOVER_PARAMS ?= workflow-execution-parameters/discover-params.json
+#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-autodetect.json
+#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-subnet.json
+#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-mixed.json
+DISCOVER_PARAMS ?= $(SCENARIO_SRC)/workflow-execution-parameters/discover-params.json
 
 # Grant profile `make lab-grant` applies: author | operator | admin.
 PROFILE ?= operator
 
-# containerlab topology (generated from topology.json by gen_clab_topology).
-CLAB_TOPO := generated/neops-lab.clab.json
+# containerlab topology (generated from the scenario's topology.json).
+CLAB_TOPO := $(GEN_DIR)/clab/neops-lab.clab.json
 
 # containerlab needs root to create netns/veths. Rather than sudo-ing every lab
 # target (which would prompt for a password in the middle of `local-lab-up`),
@@ -213,9 +328,17 @@ clab-suid:
 		echo "         then re-login for the group to apply."; \
 	fi
 
-local-lab-up: build-docker lab-jwt lab-env
+local-lab-up: build-docker lab-jwt lab-env scenario-resolve
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
-	# Generate the containerlab topology + per-device configs from topology.json.
+	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || true); \
+	if [ -n "$$deployed" ] && [ "$$deployed" != "$(SCENARIO)" ]; then \
+		echo "Error: scenario '$$deployed' is still deployed."; \
+		echo "       Run 'make local-lab-down SCENARIO=$$deployed' first — containerlab"; \
+		echo "       destroys only the nodes named in the topology it is handed, so"; \
+		echo "       '$$deployed' devices absent from '$(SCENARIO)' would keep running."; \
+		exit 1; \
+	fi
+	# Generate the containerlab topology + per-device configs from the scenario.
 	@./gen_clab_topology
 	# Refresh the worker image: the local-env-* pulls run with the base compose
 	# file, which does not include the worker service.
@@ -230,7 +353,7 @@ local-lab-up: build-docker lab-jwt lab-env
 	#
 	# `./apply_cms_config` runs before the mint: a token carries the permissions
 	# its account holds at login and keeps them for its whole 15-minute life, so
-	# the grants in cms/permissions.json have to be in the CMS first.
+	# the grants in the scenario's cms/permissions.json have to be in the CMS first.
 	#
 	# Base stack + worker + bootstrap. This creates the `lab-net` network that
 	# containerlab attaches the devices to, and registers the workflow definitions.
@@ -278,9 +401,10 @@ local-lab-up: build-docker lab-jwt lab-env
 	# discovery actually uses — works on every platform.
 	# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix here.
 	@echo "Waiting for all devices to accept SSH..."
-	@docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@echo "$(SCENARIO)" > $(CLAB_DEPLOYED_MARKER)
 	@echo ""
-	@echo "Lab is up (containerlab: 10 FRR + 5 Nokia SR Linux, real links)."
+	@echo "Lab is up (scenario: $(SCENARIO), real links)."
 	@echo "  Web client:   http://localhost:8080/"
 	@echo "  Engine UI:    http://localhost:3031"
 	@echo "  Engine API:   http://localhost:3030/"
@@ -289,12 +413,20 @@ local-lab-up: build-docker lab-jwt lab-env
 	@echo "  Run 'make local-lab-discover' to populate the CMS (15 devices with interfaces)."
 
 local-lab-down:
-	# --cleanup removes the per-lab runtime dir (generated/clab-neops-lab); the
-	# leading `-` lets `make` continue if no lab is deployed.
-	-$(CONTAINERLAB) destroy -t $(CLAB_TOPO) --cleanup
+	# Destroy the scenario that is actually deployed, which is not necessarily
+	# $(SCENARIO): containerlab acts on the nodes the handed topology names, so
+	# tearing down with the wrong one strands the difference. The marker wins
+	# when it exists; $(SCENARIO) is the fallback for a lab deployed before it.
+	# --cleanup removes the per-lab runtime dir
+	# (generated/<scenario>/clab/clab-neops-lab); the leading `-` lets `make`
+	# continue if no lab is deployed.
+	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || echo "$(SCENARIO)"); \
+	echo "$(CONTAINERLAB) destroy -t generated/$$deployed/clab/neops-lab.clab.json --cleanup"; \
+	$(CONTAINERLAB) destroy -t "generated/$$deployed/clab/neops-lab.clab.json" --cleanup || true
+	@rm -f $(CLAB_DEPLOYED_MARKER)
 	docker compose down
 
-local-lab-discover:
+local-lab-discover: scenario-resolve
 	# Always wait for the known lab devices, not the requested discovery input:
 	# a subnet target also contains unused addresses which must not block readiness.
 	#
@@ -307,20 +439,20 @@ local-lab-discover:
 	#
 	# `./apply_cms_config` runs before the mint: a token carries the permissions
 	# its account holds at login and keeps them for its whole 15-minute life, so
-	# an edit to cms/permissions.json reaches the engine on the next target
-	# rather than on the next `make apply-cms-config`.
+	# an edit to the scenario's cms/permissions.json reaches the engine on the next
+	# target rather than on the next `make apply-cms-config`.
 	@set -e; \
 	./apply_cms_config; \
 	$(MINT_ENGINE_TOKEN); \
 	./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB); \
-	docker compose exec -T worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT); \
-	./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @$(DISCOVER_PARAMS)
+	docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT); \
+	./run_workflow --timeout 900 $(DISCOVER_WORKFLOW) @$(DISCOVER_PARAMS)
 
-apply-cms-config:
+apply-cms-config: scenario-resolve
 	./apply_cms_config
 
 # Ad-hoc workflow grant for one role, the same command apply_cms_config runs for
-# every role in cms/permissions.json. PROFILE is author | operator | admin.
+# every role in the scenario's cms/permissions.json. PROFILE is author | operator | admin.
 lab-grant:
 	@test -n "$(ROLE)" || { echo "usage: make lab-grant ROLE=<role> [PROFILE=operator]"; exit 1; }
 	docker compose exec -T cms ./manage.py grant_workflow_permissions --role "$(ROLE)" --profile "$(PROFILE)" --yes
@@ -328,6 +460,103 @@ lab-grant:
 local-lab-logs:
 	docker compose logs -f worker lab_bootstrap
 
-.PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt lab-env clab-suid \
+# -----------------------------------------------------------------------------
+# Kubernetes Lab — the FRR devices as pods in a local KIND cluster.
+#
+# Standalone: no containerlab, no docker-compose, no local-env-* stack. Only the
+# 10 FRR devices are rendered; the 5 SR Linux nodes are far too heavy for a
+# shared local cluster (see gen_kind_manifests). Devices carry no mgmt IP here —
+# they are reached by in-cluster DNS, `<device>.$(KIND_LAB_NAMESPACE).svc.cluster.local`.
+# -----------------------------------------------------------------------------
+
+kind-lab-up: build-docker-frr scenario-resolve
+	@deployed=$$(cat $(KIND_DEPLOYED_MARKER) 2>/dev/null || true); \
+	if [ -n "$$deployed" ] && [ "$$deployed" != "$(SCENARIO)" ]; then \
+		echo "Error: scenario '$$deployed' is still deployed in $(KIND_LAB_NAMESPACE)."; \
+		echo "       Run 'make kind-lab-down' first — kubectl apply never removes,"; \
+		echo "       so '$$deployed' devices absent from '$(SCENARIO)' would keep"; \
+		echo "       running and answering discovery."; \
+		exit 1; \
+	fi
+	# The cluster has no registry, so the image is pushed straight onto the
+	# nodes; that is what makes the manifests' `imagePullPolicy: IfNotPresent`
+	# resolve without a pull.
+	kind load docker-image neops-lab-frr:latest --name $(KIND_CLUSTER)
+	@./gen_kind_manifests --namespace $(KIND_LAB_NAMESPACE)
+	kubectl apply -f $(KIND_MANIFEST)
+	# Not `wait_devices`, which is the containerlab flavour's TCP-22 poll: its
+	# check already runs here as each pod's `tcpSocket: 22` readinessProbe, from
+	# inside the cluster where the addresses actually resolve. A host-side poll
+	# cannot reach a ClusterIP or a *.svc.cluster.local name at all.
+	@echo "Waiting for the device pods to become ready..."
+	kubectl -n $(KIND_LAB_NAMESPACE) wait --for=condition=Available --timeout=$(KIND_LAB_TIMEOUT)s deployment --all
+	@echo "$(SCENARIO)" > $(KIND_DEPLOYED_MARKER)
+	@echo ""
+	@echo "Kubernetes lab is up in namespace $(KIND_LAB_NAMESPACE) (scenario: $(SCENARIO), FRR devices only, login frr / frr)."
+	@kubectl -n $(KIND_LAB_NAMESPACE) get svc -o jsonpath='{range .items[*]}  {.metadata.name}.{.metadata.namespace}.svc.cluster.local{"\n"}{end}'
+	@echo ""
+	@echo "  Run 'make kind-lab-status' for pods and services."
+
+kind-lab-down:
+	# Deleting the namespace takes every device with it and touches nothing else
+	# in this shared cluster — so unlike the containerlab flavour this is a clean
+	# slate whichever scenario was deployed.
+	kubectl delete namespace $(KIND_LAB_NAMESPACE) --ignore-not-found
+	@rm -f $(KIND_DEPLOYED_MARKER)
+
+kind-lab-status:
+	@kubectl -n $(KIND_LAB_NAMESPACE) get pods,svc
+
+# Discovery against the pods — the same four steps as local-lab-discover, run
+# through the same four scripts. Only the addresses differ; nothing about
+# publishing, waiting or executing is reimplemented here.
+#
+# Unlike local-lab-discover this also publishes the workflow definition, because
+# no lab_bootstrap container ran: the compose flavour registers it during
+# local-lab-up, and there is no equivalent step in kind-lab-up.
+kind-lab-discover: build-docker-bootstrap scenario-resolve
+	# Publishing is idempotent for unchanged content (200) and 409s if this
+	# version was already published with different content — bump the versions in
+	# the YAML and in DISCOVER_WORKFLOW rather than editing a published one.
+	docker run --rm $(KIND_ENGINE_ADD_HOST) $(DOCKER_RUN_FLAGS) -e ENGINE_URL=$(KIND_ENGINE_URL) \
+		-v "$(CURDIR)/$(SCENARIO_DIR)/workflows:/workflows:ro" neops-lab-bootstrap:latest
+	# One /32 per device, read live from the Services — see gen_kind_discover_params
+	# for why a summarising CIDR and an in-cluster DNS name are both unusable.
+	@./gen_kind_discover_params --namespace $(KIND_LAB_NAMESPACE) --output $(KIND_DISCOVER_PARAMS)
+	# The worker registers its function blocks with the engine asynchronously, so
+	# without this the execution fails with "Function block ... not found".
+	@./wait_ready --engine-url $(KIND_ENGINE_URL) --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB)
+	# No wait_devices: each pod's `tcpSocket: 22` readinessProbe already is that
+	# poll, and the host cannot reach a ClusterIP anyway (see kind-lab-up).
+	@./run_workflow --engine-url $(KIND_ENGINE_URL) --timeout $(KIND_DISCOVER_TIMEOUT) \
+		$(DISCOVER_WORKFLOW) @$(KIND_DISCOVER_PARAMS)
+
+# Applying the CMS config is deliberately a SEPARATE target: bringing the pods up
+# must not require a running product stack, the same way local-lab-up and
+# local-lab-discover are separate today.
+#
+# `apply_cms_config` is the compose lab's own script, reused through CMS_EXEC
+# rather than forked: it grants the `neops` user the `lab-admin` role and seeds
+# the Global scope, without which the web client shows no scope at all. Getting
+# the devices themselves into the CMS is discovery's job, not a second
+# implementation of it here — see the Kubernetes lab docs.
+#
+# The API key is read out of the cluster Secret per invocation, so it is never
+# stale, and the recipe is `@`-prefixed so it is never echoed.
+kind-lab-cms-config: scenario-resolve
+	@kubectl -n $(NEOPS_NAMESPACE) port-forward svc/$(NEOPS_CMS_SERVICE) $(CMS_PORT):$(NEOPS_CMS_PORT) >/dev/null & \
+	pf=$$!; trap 'kill $$pf 2>/dev/null || true' EXIT; \
+	i=0; until curl -s -o /dev/null --max-time 2 $(CMS_URL)/; do \
+		i=$$((i + 1)); test $$i -lt 30 || { echo "error: port-forward to $(NEOPS_CMS_SERVICE) never came up" >&2; exit 1; }; \
+		sleep 1; \
+	done; \
+	CMS_URL="$(CMS_URL)" CMS_EXEC="$(CMS_EXEC)" \
+	NEOPS_CMS_TOKEN="$$(kubectl -n $(NEOPS_NAMESPACE) get secret $(NEOPS_CMS_TOKEN_SECRET) -o jsonpath='{.data.NEOPS_CMS_TOKEN}' | base64 -d)" \
+	./apply_cms_config
+
+.PHONY: build-docker build-docker-frr build-docker-bootstrap doctor lint format typeCheck test py39-check \
+	shell-syntax check lab-jwt lab-env clab-suid \
+	scenarios scenario-resolve generate \
 	local-env-init local-env-up local-env-down local-env-prune \
-	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config lab-grant
+	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config lab-grant \
+	kind-lab-up kind-lab-down kind-lab-status kind-lab-cms-config kind-lab-discover
