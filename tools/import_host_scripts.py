@@ -19,6 +19,7 @@ SCRIPTS = (
     "gen_device_configs",
     "gen_kind_discover_params",
     "gen_kind_manifests",
+    "lab_token",
     "resolve_scenario",
     "run_workflow",
     "wait_ready",

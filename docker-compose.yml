@@ -18,8 +18,9 @@ services:
 
   cms:
     # Override via NEOPS_CMS_IMAGE (e.g. a locally-built neops-cms-free:latest,
-    # from `make -C ../neops-core build-docker flavor=cms-free`);
-    # `pull_policy: missing` then finds the local image and skips the registry.
+    # from `make -C ../neops-core build-docker flavor=cms-free`); defaults to the
+    # published develop image. `pull_policy: missing` finds a local image that is
+    # already present and skips the registry; force with NEOPS_CMS_PULL_POLICY.
     image: ${NEOPS_CMS_IMAGE:-quay.io/zebbra/neops-cms-free:develop}
     pull_policy: ${NEOPS_CMS_PULL_POLICY:-missing}
     environment:
@@ -88,14 +89,28 @@ services:
     <<: *workflow-engine-image
     environment:
       - DEBUG=True
+      - NODE_ENV=development
       - NEOPS_CMS_URL=http://cms:8000/graphql
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=unsafe
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - PORT=3030
+      # How the engine authorizes each request: enforce | permissive | disabled.
+      # @REVIEWER develop ships `disabled` (commit 6d29313, "disable authz"). Kept
+      # as-is through the merge; the docs now say `disabled` too. Flip both back
+      # to `enforce` if that commit was a temporary unblock for the spie work.
+      - NEOPS_AUTHZ_MODE=disabled
+      # SPKI PEM the engine verifies Neops RS256 tokens against — the public half
+      # of the keypair `make lab-jwt` mints for the CMS, mounted below.
+      - NEOPS_JWT_PUBLIC_KEY_PATH=/etc/neops/jwt/public.pem
+      # Exact browser origins allowed to call this engine: the web client on
+      # :8080 and the monitor app on :3031.
+      - NEOPS_CORS_ORIGINS=http://localhost:8080,http://localhost:3031
     env_file:
       - cms_api_key.env
+    volumes:
+      - ./cms/jwt/public.pem:/etc/neops/jwt/public.pem:ro
     ports:
       - "3030:3030"
     depends_on:
@@ -113,12 +128,21 @@ services:
 
   workflow-engine-client:
     <<: *workflow-engine-image
+    environment:
+      # `npm run dev` needs vite, @sveltejs/kit and svelte, which are
+      # devDependencies of rest/monitor-app; `npm install` omits
+      # devDependencies under NODE_ENV=production.
+      - NODE_ENV=development
     ports:
       - "3031:5173"
     depends_on:
       workflow_engine:
         condition: service_healthy
     working_dir: /app/rest/monitor-app
+    volumes:
+      # The monitor reads window.__NEOPS_CONFIG__ from this file; see invariant
+      # 21 in docs/60-development/20-invariants.md.
+      - ./monitor/config.js:/app/rest/monitor-app/static/config.js:ro
     command: >
       sh -c "npm install && npm run dev"
 

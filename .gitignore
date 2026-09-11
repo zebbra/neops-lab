@@ -86,3 +86,6 @@ docs/assets/document_dates/
 # Design specs and implementation plans are working records, not deliverables.
 # They stay on disk and out of git; mkdocs_custom.yml also excludes them from the site.
 docs/superpowers/
+
+# Playwright MCP profile / trace output
+.playwright-mcp

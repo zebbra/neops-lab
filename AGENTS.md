@@ -34,8 +34,8 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
 - Ruff: line length 120, target Python 3.12 (dev tooling). Pyrefly for types.
 - **Host scripts are stdlib-only and Python-3.9-safe** (`gen_clab_topology`,
   `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`,
-  `resolve_scenario`, `run_workflow`, `wait_ready`, `wait_devices`). They run
-  on a bare host before any virtualenv exists — do not add a third-party import
+  `lab_token`, `resolve_scenario`, `run_workflow`, `wait_ready`,
+  `wait_devices`). They run on a bare host before any virtualenv exists — do not add a third-party import
   to them — and each starts with `from __future__ import annotations` so a
   stock macOS `/usr/bin/python3` (3.9) imports them. `make py39-check`
   enforces this; ruff at `py312` does not.
@@ -169,9 +169,28 @@ Load-bearing and usually not obvious from the code:
   accept — compose's `-e` flags would not survive the move. An exported
   `NEOPS_CMS_TOKEN` wins over `cms_api_key.env`, so a caller that mints its own
   key needs no file. It reads the scope JSON from
-  `generated/$SCENARIO/scenario/scope/$SCOPE_NAME` and hard-fails on an unset
-  `SCENARIO` (`: "${SCENARIO:?…}"`), so `make scenario-resolve` must have run —
-  which is why it is a prerequisite of `apply-cms-config`.
+  `generated/$SCENARIO/scenario/scope/$SCOPE_NAME` and the roles, users and
+  workflow grant profiles from `generated/$SCENARIO/scenario/cms/permissions.json`
+  — both out of the resolved tree, never out of `scenarios/` — and hard-fails on
+  an unset `SCENARIO` (`: "${SCENARIO:?…}"`), so `make scenario-resolve` must
+  have run, which is why it is a prerequisite of `apply-cms-config`.
+- **Every engine caller carries a bearer token, whatever `NEOPS_AUTHZ_MODE`
+  says.** `run_workflow`, `wait_ready` and `bootstrap/register.py` read
+  `NEOPS_ENGINE_TOKEN` and send no `Authorization` header at all when it is
+  empty — a `Bearer ` with nothing after it is a credential the engine refuses,
+  where no header is an anonymous call a `disabled` engine answers. The Makefile
+  mints one per recipe through `MINT_ENGINE_TOKEN` (`./lab_token`, which logs in
+  against the CMS). A token carries the grants its account held **at login** and
+  keeps them for its whole 15-minute life, so `apply_cms_config` runs before
+  every mint, and `local-lab-up` mints a second one after `containerlab deploy`
+  because that deploy can outlast the first. The CMS rate-limits logins to 5/m
+  per IP — pass one token to many callers rather than minting per call.
+- **The monitor app's runtime config reaches it only through
+  `monitor/config.js`**, bind-mounted over
+  `/app/rest/monitor-app/static/config.js`. `WEBCLIENT_ORIGIN` on the service
+  does nothing here: the image's entrypoint that reads it runs under nginx, and
+  this service runs the engine image with `npm run dev`. `monitor/` is not
+  scenario data and is deliberately in `docs/.symlinkignore`.
 - **Registering devices in the CMS is discovery's job** — the
   `fb.base.neops.io/global_discover_network` block, driven from here by
   `bootstrap/register.py`, `scenarios/_base/workflows/simple-lab-discovery.workflow.yaml`
@@ -216,8 +235,11 @@ Load-bearing and usually not obvious from the code:
   difference and it keeps answering discovery. `rm -rf generated/` while a lab is
   up therefore drops the guard: tear the lab down first.
 - **Race ordering in `local-lab-up` is deliberate**: `scenario-resolve`
-  (materialise the overlay the compose mounts point at) → `docker compose wait
-  lab_bootstrap` (workflow registration) → `./containerlab deploy --reconfigure`
+  (materialise the overlay the compose mounts point at) → `up -d --wait cms`
+  (`./lab_token` logs in against it) → `apply_cms_config` (grants before the
+  mint) → `MINT_ENGINE_TOKEN` (the token `lab_bootstrap` is handed at `up -d`)
+  → `docker compose wait lab_bootstrap` (workflow registration) →
+  `./containerlab deploy --reconfigure`
   (SR Linux boots slowly, so start it early; `--reconfigure` makes the target
   re-runnable) → `wait_ready` (the worker registers its function blocks
   asynchronously) → `wait_devices` **from inside the worker container**

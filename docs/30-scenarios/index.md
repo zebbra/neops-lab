@@ -37,7 +37,7 @@ five; a scenario that adds a workflow keeps the base's discovery workflow too.
 | `scope/<name>/*.json` | Yes |
 | `devices/frr/frr.conf`, `daemons`, `set-aliases.sh` | Yes |
 | `function_blocks/` | Yes |
-| `cms/oidc-config.json` | Yes |
+| `cms/oidc-config.json`, `cms/permissions.json` | Yes |
 
 `resolve_scenario` and all four generators take `--scenario NAME` as an
 alternative to `$SCENARIO`; `./resolve_scenario --list` prints the table

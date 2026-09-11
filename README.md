@@ -264,7 +264,8 @@ scenarios/_base/        # every asset a scenario may override
   scope/Global/         #   table columns, drill-down and dashboard for apply_cms_config
   devices/frr/          #   frr.conf, daemons, set-aliases.sh — mounted at /lab, not baked
   function_blocks/      #   lab-local function blocks, auto-discovered by the worker
-  cms/oidc-config.json  #   the web client's OIDC configuration
+  cms/                  #   oidc-config.json (the web client's OIDC configuration)
+                        #   + permissions.json (roles, users and workflow grants)
 scenarios/<name>/       # one lab: topology.json + scenario.json + README.md (+ any override)
   workflow-execution-parameters/   # committed discovery inputs, generated from topology.json
 resolve_scenario        # materialises _base + <name> -> generated/<name>/scenario
@@ -276,10 +277,12 @@ generated/<name>/       # git-ignored: scenario/ (resolved), clab/, kind/, clab 
 clab/probe.clab.yml     # 2-node probe to re-check containerlab deploy works
 devices/frr/            # Dockerfile (adds sshd to frrouting/frr) + entrypoint; no FRR config
 cms/jwt/                # git-ignored dev RSA keypair (make lab-jwt)
+monitor/config.js       # runtime config for the monitor app (webclientOrigin), bind-mounted into it
 bootstrap/              # one-shot container that POSTs every workflow YAML
 containerlab            # containerlab launcher (runs ghcr.io/srl-labs/clab via the docker socket)
 doctor                  # host preflight (docker, RAM, mount round-trip, subnets, images)
-apply_cms_config        # seeds the neops role + Global scope in the CMS
+apply_cms_config        # applies the scenario's cms/permissions.json + the Global scope in the CMS
+lab_token               # prints a Neops access token for the engine (NEOPS_ENGINE_TOKEN)
 run_workflow            # triggers a workflow execution and waits for a terminal state
 wait_ready              # blocks until the worker's function block has an online worker
 wait_devices            # blocks until every device in the scenario accepts SSH
@@ -335,7 +338,8 @@ without it they use the `Makefile`'s default, `wan-and-fabric`.
 | `make local-env-init` | Pull + start the base stack, mint the CMS API key, force-recreate the engine to load it, then chain `apply-cms-config`. One-time per env. |
 | `make build-docker` | Builds the two local-only images: `neops-lab-frr:latest` (scenario-independent — it bakes no FRR config) and `neops-lab-bootstrap:latest`. A prerequisite of `local-lab-up`. `build-docker-frr` / `build-docker-bootstrap` build one each; `DOCKER_BUILD_FLAGS=--network=host` covers a host whose docker bridge has no DNS. |
 | `make local-lab-up` | Resolves the scenario, generates the containerlab topology + configs from its `topology.json`, builds the lab images, brings up the base stack + worker + bootstrap (creating `lab-net`), then `containerlab deploy --reconfigure`s the scenario's devices with real links. Waits for workflow registration, the worker's function blocks, and every device's SSH. |
-| `make apply-cms-config` | Grants the `neops` user a full-permission role (`lab-admin`, default_permission=7) + creates the `Global` scope so the web client can see all entities. Idempotent. Chained into `local-env-init`. |
+| `make apply-cms-config` | Applies the scenario's `cms/permissions.json` (roles, users and their workflow grant profiles), grants the `neops` user the full-permission `lab-admin` role + creates the `Global` scope so the web client can see all entities. Idempotent. Chained into `local-env-init`. |
+| `make lab-grant` | `make lab-grant ROLE=<role> [PROFILE=operator]` — one ad-hoc workflow grant, the same command `apply_cms_config` runs per role. Additive. |
 | `make local-lab-discover` | POSTs an execution of the discovery workflow; every device in the scenario **and its interfaces** appears in the CMS. Override `DISCOVER_PARAMS` to exercise explicit hosts, autodetection, or subnet expansion. Devices are keyed by IP (re-running skips existing devices); interfaces are always recorded, so run discovery against a **fresh** CMS to avoid duplicate interface rows. |
 | `make local-lab-logs` | Tails worker + bootstrap logs. |
 | `make local-lab-down` | `containerlab destroy --cleanup` (removes the devices and `generated/$(SCENARIO)/clab/clab-neops-lab`) then `docker compose down` (preserves volumes). |
@@ -359,6 +363,20 @@ Full reset from scratch:
 - Engine UI: <http://localhost:3031>
 - CMS admin: <http://localhost:8001/admin/> (login `neops` / `neops`)
 - Engine REST: <http://localhost:3030>
+
+Every lab caller carries an engine token (`./lab_token` mints one); how much the
+engine gates is `NEOPS_AUTHZ_MODE` on the `workflow_engine` service. Besides
+`neops`, the lab declares three personas in the scenario's `cms/permissions.json`
+(password = username), which differ only in workflow authority:
+
+| Login | Role | Can |
+|---|---|---|
+| `author` | `workflow-author` | read and write workflow definitions |
+| `operator` | `workflow-operator` | read definitions, run and abort executions |
+| `admin` | `workflow-admin` | the above, plus delete definitions and roll back |
+
+Full model, including how the monitor app is handed a token:
+[`docs/10-concepts/50-authorization.md`](./docs/10-concepts/50-authorization.md).
 
 ## Adding a device
 

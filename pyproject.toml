@@ -47,6 +47,7 @@ extend-include = [
   "gen_device_configs",
   "gen_kind_discover_params",
   "gen_kind_manifests",
+  "lab_token",
   "resolve_scenario",
   "run_workflow",
   "wait_devices",
@@ -115,6 +116,7 @@ convention = "google"
   "ARG001",
 ]
 # Host scripts open URLs built from local CLI arguments, not user input.
+"lab_token" = ["S310"]
 "run_workflow" = ["S310"]
 "gen_kind_discover_params" = [
   "S603", "S607", # runs the local kubectl CLI with fixed arguments
@@ -139,6 +141,7 @@ project-includes = [
   "gen_device_configs",
   "gen_kind_discover_params",
   "gen_kind_manifests",
+  "lab_token",
   "resolve_scenario",
   "run_workflow",
   "wait_devices",

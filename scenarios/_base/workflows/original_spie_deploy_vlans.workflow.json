@@ -1,0 +1,71 @@
+{
+  "name": "spie_deploy_vlans",
+  "type": "workflow",
+  "label": "spie_deploy_vlans",
+  "runOn": "global",
+  "steps": [
+    {
+      "type": "functionBlock",
+      "label": "vlans",
+      "runOn": "device",
+      "condition": {
+        "jmes": "context.device.hostname == 'netbox.netcreed.ch'",
+        "type": "jmes"
+      },
+      "parameters": {
+        "site_names": [
+          "Office",
+          "Home"
+        ]
+      },
+      "functionBlock": "fb.base.neops.io/netbox_get_vlans:0.1.0",
+      "rawParameters": {}
+    },
+    {
+      "type": "functionBlock",
+      "label": "global_vlans",
+      "runOn": "global",
+      "parameters": {
+        "input": "{{ to_string(values(vlans.results)[0].data) }}"
+      },
+      "functionBlock": "fb.base.neops.io/global_execute_restricted_python:0.1.0",
+      "rawParameters": {
+        "code": "set_result(\"vlans\", input[\"vlans\"])"
+      }
+    },
+    {
+      "type": "functionBlock",
+      "label": "network_device_apply_configuration",
+      "runOn": "device",
+      "condition": {
+        "jmes": "context.device.hostname != 'netbox.netcreed.ch' && contains(['ios', 'procurve'], context.device.platform.shortName)",
+        "type": "jmes"
+      },
+      "parameters": {
+        "input": "{{ to_string(global_vlans.result.data.results) }}",
+        "apply_method": "terminal",
+        "expect_prompt": true,
+        "schedule_reload": false
+      },
+      "functionBlock": "fb.base.neops.io/network_device_apply_configuration:0.1.0",
+      "rawParameters": {
+        "config_template": "{% for vlan in input.vlans %}\n{% if context.device.platform.short_name == \"ios\" %}\nvlan {{ vlan.vid }}\n name {{ vlan.name }}\n{% elif context.device.platform.short_name == \"procurve\" %}\nvlan {{ vlan.vid }}\n name \"{{ vlan.name }}\"\n{% endif %}\n{% endfor %}"
+      }
+    }
+  ],
+  "acquire": [
+    {
+      "type": "elastic",
+      "query": "hostname: \"netbox.netcreed.ch\" OR id: (1 OR 2)",
+      "entity": "device",
+      "assertNotEmpty": true
+    }
+  ],
+  "package": "wf.neops.io",
+  "parameters": {},
+  "seedEntity": "group",
+  "majorVersion": 1,
+  "minorVersion": 2,
+  "patchVersion": 0,
+  "rawParameters": {}
+}

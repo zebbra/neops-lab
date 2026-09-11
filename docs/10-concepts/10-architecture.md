@@ -167,7 +167,7 @@ Because the links are real, interface state is real: connected ports come up **U
 
 Shared across scenarios, under `scenarios/_base/`, each overridable by a scenario file by file:
 
-- `workflows/`, `scope/Global/`, `cms/oidc-config.json`, `function_blocks/`
+- `workflows/`, `scope/Global/`, `cms/oidc-config.json`, `cms/permissions.json`, `function_blocks/`
 - `devices/frr/frr.conf`, `devices/frr/daemons`, `devices/frr/set-aliases.sh`
 
 At the repo root:

@@ -2,6 +2,7 @@
 
 import ast
 import pathlib
+import re
 
 LAB_DIR = pathlib.Path(__file__).resolve().parents[1]
 
@@ -58,3 +59,16 @@ def test_the_makefile_holds_the_only_scenario_default():
     for name in ("docker-compose.yml", "docker-compose.worker.yml", "apply_cms_config", "resolve_scenario"):
         text = (LAB_DIR / name).read_text()
         assert "SCENARIO:-" not in text, f"{name} carries a fallback SCENARIO default"
+
+
+def test_local_lab_up_mints_the_jwt_keypair_first():
+    """The engine service bind-mounts `cms/jwt/public.pem` as a file. Docker
+    creates a directory under that name when the file is absent, which the
+    engine cannot read as a key and which `make lab-jwt` cannot write over.
+    """
+    compose = (LAB_DIR / "docker-compose.yml").read_text()
+    assert "./cms/jwt/public.pem:" in compose, "the engine service mounts no key file"
+    makefile = (LAB_DIR / "Makefile").read_text()
+    match = re.search(r"^local-lab-up:(.*)$", makefile, re.MULTILINE)
+    assert match, "the Makefile declares no local-lab-up target"
+    assert "lab-jwt" in match.group(1).split(), "local-lab-up starts the stack without lab-jwt"
