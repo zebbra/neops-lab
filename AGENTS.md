@@ -47,6 +47,15 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
 - Example/lab function block package: `fb.lab.neops.io`; the workflow package is
   `wf.lab.neops.io`. The discovery block itself is `fb.base.neops.io/global_discover_network`
   and lives in **neops-worker-sdk-py**, not here.
+- **A workflow document is a workflow whatever its extension.**
+  `bootstrap/register.py` publishes every `*.yaml`, `*.yml` and `*.json` in the
+  resolved `workflows/` directory (`WORKFLOW_SUFFIXES`) — JSON is a subset of
+  YAML, so `yaml.safe_load` reads both and the engine receives the same parsed
+  structure; a workflow exported from the web client lands as `.json`. It
+  filters by suffix rather than taking the whole listing, so a README beside
+  them is skipped, and it registers **every** document before failing rather
+  than short-circuiting on the first refusal — one unpublishable file must not
+  keep the discovery workflow `local-lab-up` waits for off the engine.
 - Everything generated goes under `generated/` and is git-ignored. Never commit
   it — containerlab mints TLS private keys in there.
 - **Docs live in `docs/`** (shared Zebbra MkDocs tooling, vendored under
@@ -264,7 +273,7 @@ neops-worker-sdk-py. It defines no API and nothing imports it. Contract-wise it
 depends on:
 
 - the **function-block identifier** `fb.base.neops.io/global_discover_network:0.1.0`
-  (renaming it in neops-worker-sdk-py breaks `scenarios/*/workflows/*.yaml` and
+  (renaming it in neops-worker-sdk-py breaks `scenarios/*/workflows/*` and
   the Makefile's `DISCOVER_FB`, with no compile-time check),
 - the **workflow-engine REST API** used by `run_workflow`, `wait_ready` and
   `bootstrap/register.py` (`/workflow-execution`, `/workflow-definition/publish`,

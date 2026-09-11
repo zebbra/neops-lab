@@ -119,7 +119,7 @@ Three more things change that you do not see:
 
 - the **worker is recreated**, because `DIR_FUNCTION_BLOCKS` points into the new
   scenario's resolved tree;
-- **`lab_bootstrap` re-publishes** the new scenario's `workflows/*.yaml`, so a
+- **`lab_bootstrap` re-publishes** the new scenario's workflow documents, so a
   scenario carrying its own workflow gets it registered on the way up;
 - **`generated/<old-scenario>/` is never pruned**. It is harmless and it is what
   makes switching back cheap, but it does grow.

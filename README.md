@@ -260,7 +260,7 @@ and the committed discovery parameter files are tracked.
 
 ```
 scenarios/_base/        # every asset a scenario may override
-  workflows/            #   workflow YAMLs registered by the bootstrap container
+  workflows/            #   workflow documents (.yaml/.yml/.json) registered by the bootstrap container
   scope/Global/         #   table columns, drill-down and dashboard for apply_cms_config
   devices/frr/          #   frr.conf, daemons, set-aliases.sh — mounted at /lab, not baked
   function_blocks/      #   lab-local function blocks, auto-discovered by the worker
@@ -278,7 +278,7 @@ clab/probe.clab.yml     # 2-node probe to re-check containerlab deploy works
 devices/frr/            # Dockerfile (adds sshd to frrouting/frr) + entrypoint; no FRR config
 cms/jwt/                # git-ignored dev RSA keypair (make lab-jwt)
 monitor/config.js       # runtime config for the monitor app (webclientOrigin), bind-mounted into it
-bootstrap/              # one-shot container that POSTs every workflow YAML
+bootstrap/              # one-shot container that POSTs every workflow document
 containerlab            # containerlab launcher (runs ghcr.io/srl-labs/clab via the docker socket)
 doctor                  # host preflight (docker, RAM, mount round-trip, subnets, images)
 apply_cms_config        # applies the scenario's cms/permissions.json + the Global scope in the CMS

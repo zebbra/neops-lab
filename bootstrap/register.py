@@ -1,4 +1,4 @@
-"""Register every workflow YAML in /workflows with the engine. Idempotent."""
+"""Register every workflow document in /workflows with the engine. Idempotent."""
 
 import os
 import pathlib
@@ -11,6 +11,12 @@ import yaml
 ENGINE_URL = os.environ.get("ENGINE_URL", "http://workflow_engine:3030")
 WORKFLOWS_DIR = pathlib.Path(os.environ.get("WORKFLOWS_DIR", "/workflows"))
 MAX_WAIT_SECONDS = int(os.environ.get("ENGINE_WAIT_SECONDS", "60"))
+
+# The engine takes one parsed workflow document, however it was authored. JSON
+# is a subset of YAML, so `yaml.safe_load` reads either and the engine is handed
+# the same structure — a scenario exported from the web client lands as `.json`
+# and is as publishable as a hand-written `.yaml`.
+WORKFLOW_SUFFIXES = (".yaml", ".yml", ".json")
 
 # Publishing a definition needs `workflow:write`. Empty while NEOPS_ENGINE_TOKEN
 # is unset, which an engine in `disabled` mode still answers; `/health` is
@@ -118,14 +124,26 @@ def register_one(path: pathlib.Path) -> bool:
     return False
 
 
+def workflow_files(directory: pathlib.Path) -> list[pathlib.Path]:
+    """Every workflow document in `directory`, in a stable order.
+
+    A scenario's `workflows/` may hold a README beside them, which the engine
+    would refuse, so the suffix decides rather than the directory listing.
+    """
+    return sorted(p for p in directory.iterdir() if p.is_file() and p.suffix in WORKFLOW_SUFFIXES)
+
+
 def main() -> int:
     wait_for_engine()
-    yamls = sorted(WORKFLOWS_DIR.glob("*.yaml")) + sorted(WORKFLOWS_DIR.glob("*.yml"))
-    if not yamls:
+    workflows = workflow_files(WORKFLOWS_DIR)
+    if not workflows:
         print(f"no workflow files found in {WORKFLOWS_DIR}", flush=True)
         return 0
-    ok = all(register_one(p) for p in yamls)
-    return 0 if ok else 1
+    # Deliberately not `all(...)`: it short-circuits, so one unpublishable
+    # document would keep every later one off the engine — including the
+    # discovery workflow `local-lab-up` waits for. Register them all, then fail.
+    published = [register_one(path) for path in workflows]
+    return 0 if all(published) else 1
 
 
 if __name__ == "__main__":

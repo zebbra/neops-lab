@@ -110,7 +110,7 @@ build-docker: build-docker-frr build-docker-bootstrap
 build-docker-frr:
 	docker build $(DOCKER_BUILD_FLAGS) -t neops-lab-frr:latest devices/frr
 
-# One-shot container that POSTs the scenario's workflows/*.yaml to the engine.
+# One-shot container that POSTs the scenario's workflow documents to the engine.
 build-docker-bootstrap:
 	docker build $(DOCKER_BUILD_FLAGS) -t neops-lab-bootstrap:latest bootstrap
 

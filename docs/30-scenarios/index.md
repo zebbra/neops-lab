@@ -33,7 +33,7 @@ five; a scenario that adds a workflow keeps the base's discovery workflow too.
 | `topology.json` | No — required in every scenario |
 | `scenario.json`, `README.md` | No — required in every scenario |
 | `workflow-execution-parameters/*.json` | No — generated from the topology |
-| `workflows/*.yaml` | Yes |
+| `workflows/*.{yaml,yml,json}` | Yes |
 | `scope/<name>/*.json` | Yes |
 | `devices/frr/frr.conf`, `daemons`, `set-aliases.sh` | Yes |
 | `function_blocks/` | Yes |

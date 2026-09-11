@@ -113,7 +113,7 @@ make local-lab-up
 `docker compose logs lab_bootstrap` shows a `FAILED` line.
 
 - **`409`** — the version already exists with *different* content. Published
-  workflow definitions are **immutable**; editing `scenarios/_base/workflows/*.yaml` in place and
+  workflow definitions are **immutable**; editing a `scenarios/_base/workflows/` document in place and
   re-running is exactly what triggers this. Bump
   `majorVersion`/`minorVersion`/`patchVersion` in the YAML, and update the
   matching `wf.lab.neops.io/simple_lab_discovery:<version>` in the `Makefile`'s

@@ -45,7 +45,7 @@ export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
 | `workflow-engine-client` | same image as the engine | `3031` → 5173 | The **monitor app**, run in dev mode (`npm install && npm run dev`) out of `/app/rest/monitor-app` |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `8080` | `FRONTEND_*` env vars are browser-relative, so they point at host ports |
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | — | On **both** networks; polls the engine's blackboard and drives the devices |
-| `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: POSTs every workflow YAML in the resolved scenario to the engine, then exits |
+| `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: POSTs every workflow document in the resolved scenario to the engine, then exits |
 | `postgres` | `postgres:15-alpine` | — | Volume `postgres_data` |
 | `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.9.2` | — | Volume `elasticsearch`; 2 CPU / 4 GB limits (2 GB heap) |
 | `redis` | `redis:7-alpine` | — | The CMS's channel layer (GraphQL subscriptions), cache and Celery broker |

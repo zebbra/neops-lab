@@ -106,7 +106,7 @@ make kind-lab-discover
 
 Four steps, each one of the repo's existing scripts, so nothing about publishing, waiting or executing exists twice:
 
-1. **Publish** the resolved scenario's workflow YAML (`generated/<scenario>/scenario/workflows/`) by running `bootstrap/register.py` in the `neops-lab-bootstrap` image. The compose flavour does this from its `lab_bootstrap` service during `local-lab-up`; `kind-lab-up` has no equivalent step, so the definition is published here instead. Re-publishing unchanged content is a no-op (`200`); publishing a *changed* definition under a version that already exists fails with `409`, because published versions are immutable.
+1. **Publish** the resolved scenario's workflow documents (`generated/<scenario>/scenario/workflows/`) by running `bootstrap/register.py` in the `neops-lab-bootstrap` image. The compose flavour does this from its `lab_bootstrap` service during `local-lab-up`; `kind-lab-up` has no equivalent step, so the definition is published here instead. Re-publishing unchanged content is a no-op (`200`); publishing a *changed* definition under a version that already exists fails with `409`, because published versions are immutable.
 2. **Generate the targets** with `./gen_kind_discover_params`, which writes `generated/<scenario>/kind/discover-params.json`.
 3. **Wait** for an online worker registering the discovery block, with `./wait_ready`. The worker registers its blocks asynchronously; without the wait the execution fails with *Function block not found*.
 4. **Execute** with `./run_workflow`, polling to a terminal state. Ten devices take roughly two minutes.
