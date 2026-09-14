@@ -61,6 +61,8 @@ Parallel targets for a single-hostname deployment behind the bundled Traefik ove
 
 | Target | What it does |
 |---|---|
+| `make host-write-compose-env` | Writes `COMPOSE_FILE` into `.env` for bare `docker compose` (also chained into `host-env-*` / `host-lab-up`). |
+| `make host-data-dirs` | Creates `${LAB_DATA_DIR:-./data}/{postgres,cms_tmp}` for bind mounts. |
 | `make host-oidc` | Renders `cms/oidc-config.host.json` from `LAB_HOST` / `LAB_SCHEME` (`LAB_ACCESS=proxy`). |
 | `make host-env-init` | Same key setup as `local-env-init`, with `docker-compose.traefik.yml` (and ACME overlay when `TRAEFIK_CERTRESOLVER` is set). |
 | `make host-env-up` / `host-env-down` / `host-env-prune` | Base stack + Traefik lifecycle. |

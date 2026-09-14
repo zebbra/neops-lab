@@ -18,7 +18,7 @@ Use this when Traefik path prefixes (`/cms`, Vite `--base /monitor/`) get in the
 | Host (Traefik) | `https://LAB_HOST/…` path prefixes | `host-*` |
 | **Host-direct** | `http://LAB_HOST:8080` … | `host-direct-*` |
 
-Do **not** run Traefik host mode and host-direct at the same time. Tear down first:
+After `make host-direct-env-init` / `host-direct-lab-up`, `COMPOSE_FILE` is written into `.env` so bare `docker compose up/down` works.
 
 ```bash
 make host-env-down          # or host-lab-down
@@ -60,9 +60,13 @@ LAB_HOST=lab.example.com
 Compose files:
 
 ```text
-docker-compose.yml:docker-compose.host-direct.yml
+docker-compose.yml:docker-compose.host-direct.yml:docker-compose.host-data.yml
 # + docker-compose.worker.yml for lab targets
 ```
+
+Postgres and CMS `/tmp` are bind-mounted under `./data/` (or `LAB_DATA_DIR`) —
+see [Host mode — data dirs](50-host-proxy.md#host-data-dirs-postgres--cms-tmp).
+Elasticsearch and Redis are not persisted on host.
 
 ## First bring-up
 

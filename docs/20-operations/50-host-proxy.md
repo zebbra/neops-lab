@@ -14,7 +14,7 @@ For **published ports without Traefik** (no `/cms` prefix pain), see [Host-direc
 
 Use **host mode** when the lab runs on a Linux box that should be reached by name (colleagues, a jump host, a demo VM) without wiring an external proxy. Use **laptop mode** (`make local-lab-up`) on a developer machine with published ports `8080` / `8001` / `3030` / `3031`. Use **host-direct** when you want those same ports on a shared host with `LAB_HOST` in OIDC/CORS.
 
-Do not mix the compose file sets in one shell — export `COMPOSE_FILE` only through the matching make targets. Tear down with `make host-env-down` before switching to `host-direct-*`.
+Do not mix the compose file sets in one shell — export `COMPOSE_FILE` only through the matching make targets. Tear down with `make host-env-down` before switching to `host-direct-*`. After `make host-env-init` / `host-lab-up`, `COMPOSE_FILE` is also written into `.env`, so bare `docker compose up -d` / `down` / `ps` work from the repo root (same pattern as [neops-docker-compose](https://github.com/zebbra/neops-docker-compose)). `make local-env-init` resets `.env` to the laptop file set.
 
 ## Path map
 
@@ -77,7 +77,12 @@ make lab-env          # copies .env.example → .env once
 # edit .env:
 LAB_HOST=lab.example.com
 LAB_SCHEME=http       # or https (default)
+
+make host-env-init    # writes COMPOSE_FILE into .env + first bring-up
 ```
+
+After `make host-env-init` (or `make host-env-up`), bare `docker compose up -d` /
+`docker compose down` from the repo root use the same overlays as the make targets.
 
 Optional Let's Encrypt (**HTTPS only**, public DNS + port 80 reachable):
 
@@ -122,8 +127,8 @@ LAB_HOST=lab.example.com
 LAB_SCHEME=http
 EOF
 
-make host-env-init
-make host-lab-up
+make host-env-init    # sets COMPOSE_FILE in .env and starts the control plane
+make host-lab-up      # switches .env to worker overlay, then devices
 make host-lab-discover
 ```
 
@@ -150,15 +155,35 @@ If the monitor still talks to `http://localhost:3030`, open its Settings page an
 
 This overlay does not attach to an external Traefik network.
 
-## Elasticsearch volume
+## Host data dirs (Postgres + CMS /tmp)
 
-The CMS Elasticsearch data volume is named `elasticsearch_lab` (not `elasticsearch`) so it does not collide with another Elastic stack on the same Docker host. The compose **service** name stays `elasticsearch`; only the volume name changed.
+On **laptop** (`local-*`) Postgres and Elasticsearch use named Docker volumes
+(`postgres_data`, `elasticsearch_lab`).
+
+On **host** / **host-direct** modes, [`docker-compose.host-data.yml`](../../docker-compose.host-data.yml)
+bind-mounts durable CMS-related paths under `./data/` — the same idea as
+[neops-docker-compose](https://github.com/zebbra/neops-docker-compose)
+(`./data/neops_postgres`, `./data/neops_backend/tmp`):
+
+| Host path | Container |
+|---|---|
+| `${LAB_DATA_DIR:-./data}/postgres` | Postgres data |
+| `${LAB_DATA_DIR:-./data}/cms_tmp` | CMS `/tmp` (scratch / uploads) |
+
+Elasticsearch and Redis stay ephemeral (named volume / no volume). Point
+`LAB_DATA_DIR` at an NFS/CIFS mount if the share lives elsewhere.
+
+`make host-data-dirs` (chained into every host `up` / `init`) creates the dirs.
+`make host-env-prune` / `host-direct-env-prune` run `docker compose down -v` but
+**do not delete** bind-mount directories — remove `./data` (or `LAB_DATA_DIR`)
+yourself for a full wipe. Switching from an older host deploy that used named
+Postgres volumes does not copy data automatically.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
-| `docker compose logs traefik` → `no such service` | Bare compose only sees `docker-compose.yml`. Use `make host-logs` / `make host-ps`, or `docker logs neops-lab-traefik-1` |
+| `docker compose logs traefik` → `no such service` | Stale/missing `COMPOSE_FILE` in `.env` — run `make host-env-up` (rewrites it) or use `make host-logs` |
 | CMS admin redirect lands on web client (`/admin/login/`) | Stale Traefik without `cms-proxy` — pull and `make host-env-up`; redirects must become `/cms/admin/login/` |
 | `/djstatic/…` → 404 on web client | Stale dynamic.yml without `djstatic` router — pull and recreate Traefik; or open `http://HOST:8001/djstatic/…` directly |
 | `/monitor/` → 502 | `workflow-engine-client` not running — often licensed engine image without `rest/monitor-app`. Defaults use preview for the monitor; `make host-logs SERVICE=workflow-engine-client`. Vite `npm install` can also take a few minutes. |

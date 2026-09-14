@@ -17,8 +17,8 @@ cms_api_key.env
 cms/oidc-config.host.json
 # Host-mode monitor runtime config (same generator).
 monitor/config.host.js
-# Host-mode monitor runtime config (same generator).
-monitor/config.host.js
+# Host-mode durable state (Postgres / ES / Redis bind mounts).
+data/
 
 # -----------------------------------------------------------------------------
 # Python bytecode and caches

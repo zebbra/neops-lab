@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Upsert COMPOSE_FILE in .env so bare `docker compose` matches make host-*/local-*.
+
+docker compose reads .env automatically (neops-docker-compose does the same).
+Make targets still export COMPOSE_FILE for their own recipes; this keeps a
+shell without make aligned after host-env-init / host-lab-up / local-env-init.
+
+Usage
+-----
+    ./gen_compose_env docker-compose.yml:docker-compose.traefik.yml:...
+
+Stdlib-only and Python-3.9-safe.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+DOTENV = HERE / ".env"
+
+
+def _upsert(path: pathlib.Path, key: str, value: str) -> None:
+    """Replace or append KEY=value; drop duplicate KEY lines."""
+    lines = path.read_text().splitlines() if path.is_file() else []
+    out: list[str] = []
+    found = False
+    prefix = f"{key}="
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(prefix) or stripped.startswith(f"#{prefix}"):
+            if not found:
+                out.append(f"{key}={value}")
+                found = True
+            continue
+        out.append(line)
+    if not found:
+        if out and out[-1] != "":
+            out.append("")
+        out.append("# Written by ./gen_compose_env — bare `docker compose up/down` uses this.")
+        out.append(f"{key}={value}")
+    path.write_text("\n".join(out) + "\n")
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or not sys.argv[1].strip():
+        print(
+            "usage: gen_compose_env <colon-separated-compose-files>",
+            file=sys.stderr,
+        )
+        return 2
+    files = sys.argv[1].strip()
+    if not DOTENV.is_file():
+        print("error: .env missing — run make lab-env first.", file=sys.stderr)
+        return 2
+    _upsert(DOTENV, "COMPOSE_FILE", files)
+    _upsert(DOTENV, "COMPOSE_PATH_SEPARATOR", ":")
+    print(f"wrote COMPOSE_FILE in .env ({files})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

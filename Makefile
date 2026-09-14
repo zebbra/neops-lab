@@ -84,8 +84,19 @@ lab-env:
 		cp .env.example .env && echo "created .env from .env.example"; \
 	fi
 
+# -----------------------------------------------------------------------------
+# Local control plane (no worker / devices)
+# -----------------------------------------------------------------------------
+# Bare `docker compose` without COMPOSE_FILE only sees docker-compose.yml.
+# make local-env-* exports this; gen_compose_env also writes it into .env when
+# you leave host mode.
+LOCAL_ENV_COMPOSE_FILES := docker-compose.yml
+local-env-init local-env-up local-env-down local-env-prune: export COMPOSE_FILE := $(LOCAL_ENV_COMPOSE_FILES)
+local-env-init local-env-up local-env-down local-env-prune: export COMPOSE_PATH_SEPARATOR := :
+
 local-env-init: lab-jwt
 	touch cms_api_key.env
+	@./gen_compose_env "$(LOCAL_ENV_COMPOSE_FILES)"
 	# Refresh the published images. `--ignore-pull-failures` is load-bearing: if
 	# you override a service with a locally-built tag
 	# (NEOPS_*_IMAGE=neops-workflow-engine:latest), docker resolves it as
@@ -148,7 +159,8 @@ local-env-prune:
 # -----------------------------------------------------------------------------
 # Host mode — same stack behind bundled Traefik (path prefixes on LAB_HOST)
 # -----------------------------------------------------------------------------
-# Overlay: docker-compose.traefik.yml (+ traefik-https.yml unless LAB_SCHEME=http,
+# Overlay: docker-compose.host-data.yml (bind mounts under ./data/) +
+# docker-compose.traefik.yml (+ traefik-https.yml unless LAB_SCHEME=http,
 # + optional traefik-acme.yml). Laptop local-* targets never load these.
 # See docs/20-operations/50-host-proxy.md.
 
@@ -171,10 +183,32 @@ HOST_ENV_COMPOSE_FILES := $(HOST_ENV_COMPOSE_FILES):docker-compose.traefik-acme.
 HOST_LAB_COMPOSE_FILES := $(HOST_LAB_COMPOSE_FILES):docker-compose.traefik-acme.yml
 endif
 
+# Bind mounts last so cms volumes: !override in traefik/direct overlays do not
+# drop ./data/cms_tmp (compose merges left→right; later list entries append).
+HOST_ENV_COMPOSE_FILES := $(HOST_ENV_COMPOSE_FILES):docker-compose.host-data.yml
+HOST_LAB_COMPOSE_FILES := $(HOST_LAB_COMPOSE_FILES):docker-compose.host-data.yml
+
+# Persist COMPOSE_FILE in .env so bare `docker compose up/down` works (same
+# pattern as neops-docker-compose). Make recipes still export COMPOSE_FILE.
+host-write-compose-env: lab-env
+	@./gen_compose_env "$(HOST_ENV_COMPOSE_FILES)"
+	@echo "Host docker compose: COMPOSE_FILE is in .env — bare \`docker compose up/down\` works from this directory."
+
+host-write-lab-compose-env: lab-env
+	@./gen_compose_env "$(HOST_LAB_COMPOSE_FILES)"
+	@echo "Host lab docker compose: COMPOSE_FILE includes worker overlay — bare \`docker compose\` matches make host-lab-*."
+
 host-env-init host-env-up host-env-down host-env-prune: export COMPOSE_FILE := $(HOST_ENV_COMPOSE_FILES)
 host-env-init host-env-up host-env-down host-env-prune: export COMPOSE_PATH_SEPARATOR := :
 host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose host-check-cms: export COMPOSE_FILE := $(HOST_LAB_COMPOSE_FILES)
 host-lab-up host-lab-down host-lab-discover host-lab-logs host-ps host-logs host-compose host-check-cms: export COMPOSE_PATH_SEPARATOR := :
+
+# Ensure ./data/{postgres,cms_tmp} exist (bind mounts for host modes).
+host-data-dirs: lab-env
+	@dir=$${LAB_DATA_DIR:-$$(sed -n 's/^LAB_DATA_DIR=//p' .env 2>/dev/null | tr -d '\r' | head -1)}; \
+	dir=$${dir:-./data}; \
+	mkdir -p "$$dir/postgres" "$$dir/cms_tmp"; \
+	echo "host data dirs under $$dir (postgres cms_tmp)"
 
 # Render cms/oidc-config.host.json for Traefik path-prefix origin.
 host-oidc: lab-env
@@ -219,11 +253,14 @@ host-print-urls:
 	echo "  CMS GraphQL:  $$origin/cms/graphql"; \
 	echo "  Traefik UI:   $$origin/traefik/dashboard/"; \
 	echo "  (direct)      http://$$host:8080  :8001  :3030  :3031/"; \
-	echo "  compose:      make host-ps / make host-logs   (not bare docker compose)"
+	echo "  compose:      docker compose up/down   (COMPOSE_FILE is in .env)"; \
+	echo "                make host-ps / make host-logs"
 
-host-env-init: lab-jwt host-oidc
+# lab-env + host-write-compose-env first so .env has COMPOSE_FILE before any
+# docker compose call (on the host, bare `docker compose` then matches this init).
+host-env-init: lab-env host-write-compose-env lab-jwt host-oidc host-data-dirs
 	touch cms_api_key.env
-	# Same pull/init sequence as local-env-init; COMPOSE_FILE adds Traefik.
+	# Same pull/init sequence as local-env-init; COMPOSE_FILE already in .env.
 	docker compose pull --policy always --ignore-pull-failures
 	docker compose up -d
 	@pk=$$(docker compose exec -T cms ./manage.py shell -c "from django.contrib.auth import get_user_model; print('PK=%s' % get_user_model().objects.get(username='neops').pk)" 2>/dev/null | sed -n 's/^PK=//p' | tr -d '\r'); \
@@ -238,7 +275,7 @@ host-env-init: lab-jwt host-oidc
 	@echo "Host control plane is up."
 	@$(MAKE) --no-print-directory host-print-urls
 
-host-env-up: lab-jwt host-oidc
+host-env-up: lab-env host-write-compose-env lab-jwt host-oidc host-data-dirs
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make host-env-init' first."; exit 1; fi
 	docker compose pull --policy always --ignore-pull-failures
 	# Always recreate Traefik + cms-proxy so bind-mounted dynamic.yml / cms-proxy.conf
@@ -258,8 +295,9 @@ host-env-down:
 
 host-env-prune:
 	docker compose down -v
+	@echo "note: bind-mounted ./data (or LAB_DATA_DIR) was kept — remove it by hand for a full wipe"
 
-host-lab-up: build-docker lab-env host-oidc
+host-lab-up: build-docker lab-env host-oidc host-data-dirs host-write-lab-compose-env
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make host-env-init' first."; exit 1; fi
 	@./gen_clab_topology
 	docker compose pull --policy always --ignore-pull-failures worker
@@ -296,8 +334,15 @@ host-lab-logs:
 # painful or you want laptop-style :8080/:8001/:3030/:3031 on a shared host.
 # Tear down Traefik host mode first: make host-env-down.
 
-HOST_DIRECT_ENV_COMPOSE_FILES := docker-compose.yml:docker-compose.host-direct.yml
-HOST_DIRECT_LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml:docker-compose.host-direct.yml
+HOST_DIRECT_ENV_COMPOSE_FILES := docker-compose.yml:docker-compose.host-direct.yml:docker-compose.host-data.yml
+HOST_DIRECT_LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml:docker-compose.host-direct.yml:docker-compose.host-data.yml
+
+host-direct-write-compose-env: lab-env
+	@./gen_compose_env "$(HOST_DIRECT_ENV_COMPOSE_FILES)"
+	@echo "Host-direct docker compose: COMPOSE_FILE is in .env — bare \`docker compose up/down\` works."
+
+host-direct-write-lab-compose-env: lab-env
+	@./gen_compose_env "$(HOST_DIRECT_LAB_COMPOSE_FILES)"
 
 host-direct-env-init host-direct-env-up host-direct-env-down host-direct-env-prune: export COMPOSE_FILE := $(HOST_DIRECT_ENV_COMPOSE_FILES)
 host-direct-env-init host-direct-env-up host-direct-env-down host-direct-env-prune: export COMPOSE_PATH_SEPARATOR := :
@@ -327,7 +372,7 @@ host-direct-print-urls:
 	echo "  CMS static:   http://$$host:8001/djstatic/"; \
 	echo "  compose:      make host-direct-ps / make host-direct-logs"
 
-host-direct-env-init: lab-jwt host-direct-oidc
+host-direct-env-init: lab-env host-direct-write-compose-env lab-jwt host-direct-oidc host-data-dirs
 	touch cms_api_key.env
 	docker compose pull --policy always --ignore-pull-failures
 	docker compose up -d
@@ -343,7 +388,7 @@ host-direct-env-init: lab-jwt host-direct-oidc
 	@echo "Host-direct control plane is up (no Traefik)."
 	@$(MAKE) --no-print-directory host-direct-print-urls
 
-host-direct-env-up: lab-jwt host-direct-oidc
+host-direct-env-up: lab-env host-direct-write-compose-env lab-jwt host-direct-oidc host-data-dirs
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make host-direct-env-init' first."; exit 1; fi
 	docker compose pull --policy always --ignore-pull-failures
 	docker compose up -d
@@ -355,8 +400,9 @@ host-direct-env-down:
 
 host-direct-env-prune:
 	docker compose down -v
+	@echo "note: bind-mounted ./data (or LAB_DATA_DIR) was kept — remove it by hand for a full wipe"
 
-host-direct-lab-up: build-docker lab-env host-direct-oidc
+host-direct-lab-up: build-docker lab-env host-direct-oidc host-data-dirs host-direct-write-lab-compose-env
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make host-direct-env-init' first."; exit 1; fi
 	@./gen_clab_topology
 	docker compose pull --policy always --ignore-pull-failures worker
@@ -456,6 +502,7 @@ clab-suid:
 
 local-lab-up: build-docker lab-jwt lab-env
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
+	@./gen_compose_env "$(LAB_COMPOSE_FILES)"
 	# Generate the containerlab topology + per-device configs from topology.json.
 	@./gen_clab_topology
 	# Refresh the worker image: the local-env-* pulls run with the base compose
@@ -572,9 +619,11 @@ local-lab-logs:
 .PHONY: build-docker doctor lint format typeCheck test py39-check shell-syntax check lab-jwt lab-env clab-suid \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config lab-grant \
-	host-oidc host-print-urls host-ps host-logs host-compose host-check-cms \
+	host-oidc host-data-dirs host-write-compose-env host-write-lab-compose-env \
+	host-print-urls host-ps host-logs host-compose host-check-cms \
 	host-env-init host-env-up host-env-down host-env-prune \
 	host-lab-up host-lab-down host-lab-discover host-lab-logs \
-	host-direct-oidc host-direct-print-urls host-direct-ps host-direct-logs host-direct-compose \
+	host-direct-oidc host-direct-write-compose-env host-direct-write-lab-compose-env \
+	host-direct-print-urls host-direct-ps host-direct-logs host-direct-compose \
 	host-direct-env-init host-direct-env-up host-direct-env-down host-direct-env-prune \
 	host-direct-lab-up host-direct-lab-down host-direct-lab-discover host-direct-lab-logs

@@ -3,6 +3,7 @@
 import ast
 import pathlib
 import re
+import sys
 
 LAB_DIR = pathlib.Path(__file__).resolve().parents[1]
 
@@ -49,6 +50,38 @@ def test_host_direct_overlay_publishes_ports():
     makefile = (LAB_DIR / "Makefile").read_text()
     assert "host-direct-env-init" in makefile
     assert "docker-compose.host-direct.yml" in makefile
+
+
+def test_gen_compose_env_upserts_dotenv(tmp_path, monkeypatch):
+    """Bare docker compose reads COMPOSE_FILE from .env after host-env-init."""
+    import labscripts
+
+    mod = labscripts.load("gen_compose_env")
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("LAB_HOST=lab.example.com\nCOMPOSE_FILE=old.yml\n")
+    monkeypatch.setattr(mod, "DOTENV", dotenv)
+    files = "docker-compose.yml:docker-compose.traefik.yml:docker-compose.host-data.yml"
+    monkeypatch.setattr(sys, "argv", ["gen_compose_env", files])
+    assert mod.main() == 0
+    text = dotenv.read_text()
+    assert f"COMPOSE_FILE={files}" in text
+    assert text.count("COMPOSE_FILE=") == 1
+    assert "COMPOSE_PATH_SEPARATOR=:" in text
+    assert "LAB_HOST=lab.example.com" in text
+
+
+def test_host_data_overlay_bind_mounts():
+    """Host modes persist Postgres + CMS /tmp under ./data like neops-docker-compose."""
+    text = (LAB_DIR / "docker-compose.host-data.yml").read_text()
+    assert "${LAB_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data" in text
+    assert "${LAB_DATA_DIR:-./data}/cms_tmp:/tmp" in text
+    assert re.search(r"(?m)^  elasticsearch:", text) is None
+    assert re.search(r"(?m)^  redis:", text) is None
+    makefile = (LAB_DIR / "Makefile").read_text()
+    assert "docker-compose.host-data.yml" in makefile
+    assert "host-data-dirs" in makefile
+    gitignore = (LAB_DIR / ".gitignore").read_text()
+    assert re.search(r"(?m)^data/$", gitignore)
 
 
 def test_host_https_overlay_does_not_wipe_engine_env():

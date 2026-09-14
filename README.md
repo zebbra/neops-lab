@@ -215,6 +215,8 @@ docker-compose.worker.yml        # worker + lab_bootstrap + the lab-net network 
 docker-compose.traefik.yml       # host-mode overlay: bundled Traefik + path-prefix routing
 docker-compose.traefik-https.yml # host-mode HTTPS (:443 + redirect)
 docker-compose.traefik-acme.yml  # optional Let's Encrypt dynamic config
+docker-compose.host-data.yml     # host-mode bind mounts: Postgres + CMS /tmp under ./data/
+docker-compose.host-direct.yml   # host-mode published ports, no Traefik
 traefik/                         # file-provider routes (dynamic.http.yml / .https.yml)
 gen_host_oidc                    # renders cms/oidc-config.host.json for host mode
 tests/                  # unit tests for the two generators

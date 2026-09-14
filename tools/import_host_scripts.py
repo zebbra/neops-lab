@@ -18,6 +18,7 @@ SCRIPTS = (
     "gen_clab_topology",
     "gen_device_configs",
     "gen_host_oidc",
+    "gen_compose_env",
     "lab_token",
     "run_workflow",
     "wait_ready",
