@@ -354,8 +354,8 @@ without it they use the `Makefile`'s default, `wan-and-fabric`.
 | `make py39-check` / `make shell-syntax` | The host scripts import under Python 3.9 (the stock macOS interpreter), and the bash entry points parse. |
 | `make check` | All five gates together: lint, typeCheck, test, py39-check, shell-syntax. |
 
-Full reset from scratch:
-`make local-lab-down local-env-prune && make local-env-init && make local-lab-up && make local-lab-discover`.
+Full reset from scratch, ending in a discovery run: `make full-e2e-test` (`local-lab-down`,
+`local-env-prune`, `local-env-init`, `local-lab-up`, `local-lab-discover`, in that order).
 
 ## URLs
 

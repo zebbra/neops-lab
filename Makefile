@@ -426,6 +426,16 @@ local-lab-down:
 	@rm -f $(CLAB_DEPLOYED_MARKER)
 	docker compose down
 
+full-e2e-test:
+	# Teardown precedes the prune: the prune's base-only compose file cannot
+	# remove the network while the worker and the devices are still on it.
+	# Sequential sub-makes rather than prerequisites, which `-j` would run in parallel.
+	$(MAKE) local-lab-down
+	$(MAKE) local-env-prune
+	$(MAKE) local-env-init
+	$(MAKE) local-lab-up
+	$(MAKE) local-lab-discover
+
 local-lab-discover: scenario-resolve
 	# Always wait for the known lab devices, not the requested discovery input:
 	# a subnet target also contains unused addresses which must not block readiness.
@@ -558,5 +568,5 @@ kind-lab-cms-config: scenario-resolve
 	shell-syntax check lab-jwt lab-env clab-suid \
 	scenarios scenario-resolve generate \
 	local-env-init local-env-up local-env-down local-env-prune \
-	local-lab-up local-lab-down local-lab-discover local-lab-logs apply-cms-config lab-grant \
+	local-lab-up local-lab-down local-lab-discover local-lab-logs full-e2e-test apply-cms-config lab-grant \
 	kind-lab-up kind-lab-down kind-lab-status kind-lab-cms-config kind-lab-discover
