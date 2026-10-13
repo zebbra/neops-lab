@@ -56,3 +56,9 @@
 # /apps/github @owner2
 
 # START
+
+# Dependency audit: lockfiles, audit config and caller (see zebbra/actions dependency-audit DOCS.md)
+uv.lock                                   @zebbra/neops
+package-lock.json                         @zebbra/neops
+/.github/dependency-audit.toml            @zebbra/neops
+/.github/workflows/dependency-audit.yml   @zebbra/neops
