@@ -95,11 +95,12 @@ They ship *inside* the image rather than being bind-mounted from here, so an
 image built without them registers nothing and `wait_ready` waits for a worker
 that will never announce the block.
 
-**Fix:** check what the image actually holds, and fall back to the published tag
-or a fresh build of the SDK checkout:
+**Fix:** check what the image actually holds, and fall back to a prerelease
+`0.2.0-beta.*` tag (the published `develop` lacks the block) or a fresh build of
+an SDK checkout that has it:
 
 ```bash
-docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global'
+docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global/discover_network.py'
 make -C ../neops-worker-sdk-py build-docker          # -> neops-worker-sdk:latest
 echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
 make local-lab-up

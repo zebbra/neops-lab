@@ -133,9 +133,11 @@ Load-bearing and usually not obvious from the code:
 - **`neops/fb` ships inside the worker image**, it is not mounted from here. If
   discovery fails with "Function block … not found", check that the
   `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `neops/fb`.
-  The published `quay.io/zebbra/neops-worker-sdk:develop` carries them, so the
-  default path needs no local build; `make -C ../neops-worker-sdk-py build-docker`
-  is for exercising a block you are editing.
+  The published `quay.io/zebbra/neops-worker-sdk:develop` carries `neops/fb`
+  but **not** `global_discover_network`; only prerelease `0.2.0-beta.*` builds
+  do, which is why `.env.example` pins one (and why that pin needs moving when
+  the 20-day prerelease expiry removes it). `make -C ../neops-worker-sdk-py
+  build-docker` is for exercising a block you are editing.
 - **`gen_clab_topology` emits `"../scenario/devices/frr/set-aliases.sh:…"`** as
   a containerlab bind, alongside `frr.conf` and `daemons`. That path is relative
   to `generated/<scenario>/clab/`, where the topology file lives — **not** to the

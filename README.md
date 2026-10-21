@@ -81,10 +81,13 @@ make doctor
   stdlib-only and import under the `/usr/bin/python3` a stock macOS ships.
 - **`uv`** — only for `make test` / `make lint` / `make check` and the docs.
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
-- **Nothing to build for the worker.** `quay.io/zebbra/neops-worker-sdk:develop`
-  ships the base function blocks, `fb.base.neops.io/global_discover_network:0.1.0`
-  among them, so the default path needs no local image. To try SDK changes before
-  they are released, build the checkout and point the lab at it:
+- **A worker image that carries `fb.base.neops.io/global_discover_network:0.1.0`.**
+  `quay.io/zebbra/neops-worker-sdk:develop` does not: only prerelease
+  `0.2.0-beta.*` builds of the SDK's function-block branch do, and
+  `.env.example` pins one. Prerelease tags expire 20 days after they are
+  pushed, so when the pin stops pulling, move it to the newest `0.2.0-beta.*`.
+  To try SDK changes before they are released, build the checkout and point the
+  lab at it:
 
   ```bash
   make -C ../neops-worker-sdk-py build-docker      # -> neops-worker-sdk:latest
@@ -95,7 +98,7 @@ make doctor
   block, not just build:
 
   ```bash
-  docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global'
+  docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global/discover_network.py'
   ```
 
   Without this the worker container exits, `local-lab-up` burns its full

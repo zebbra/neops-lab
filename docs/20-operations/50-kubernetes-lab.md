@@ -141,8 +141,9 @@ Discovery runs the `fb.base.neops.io/global_discover_network:0.1.0` block, which
 
 | Worker image built from | Function blocks | Discovery |
 |---|---|---|
-| `quay.io/zebbra/neops-worker-sdk:develop`, the default | 25, including `global_discover_network` | Works |
-| the `neops-worker-sdk-py` checkout, `make build-docker` | 25, plus whatever you are editing | Works |
+| `quay.io/zebbra/neops-worker-sdk:develop`, the default | base blocks, **without** `global_discover_network` | *Function block not found* |
+| `quay.io/zebbra/neops-worker-sdk:0.2.0-beta.*` (prerelease, expires after 20 days) | base blocks, including `global_discover_network` | Works |
+| the `neops-worker-sdk-py` checkout, `make build-docker` | whatever the checked-out branch carries | Works if that branch has `global_discover_network` |
 | any image built without `neops/fb` | none | *Function block not found* |
 
 The KIND release deployed against this lab runs a worker built from that checkout and loaded into the cluster as `neops-worker-sdk:cutting-edge`, like every other service — the workspace-root `make deploy-cutting-edge` does both — which is why discovery works here today. `make kind-lab-discover` fails at step 3 with a `wait_ready` timeout if you point it at a release whose image lacks the block.
