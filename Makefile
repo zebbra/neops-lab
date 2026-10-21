@@ -163,8 +163,8 @@ lab-jwt:
 		echo "generated cms/jwt/{private,public}.pem"; \
 	fi
 
-# A fresh clone has no .env; copy the example so there is one to edit (every
-# value in it is commented out, so this changes no behaviour on its own).
+# A fresh clone has no .env; copy the example so there is one to edit. Its only
+# active line pins the worker image; every other value is commented out.
 lab-env:
 	@if [ -f .env ]; then \
 		echo ".env already present — skipping"; \
