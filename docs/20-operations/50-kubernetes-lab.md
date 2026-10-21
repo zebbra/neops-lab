@@ -135,14 +135,14 @@ The device set comes from `gen_kind_manifests` and the credentials from `gen_cla
 
 The output is git-ignored and regenerated on every run, because a `kind-lab-down` / `kind-lab-up` cycle hands out a fresh set of addresses.
 
-### The worker image has to carry the base blocks
+### The worker image has to carry `global_discover_network`
 
 Discovery runs the `fb.base.neops.io/global_discover_network:0.1.0` block, which ships **inside the worker image** rather than being mounted from here. Which image you deployed decides whether this works at all:
 
 | Worker image built from | Function blocks | Discovery |
 |---|---|---|
 | `quay.io/zebbra/neops-worker-sdk:develop`, the default | base blocks, **without** `global_discover_network` | *Function block not found* |
-| `quay.io/zebbra/neops-worker-sdk:0.2.0-beta.*` (prerelease, expires after 20 days) | base blocks, including `global_discover_network` | Works |
+| `quay.io/zebbra/neops-worker-sdk:0.2.0-beta.*` (prerelease, expires after 20 days) | base blocks, including `global_discover_network` | Works once [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402) is in develop |
 | the `neops-worker-sdk-py` checkout, `make build-docker` | whatever the checked-out branch carries | Works if that branch has `global_discover_network` |
 | any image built without `neops/fb` | none | *Function block not found* |
 

@@ -85,7 +85,7 @@ A separate flavour that runs the FRR devices as pods in a local KIND cluster. It
 | `make kind-lab-cms-config` | Runs `apply_cms_config` against a Kubernetes-deployed CMS: grants the `neops` user the `lab-admin` role and seeds the `Global` scope, without which the web client shows no scope at all. Idempotent. |
 | `make kind-lab-discover` | Publishes the workflow definition with `bootstrap/register.py`, generates the per-device targets with `./gen_kind_discover_params`, waits for the discovery function block with `./wait_ready`, then executes it with `./run_workflow`. Depends on `build-docker-bootstrap`, and on the engine being reachable at `KIND_ENGINE_URL`. |
 
-`kind-lab-cms-config` opens a short-lived `kubectl port-forward` to the CMS and reads the API key from a cluster Secret; it touches nothing else in the product namespace. Getting the *devices* into the CMS is discovery's job, and `kind-lab-discover` does it by driving the same workflow, the same function block and the same four scripts the containerlab flavour uses — it needs a worker image that actually carries the base function blocks. See [Kubernetes lab](50-kubernetes-lab.md).
+`kind-lab-cms-config` opens a short-lived `kubectl port-forward` to the CMS and reads the API key from a cluster Secret; it touches nothing else in the product namespace. Getting the *devices* into the CMS is discovery's job, and `kind-lab-discover` does it by driving the same workflow, the same function block and the same four scripts the containerlab flavour uses — it needs a worker image that actually carries `global_discover_network`. See [Kubernetes lab](50-kubernetes-lab.md).
 
 | Variable | Default | Purpose |
 |---|---|---|

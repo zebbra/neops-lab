@@ -85,7 +85,11 @@ make doctor
   `quay.io/zebbra/neops-worker-sdk:develop` does not: only prerelease
   `0.2.0-beta.*` builds of the SDK's function-block branch do, and
   `.env.example` pins one. Prerelease tags expire 20 days after they are
-  pushed, so when the pin stops pulling, move it to the newest `0.2.0-beta.*`.
+  pushed, so when the pin stops pulling, move it to the newest `0.2.0-beta.*`
+  and run the `discover_network.py` check below against it. Until
+  [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402) is in the engine's `develop` image,
+  that worker still cannot discover — see
+  [Troubleshooting](docs/20-operations/40-troubleshooting.md).
   To try SDK changes before they are released, build the checkout and point the
   lab at it:
 
@@ -101,9 +105,9 @@ make doctor
   docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global/discover_network.py'
   ```
 
-  Without this the worker container exits, `local-lab-up` burns its full
-  `wait_ready` budget and gives up with `timeout: no online worker for
-  fb.base.neops.io/global_discover_network:0.1.0`.
+  Without the block the worker runs but never announces it, so `local-lab-up`
+  burns its full `wait_ready` budget and gives up with `timeout: no online
+  worker for fb.base.neops.io/global_discover_network:0.1.0`.
 - **A workflow-engine image with the publish route and the large-payload +
   reference-resolution fixes.** Discovery emits a few hundred `Interface` rows in
   one job result, and `bootstrap/register.py` writes definitions through
@@ -349,7 +353,7 @@ without it they use the `Makefile`'s default, `wan-and-fabric`.
 | `make local-env-prune` | `docker compose down -v` — the true reset, drops the ES + postgres volumes. |
 | `make kind-lab-up` | The Kubernetes flavour: renders the scenario's **FRR** devices into `generated/$(SCENARIO)/kind/lab.yaml` and runs them as pods in a local KIND cluster, reachable over SSH at `<device>.neops-lab.svc.cluster.local`. Needs no containerlab, no compose stack and no control plane. `make kind-lab-status` / `make kind-lab-down` alongside it — the latter deletes the namespace, never the cluster. |
 | `make kind-lab-cms-config` | Points the existing `apply_cms_config` at a Kubernetes-deployed CMS through `CMS_EXEC` (reused, not reimplemented): grants the `neops` user the `lab-admin` role and seeds the `Global` scope, without which the web client shows no scope. Idempotent. Getting devices into the CMS stays discovery's job. |
-| `make kind-lab-discover` | Discovery against the pods, through the same scripts the containerlab flavour uses: publishes the workflow definition with `bootstrap/register.py`, generates one `/32` per device from the Service ClusterIPs with `./gen_kind_discover_params`, waits with `./wait_ready`, executes with `./run_workflow`. Needs a worker image that carries the base function blocks, and the engine reachable at `KIND_ENGINE_URL` — the offline ingress name `http://engine.neops.local` by default, so run `make -C neops-helm config-hosts` once. |
+| `make kind-lab-discover` | Discovery against the pods, through the same scripts the containerlab flavour uses: publishes the workflow definition with `bootstrap/register.py`, generates one `/32` per device from the Service ClusterIPs with `./gen_kind_discover_params`, waits with `./wait_ready`, executes with `./run_workflow`. Needs a worker image that carries `global_discover_network`, and the engine reachable at `KIND_ENGINE_URL` — the offline ingress name `http://engine.neops.local` by default, so run `make -C neops-helm config-hosts` once. |
 | `make lab-env` | Copies `.env.example` to `.env` if absent, so compose has one. A prerequisite of `local-lab-up`; never overwrites an existing `.env`. |
 | `make local-env-up` / `make local-env-down` | The control plane alone — CMS, engine, monitor app, web client and their datastores — with no devices and no containerlab. |
 | `make test` | `pytest tests` — unit tests for the generators and the scenario overlay, incl. that every scenario still reproduces its committed `workflow-execution-parameters/*.json` byte-for-byte. |
