@@ -41,10 +41,18 @@ def auth_headers() -> dict:
     return {"Authorization": "Bearer " + token} if token else {}
 
 
+def error_body(exc: error.HTTPError) -> str:
+    """The body of an engine error answer; empty when the connection broke
+    while it was read, since the status alone still says what happened."""
+    try:
+        return exc.read().decode(errors="replace")
+    except REQUEST_ERRORS:
+        return ""
+
+
 def refusal(exc: error.HTTPError) -> str:
     """Why the engine refused a 401/403: its status, its body, then the hint."""
-    body = exc.read().decode(errors="replace")
-    return f"({exc.code} {exc.reason}): {body[:300]} — {AUTH_HINT}"
+    return f"({exc.code} {exc.reason}): {error_body(exc)[:300]} — {AUTH_HINT}"
 
 
 def is_engine_url(value: str) -> bool:

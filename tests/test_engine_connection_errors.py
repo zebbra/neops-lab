@@ -141,6 +141,40 @@ def test_start_exits_2_when_the_engine_refuses_the_workflow(monkeypatch, capsys)
     assert "unknown workflow" in capsys.readouterr().err
 
 
+class _ResetBody(io.BytesIO):
+    """An error body whose connection resets while it is read."""
+
+    def read(self, *_args):
+        raise ConnectionResetError(104, "Connection reset by peer")
+
+
+def _refused_with_a_reset_body(status, reason):
+    def urlopen(*_args, **_kwargs):
+        raise run_workflow.error.HTTPError("http://engine/x", status, reason, None, _ResetBody())
+
+    return urlopen
+
+
+@pytest.mark.parametrize(("status", "reason"), [(403, "Forbidden"), (500, "Internal Server Error")])
+def test_start_reports_a_refusal_whose_body_was_lost(status, reason, monkeypatch, capsys):
+    """The status alone still says the start failed; a traceback would exit 1."""
+    monkeypatch.setattr(run_workflow.request, "urlopen", _refused_with_a_reset_body(status, reason))
+    with pytest.raises(SystemExit) as excinfo:
+        run_workflow.start_execution("http://engine", "wf.lab.neops.io/x:1.0.0", {}, [])
+    assert excinfo.value.code == 2
+    assert f"({status} {reason})" in capsys.readouterr().err
+
+
+def test_poll_stops_on_a_refusal_whose_body_was_lost(monkeypatch, capsys):
+    monkeypatch.setattr(run_workflow.request, "urlopen", _refused_with_a_reset_body(401, "Unauthorized"))
+    with pytest.raises(SystemExit) as excinfo:
+        run_workflow.poll_until_terminal("http://engine", "uuid-1", timeout=5, interval=0.01)
+    assert excinfo.value.code == 2
+    message = capsys.readouterr().err
+    assert "(401 Unauthorized)" in message
+    assert engine_http.AUTH_HINT in message
+
+
 def test_start_builds_the_request_before_anything_can_be_sent(monkeypatch):
     """A URL urllib cannot parse raises before the send, so it never reaches
     the branch that says the execution may have started."""

@@ -96,8 +96,7 @@ def start_execution(engine_url: str, workflow: str, parameters: dict, ids: list[
     except error.HTTPError as e:
         if e.code in engine_http.UNAUTHORIZED:
             abort(f"failed to start workflow {engine_http.refusal(e)}")
-        body = e.read().decode(errors="replace")
-        abort(f"failed to start workflow ({e.code} {e.reason}): {body}")
+        abort(f"failed to start workflow ({e.code} {e.reason}): {engine_http.error_body(e)}")
     except error.URLError as e:
         abort(f"failed to reach engine at {engine_url}: {e.reason}")
     except http.client.InvalidURL as e:
