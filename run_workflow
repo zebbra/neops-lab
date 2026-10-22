@@ -94,9 +94,9 @@ def start_execution(engine_url: str, workflow: str, parameters: dict, ids: list[
     try:
         resp = http_json(req)
     except error.HTTPError as e:
-        body = e.read().decode(errors="replace")
         if e.code in engine_http.UNAUTHORIZED:
-            abort(f"failed to start workflow ({e.code} {e.reason}): {body[:300]} — {engine_http.AUTH_HINT}")
+            abort(f"failed to start workflow {engine_http.refusal(e)}")
+        body = e.read().decode(errors="replace")
         abort(f"failed to start workflow ({e.code} {e.reason}): {body}")
     except error.URLError as e:
         abort(f"failed to reach engine at {engine_url}: {e.reason}")
@@ -123,10 +123,8 @@ def fetch_execution(engine_url: str, uuid: str, timeout: float) -> dict | None:
         return http_json(req, timeout=timeout)
     except engine_http.REQUEST_ERRORS as e:
         if isinstance(e, error.HTTPError) and e.code in engine_http.UNAUTHORIZED:
-            body = e.read().decode(errors="replace")
             abort(
-                f"polling stopped ({e.code} {e.reason}): {body[:300]} — {engine_http.AUTH_HINT}. "
-                f"Execution {uuid} keeps running; follow it at {MONITOR_URL}"
+                f"polling stopped {engine_http.refusal(e)}. Execution {uuid} keeps running; follow it at {MONITOR_URL}"
             )
         print(f"  poll failed, retrying: {e}", file=sys.stderr)
         return None

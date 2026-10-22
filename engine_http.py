@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import os
-from urllib import parse
+from urllib import error, parse
 
 DEFAULT_ENGINE_URL = "http://localhost:3030"
 
@@ -39,6 +39,12 @@ def auth_headers() -> dict:
     """
     token = os.environ.get("NEOPS_ENGINE_TOKEN", "").strip()
     return {"Authorization": "Bearer " + token} if token else {}
+
+
+def refusal(exc: error.HTTPError) -> str:
+    """Why the engine refused a 401/403: its status, its body, then the hint."""
+    body = exc.read().decode(errors="replace")
+    return f"({exc.code} {exc.reason}): {body[:300]} — {AUTH_HINT}"
 
 
 def is_engine_url(value: str) -> bool:

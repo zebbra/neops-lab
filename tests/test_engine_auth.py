@@ -116,6 +116,16 @@ def test_callers_name_the_token_variable_when_refused():
     assert engine_http.UNAUTHORIZED == (401, 403)
 
 
+def test_refusal_names_the_status_then_the_engines_body_then_the_hint():
+    """The body separates a missing token from an invalid one; it is cut to
+    300 characters so an HTML error page cannot bury the hint."""
+    long_body = DENIED_BODY + b"x" * 400
+    with pytest.raises(error.HTTPError) as excinfo:
+        _raising(403, "Forbidden", long_body)()
+    expected = f"(403 Forbidden): {long_body.decode()[:300]} — {engine_http.AUTH_HINT}"
+    assert engine_http.refusal(excinfo.value) == expected
+
+
 def test_register_prints_the_engines_refusal_before_the_hint():
     """Both branches of `_failure_detail` print the engine's body; the 401/403
     one adds the hint after it."""
