@@ -29,28 +29,12 @@ Exit codes
 from __future__ import annotations
 
 import argparse
-import http.client
 import json
-import os
 import sys
 import time
 from urllib import error, request
 
-# What the engine answers a caller whose token is absent, expired, or short of
-# `workflow:read`.
-UNAUTHORIZED = (401, 403)
-
-AUTH_HINT = "mint a token with ./lab_token and export it as NEOPS_ENGINE_TOKEN"
-
-
-def auth_headers() -> dict:
-    """`Authorization` for the engine, from NEOPS_ENGINE_TOKEN.
-
-    Empty while the variable is unset, which an engine in `disabled` mode and
-    every `@Public` route still answer.
-    """
-    token = os.environ.get("NEOPS_ENGINE_TOKEN", "").strip()
-    return {"Authorization": "Bearer " + token} if token else {}
+import engine_http
 
 
 def parse_fb_id(fb_id: str) -> tuple[str, str, str]:
@@ -73,20 +57,18 @@ def worker_states(engine_url: str, fb_id: str) -> list[str] | None:
     """
     pkg, name, version = parse_fb_id(fb_id)
     url = f"{engine_url}/function-blocks/{pkg}/{name}/{version}/workers"
-    req = request.Request(url, headers=auth_headers())
+    req = request.Request(url, headers=engine_http.auth_headers())
     try:
         with request.urlopen(req, timeout=5) as resp:
             workers = json.load(resp)
     except error.HTTPError as exc:
-        if exc.code in UNAUTHORIZED:
+        if exc.code in engine_http.UNAUTHORIZED:
             body = exc.read().decode(errors="replace")
             raise SystemExit(
-                f"the engine refused the request ({exc.code} {exc.reason}): {body[:300]} — {AUTH_HINT}"
+                f"the engine refused the request ({exc.code} {exc.reason}): {body[:300]} — {engine_http.AUTH_HINT}"
             ) from exc
         return None
-    except (OSError, http.client.HTTPException, ValueError):
-        # A reset or a body cut short while the answer is read arrives raw,
-        # outside urllib's URLError; the engine restarting looks like that.
+    except engine_http.REQUEST_ERRORS:
         return None
     if not isinstance(workers, list):
         return None
@@ -116,7 +98,7 @@ def main() -> int:
         description="Block until an online worker is registered for each function block.",
     )
     p.add_argument("function_blocks", nargs="+", help="Function block ids: pkg/name:version")
-    p.add_argument("--engine-url", default="http://localhost:3030")
+    engine_http.add_engine_url_argument(p)
     p.add_argument("--timeout", type=int, default=180, help="Total wait budget in seconds (default: 180)")
     p.add_argument("--interval", type=float, default=2.0, help="Poll interval in seconds (default: 2.0)")
     args = p.parse_args()

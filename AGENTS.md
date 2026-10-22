@@ -39,6 +39,13 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
   to them — and each starts with `from __future__ import annotations` so a
   stock macOS `/usr/bin/python3` (3.9) imports them. `make py39-check`
   enforces this; ruff at `py312` does not.
+- **`engine_http.py` is the one definition of how a host script calls the
+  engine**: the token header, the 401/403 refusal and its hint, the errors a
+  broken round trip raises, and the `--engine-url` check. `run_workflow` and
+  `wait_ready` import it; do not copy any of it back into a script. It follows
+  the host-script rules above, and `make py39-check` reaches it through those
+  imports. `bootstrap/register.py` keeps its own copy because it ships in the
+  bootstrap image.
 - `apply_cms_config` and `containerlab` are bash, not Python; they are
   deliberately absent from ruff's `extend-include`. Keep them bash-3.2 and
   BSD-userland compatible (no arrays under `set -u`, no `grep -P`, no

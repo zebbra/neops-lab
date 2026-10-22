@@ -6,12 +6,14 @@ or the body is read reaches the caller raw, as `ConnectionResetError` or
 execution it was asked about keeps running.
 """
 
+import argparse
 import http.client
 import io
 import json
 
 import pytest
 
+import engine_http
 import labscripts
 
 run_workflow = labscripts.load("run_workflow")
@@ -97,7 +99,7 @@ def test_http_json_never_waits_without_a_timeout(monkeypatch):
         return io.BytesIO(b"{}")
 
     monkeypatch.setattr(run_workflow.request, "urlopen", urlopen)
-    run_workflow.http_json("http://engine/x")
+    run_workflow.http_json(run_workflow.build_request("http://engine/x"))
     assert seen == [run_workflow.REQUEST_TIMEOUT]
 
 
@@ -137,6 +139,55 @@ def test_start_exits_2_when_the_engine_refuses_the_workflow(monkeypatch, capsys)
         run_workflow.start_execution("http://engine", "wf.lab.neops.io/x:1.0.0", {}, [])
     assert excinfo.value.code == 2
     assert "unknown workflow" in capsys.readouterr().err
+
+
+def test_start_builds_the_request_before_anything_can_be_sent(monkeypatch):
+    """A URL urllib cannot parse raises before the send, so it never reaches
+    the branch that says the execution may have started."""
+    calls = []
+    monkeypatch.setattr(run_workflow.request, "urlopen", lambda *_a, **_k: calls.append(1))
+    with pytest.raises(ValueError, match="unknown url type"):
+        run_workflow.start_execution("engine.neops.local", "wf.lab.neops.io/x:1.0.0", {}, [])
+    assert calls == []
+
+
+def test_start_reports_a_bad_port_as_a_bad_url(capsys):
+    """urllib raises InvalidURL from inside `urlopen`, before it connects."""
+    with pytest.raises(SystemExit) as excinfo:
+        run_workflow.start_execution("http://engine:abc", "wf.lab.neops.io/x:1.0.0", {}, [])
+    assert excinfo.value.code == 2
+    message = capsys.readouterr().err
+    assert "invalid engine URL" in message
+    assert "may have started" not in message
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["engine.neops.local", "localhost:3030", "ftp://engine", "http://engine:abc", "http://engine:99999", "http://"],
+)
+def test_engine_url_rejects_what_urllib_cannot_send_to(url):
+    with pytest.raises(argparse.ArgumentTypeError):
+        engine_http.engine_url(url)
+
+
+@pytest.mark.parametrize("url", ["http://localhost:3030", "http://engine.neops.local", "https://engine:443/api"])
+def test_engine_url_accepts_an_http_base_url(url):
+    assert engine_http.engine_url(url) == url
+
+
+def test_run_workflow_rejects_a_malformed_engine_url_before_starting(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        run_workflow.build_arg_parser().parse_args(["wf.lab.neops.io/x:1.0.0", "--engine-url", "engine.neops.local"])
+    assert excinfo.value.code == 2
+    assert "--engine-url" in capsys.readouterr().err
+
+
+def test_wait_ready_rejects_a_malformed_engine_url_before_waiting(monkeypatch):
+    """Otherwise every poll fails the same way and the wait burns its budget."""
+    monkeypatch.setattr(wait_ready.sys, "argv", ["wait_ready", FB_ID, "--engine-url", "http://engine:abc"])
+    with pytest.raises(SystemExit) as excinfo:
+        wait_ready.main()
+    assert excinfo.value.code == 2
 
 
 @pytest.mark.parametrize("failure", BROKEN_ROUND_TRIPS)

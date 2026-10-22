@@ -12,6 +12,7 @@ from urllib import error
 
 import pytest
 
+import engine_http
 import labscripts
 from tools import import_host_scripts
 
@@ -109,11 +110,10 @@ def test_callers_send_no_header_without_a_token(module, body, call, monkeypatch)
     assert [req.get_header("Authorization") for req in seen] == [None]
 
 
-@pytest.mark.parametrize("module", [run_workflow, wait_ready])
-def test_callers_name_the_token_variable_when_refused(module):
-    assert "NEOPS_ENGINE_TOKEN" in module.AUTH_HINT
-    assert "./lab_token" in module.AUTH_HINT
-    assert module.UNAUTHORIZED == (401, 403)
+def test_callers_name_the_token_variable_when_refused():
+    assert "NEOPS_ENGINE_TOKEN" in engine_http.AUTH_HINT
+    assert "./lab_token" in engine_http.AUTH_HINT
+    assert engine_http.UNAUTHORIZED == (401, 403)
 
 
 def test_register_prints_the_engines_refusal_before_the_hint():
