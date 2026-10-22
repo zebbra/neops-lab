@@ -156,13 +156,15 @@ def test_wait_ready_keeps_polling_past_a_not_yet_registered_block(monkeypatch):
     assert wait_ready.worker_states("http://engine", FB_ID) is None
 
 
-def test_run_workflow_stops_polling_on_an_unauthorized_answer(monkeypatch):
+def test_run_workflow_stops_polling_on_an_unauthorized_answer(monkeypatch, capsys):
     """An expired token ends the poll loop, naming the engine's refusal, the
-    execution that keeps running and where to follow it."""
+    execution that keeps running and where to follow it. Exit 2, not 1: the
+    execution has not failed, its outcome is unknown."""
     monkeypatch.setattr(run_workflow, "http_json", _raising(403, "Forbidden", DENIED_BODY))
     with pytest.raises(SystemExit) as excinfo:
         run_workflow.poll_until_terminal("http://engine", "uuid-1", timeout=5, interval=0.01)
-    message = str(excinfo.value)
+    assert excinfo.value.code == 2
+    message = capsys.readouterr().err
     assert DENIED_BODY.decode() in message
     assert "NEOPS_ENGINE_TOKEN" in message
     assert message.index(DENIED_BODY.decode()) < message.index("NEOPS_ENGINE_TOKEN"), (
@@ -172,13 +174,14 @@ def test_run_workflow_stops_polling_on_an_unauthorized_answer(monkeypatch):
     assert run_workflow.MONITOR_URL in message
 
 
-def test_run_workflow_reports_the_refusal_that_blocked_the_start(monkeypatch):
+def test_run_workflow_reports_the_refusal_that_blocked_the_start(monkeypatch, capsys):
     """A start refused for a missing permission is only actionable with the
     engine's own message."""
     monkeypatch.setattr(run_workflow.request, "urlopen", _raising(403, "Forbidden", DENIED_BODY))
     with pytest.raises(SystemExit) as excinfo:
         run_workflow.start_execution("http://engine", "wf.lab.neops.io/x:1.0.0", {}, [])
-    message = str(excinfo.value)
+    assert excinfo.value.code == 2
+    message = capsys.readouterr().err
     assert DENIED_BODY.decode() in message
     assert "NEOPS_ENGINE_TOKEN" in message
     assert message.index(DENIED_BODY.decode()) < message.index("NEOPS_ENGINE_TOKEN"), (
