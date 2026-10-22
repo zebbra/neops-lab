@@ -73,7 +73,7 @@ docker compose logs lab_bootstrap
 2. **The image does not carry the block.** `neops/fb` ships *inside* the `neops-worker-sdk` image; it is not mounted from this repo. Check what you are running:
 
     ```bash
-    docker compose exec worker ls /app/neops/fb
+    docker compose exec worker ls /app/neops/fb/base/global/discover_network.py
     ```
 
     ⚠️ The published `quay.io/zebbra/neops-worker-sdk:develop` tag **does not carry it** — see the next entry.
@@ -82,7 +82,7 @@ See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10
 
 ---
 
-## The worker container exits immediately / `no online worker` at `wait_ready`
+## `no online worker` at `wait_ready`
 
 **Where:** `make local-lab-up` burns its full `wait_ready` budget and gives up with
 
@@ -90,18 +90,52 @@ See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10
 timeout: no online worker for fb.base.neops.io/global_discover_network:0.1.0 within 180s
 ```
 
-**Cause:** the worker image you pinned does not carry the base function blocks.
-They ship *inside* the image rather than being bind-mounted from here, so an
-image built without them registers nothing and `wait_ready` waits for a worker
-that will never announce the block.
+**Cause:** the worker image you pinned does not carry
+`global_discover_network` — the published `develop` tag is one such image. The
+block ships *inside* the image rather than being bind-mounted from here, so the
+worker starts, registers the blocks it has, and never announces this one;
+`wait_ready` waits for it until the budget runs out.
 
-**Fix:** check what the image actually holds, and fall back to the published tag
-or a fresh build of the SDK checkout:
+**Fix:** check what the image actually holds, and fall back to a prerelease
+`0.2.0-beta.*` tag (the published `develop` lacks the block) or a fresh build of
+an SDK checkout that has it:
 
 ```bash
-docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global'
+docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global/discover_network.py'
 make -C ../neops-worker-sdk-py build-docker          # -> neops-worker-sdk:latest
 echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
+make local-lab-up
+```
+
+Re-pinning a newer `0.2.0-beta.*` the same way? Run the `discover_network.py`
+check against it before `make local-lab-up`.
+
+---
+
+## Worker exits ~2 min after start; discovery hangs after `wait_ready`
+
+**Known issue until [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402) is in the engine's
+published `develop` image.**
+
+**Where:** `make local-lab-up` succeeds and `wait_ready` reports an online
+worker, but `make local-lab-discover` sits in `running` and never finishes. The
+worker log shows `Registration failed: (500)` for one function block (e.g.
+`network_device_apply_configuration`), retries for about two minutes, then the
+container exits with code 1. The engine log shows `value too long for type
+character varying(255)`.
+
+**Cause:** the engine stores a function block's description and help text in
+`varchar(255)` columns, and the `0.2.0-beta.*` worker ships a block whose help
+text is longer. That insert fails, the worker gives up and exits. The discovery
+block registers before the failing one, so `wait_ready` passes — and the engine
+keeps listing the dead worker as online.
+
+**Fix:** once #402 is merged and the engine's `develop` image is republished,
+re-pull the engine and restart the stack. The worker pin does **not** need to
+move.
+
+```bash
+make local-env-up          # pulls with --policy always
 make local-lab-up
 ```
 
