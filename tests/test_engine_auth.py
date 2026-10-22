@@ -12,6 +12,7 @@ from urllib import error
 
 import pytest
 
+import engine_http
 import labscripts
 from tools import import_host_scripts
 
@@ -109,11 +110,20 @@ def test_callers_send_no_header_without_a_token(module, body, call, monkeypatch)
     assert [req.get_header("Authorization") for req in seen] == [None]
 
 
-@pytest.mark.parametrize("module", [run_workflow, wait_ready])
-def test_callers_name_the_token_variable_when_refused(module):
-    assert "NEOPS_ENGINE_TOKEN" in module.AUTH_HINT
-    assert "./lab_token" in module.AUTH_HINT
-    assert module.UNAUTHORIZED == (401, 403)
+def test_callers_name_the_token_variable_when_refused():
+    assert "NEOPS_ENGINE_TOKEN" in engine_http.AUTH_HINT
+    assert "./lab_token" in engine_http.AUTH_HINT
+    assert engine_http.UNAUTHORIZED == (401, 403)
+
+
+def test_refusal_names_the_status_then_the_engines_body_then_the_hint():
+    """The body separates a missing token from an invalid one; it is cut to
+    300 characters so an HTML error page cannot bury the hint."""
+    long_body = DENIED_BODY + b"x" * 400
+    with pytest.raises(error.HTTPError) as excinfo:
+        _raising(403, "Forbidden", long_body)()
+    expected = f"(403 Forbidden): {long_body.decode()[:300]} — {engine_http.AUTH_HINT}"
+    assert engine_http.refusal(excinfo.value) == expected
 
 
 def test_register_prints_the_engines_refusal_before_the_hint():
@@ -156,13 +166,15 @@ def test_wait_ready_keeps_polling_past_a_not_yet_registered_block(monkeypatch):
     assert wait_ready.worker_states("http://engine", FB_ID) is None
 
 
-def test_run_workflow_stops_polling_on_an_unauthorized_answer(monkeypatch):
+def test_run_workflow_stops_polling_on_an_unauthorized_answer(monkeypatch, capsys):
     """An expired token ends the poll loop, naming the engine's refusal, the
-    execution that keeps running and where to follow it."""
+    execution that keeps running and where to follow it. Exit 2, not 1: the
+    execution has not failed, its outcome is unknown."""
     monkeypatch.setattr(run_workflow, "http_json", _raising(403, "Forbidden", DENIED_BODY))
     with pytest.raises(SystemExit) as excinfo:
         run_workflow.poll_until_terminal("http://engine", "uuid-1", timeout=5, interval=0.01)
-    message = str(excinfo.value)
+    assert excinfo.value.code == 2
+    message = capsys.readouterr().err
     assert DENIED_BODY.decode() in message
     assert "NEOPS_ENGINE_TOKEN" in message
     assert message.index(DENIED_BODY.decode()) < message.index("NEOPS_ENGINE_TOKEN"), (
@@ -172,13 +184,14 @@ def test_run_workflow_stops_polling_on_an_unauthorized_answer(monkeypatch):
     assert run_workflow.MONITOR_URL in message
 
 
-def test_run_workflow_reports_the_refusal_that_blocked_the_start(monkeypatch):
+def test_run_workflow_reports_the_refusal_that_blocked_the_start(monkeypatch, capsys):
     """A start refused for a missing permission is only actionable with the
     engine's own message."""
     monkeypatch.setattr(run_workflow.request, "urlopen", _raising(403, "Forbidden", DENIED_BODY))
     with pytest.raises(SystemExit) as excinfo:
         run_workflow.start_execution("http://engine", "wf.lab.neops.io/x:1.0.0", {}, [])
-    message = str(excinfo.value)
+    assert excinfo.value.code == 2
+    message = capsys.readouterr().err
     assert DENIED_BODY.decode() in message
     assert "NEOPS_ENGINE_TOKEN" in message
     assert message.index(DENIED_BODY.decode()) < message.index("NEOPS_ENGINE_TOKEN"), (

@@ -30,7 +30,7 @@ execution 4f2c…-…-…
   [ 41s] completed_ack
 ```
 
-Its exit code is meaningful: `0` for `completed_ack`, `1` for `failed_safe_ack` / `failed_unsafe_ack`, `2` if the workflow could not be started or polling timed out.
+Its exit code is meaningful: `0` for `completed_ack`, `1` for `failed_safe_ack` / `failed_unsafe_ack`, `2` if the workflow could not be started or polling stopped before a terminal state — on its timeout, or when the engine refused the token. A dropped connection while polling is retried, not reported: an engine restart mid-run leaves the execution running, and `run_workflow` keeps polling it.
 
 !!! info "Why the 15-minute timeout"
     `run_workflow`'s own default is 300s. Discovering 15 devices — SSH plus
