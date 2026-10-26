@@ -1,18 +1,28 @@
 """Fail when a docker network overlaps the lab's fixed subnets.
 
-The lab needs 172.30.0.0/24 (lab-net, the device mgmt network) and
-172.30.1.0/24 (the compose default network); both live in 172.30.0.0/23.
+The lab needs lab-net (the device mgmt network) and 172.30.1.0/24 (the compose
+default network); both live in 172.30.0.0/23.
 Exit 1 with the conflicting networks named, 0 otherwise.
 """
 
 import ipaddress
 import json
+import pathlib
 import subprocess
 import sys
 
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import labscripts  # noqa: E402  (needs ROOT on sys.path first)
+
+# The generator writes lab-net's subnet into the topology's mgmt block, which is
+# what creates the network; read it from there rather than restating it.
+LAB_SUBNET = labscripts.load("gen_clab_topology").LAB_SUBNET
+
 LAB_RANGE = ipaddress.ip_network("172.30.0.0/23")
 # The lab's own networks are allowed to hold exactly their subnet.
-EXPECTED = {"lab-net": "172.30.0.0/24", "neops-lab_default": "172.30.1.0/24"}
+EXPECTED = {"lab-net": LAB_SUBNET, "neops-lab_default": "172.30.1.0/24"}
 
 
 def main() -> int:

@@ -146,6 +146,62 @@ services:
     command: >
       sh -c "npm install && npm run dev"
 
+  worker:
+    # Optional: the worker only makes sense with devices to reach, and you turn
+    # it off to run one by hand against the same engine. Enabled by
+    # COMPOSE_PROFILES in .env; `docker compose up -d worker` enables the
+    # profile on the fly regardless.
+    profiles: ["worker"]
+    # The worker runs the PUBLISHED SDK image — this repo holds the lab, not the
+    # SDK source. Override via NEOPS_WORKER_SDK_IMAGE (e.g. a locally-built
+    # neops-worker-sdk:latest) to try SDK changes here before they are released;
+    # `pull_policy: missing` then finds the local image and skips the registry.
+    image: ${NEOPS_WORKER_SDK_IMAGE:-quay.io/zebbra/neops-worker-sdk:develop}
+    pull_policy: ${NEOPS_WORKER_SDK_PULL_POLICY:-missing}
+    depends_on:
+      workflow_engine:
+        condition: service_healthy
+    environment:
+      URL_BLACKBOARD: http://workflow_engine:3030
+      # In-container paths (the SDK image's WORKDIR is /app):
+      #   lab/generated/<scenario>/scenario/function_blocks -> the resolved
+      #                          scenario tree inside this repo, bind-mounted
+      #                          below at /app/lab
+      #   neops/fb            -> the base function blocks, which ship INSIDE the
+      #                          published neops-worker-sdk image (`COPY ./neops
+      #                          neops/` in its base stage). FB discovery walks
+      #                          these relative to the CWD. If discovery ever
+      #                          fails with "Function block ... not found",
+      #                          check the image you pinned carries /app/neops/fb.
+      DIR_FUNCTION_BLOCKS: lab/generated/${SCENARIO:?set SCENARIO or drive compose through make; see 'make scenarios'}/scenario/function_blocks,neops/fb
+      WORKER_NAME: simple-lab-worker
+      NEOPS_BLOCKING_DETECTOR: "true"
+    volumes:
+      # The whole repo is the lab: mounted at /app/lab so the in-container paths
+      # above resolve.
+      - .:/app/lab:ro
+    networks:
+      - default
+      - lab-net
+
+  lab_bootstrap:
+    # Built by `make build-docker-bootstrap`; the explicit tag keeps that build
+    # and this service on the same image.
+    image: neops-lab-bootstrap:latest
+    build: ./bootstrap
+    depends_on:
+      workflow_engine:
+        condition: service_healthy
+    environment:
+      ENGINE_URL: http://workflow_engine:3030
+      WORKFLOWS_DIR: /workflows
+      # Access token for the engine's publish route, minted by ./lab_token and
+      # interpolated at `up -d` by whichever make target brings the stack up.
+      NEOPS_ENGINE_TOKEN: ${NEOPS_ENGINE_TOKEN:-}
+    volumes:
+      - ./generated/${SCENARIO:?set SCENARIO or drive compose through make; see 'make scenarios'}/scenario/workflows:/workflows:ro
+    restart: "no"
+
   web_client:
     # Override via NEOPS_WEB_CLIENT_IMAGE (e.g. a locally-built
     # neops-web-client:latest); defaults to the published develop image.
@@ -235,12 +291,25 @@ volumes:
     driver: local
 
 networks:
-  # Fixed subnet so no network in this project is auto-allocated: docker hands
-  # auto-allocated networks the next free /16 from its 172.16/12 pool, and on a
-  # host with many projects that can be 172.30.0.0/16 — which blocks lab-net's
-  # fixed 172.30.0.0/24 with "Pool overlaps". With every subnet pinned, the
-  # allocator never competes with the lab.
+  # `default` carries a fixed subnet so this project's own network is never
+  # auto-allocated: docker hands auto-allocated networks the next free /16 from
+  # its 172.16/12 pool, and on a host with many projects that can be
+  # 172.30.0.0/16 — which blocks lab-net's fixed 172.30.0.0/24 with "Pool
+  # overlaps". Pinned here, the allocator never competes with the lab. (lab-net
+  # below is external, so compose allocates nothing for it either way.)
   default:
     ipam:
       config:
         - subnet: 172.30.1.0/24
+
+  # Nothing removes this network. `make lab-net` creates it and `containerlab
+  # deploy` finds it already there (the generated topology's `mgmt` block names
+  # it and its subnet, gen_clab_topology.LAB_SUBNET). `external` means compose
+  # attaches and never creates or — crucially — REMOVES it, so `make
+  # local-env-down` cannot pull the network out from under a running lab; on the
+  # device side `local-lab-down` passes `--keep-mgmt-net` for the mirror reason.
+  # It must exist before the worker starts, which is why `lab-net` is a
+  # prerequisite of the targets that start one.
+  # Not restating the subnet here is the point: one source.
+  lab-net:
+    external: true

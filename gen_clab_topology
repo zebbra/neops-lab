@@ -19,9 +19,9 @@ import labscripts
 # live in is per-scenario.
 PARAM_FILES = ("discover-params.json", "discover-params-autodetect.json", "discover-params-subnet.json")
 
-# The lab management network: containerlab's mgmt block, the /24 discovery
-# target and docker-compose.worker.yml must agree; tests/test_host_invariants.py
-# cross-checks the compose files against these values.
+# The lab management network: containerlab's mgmt block and the /24 discovery
+# target must agree. Compose joins the network as `external`, so this is the
+# only place its subnet is written; tests/test_host_invariants.py pins that.
 LAB_NET_NAME = "lab-net"
 LAB_SUBNET = "172.30.0.0/24"
 
