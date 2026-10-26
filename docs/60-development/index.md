@@ -30,7 +30,7 @@ tags: [contributing]
 
 - **Branch from `develop`.**
 - **This is not a distributable package.** No wheel, no npm package, no registry image. `pyproject.toml` exists only to configure pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
-- **Host scripts are stdlib-only.** `resolve_scenario`, `gen_clab_topology`, `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`, `run_workflow`, `wait_ready` and `wait_devices` run on a bare host before any virtualenv exists. Do not add a third-party import to them, and register any new one in **both** `pyproject.toml` lists (ruff `extend-include`, pyrefly `project-includes`) *and* in `tools/import_host_scripts.py`.
+- **Host scripts are stdlib-only.** `resolve_scenario`, `gen_clab_topology`, `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`, `run_workflow`, `wait_ready` and `wait_devices` run on a bare host before any virtualenv exists. Do not add a third-party import to them, and register any new one in **both** `pyproject.toml` lists (ruff `extend-include`, pyrefly `project-includes`) *and* in `tools/import_host_scripts.py`. What `run_workflow` and `wait_ready` share about calling the engine (token, refusal handling, retryable errors, `--engine-url` check) lives once in `engine_http.py`, under the same rules.
 - **Never commit `generated/`.** It is rebuilt from the scenario on every lab bring-up, and containerlab mints TLS private keys in there.
 - **`make test` is the meaningful gate for generator changes** — fast, hermetic, and it is what catches an uncommitted parameter-file regeneration.
 

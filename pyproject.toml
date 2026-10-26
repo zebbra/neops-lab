@@ -136,6 +136,7 @@ project-includes = [
   "tests/**/*.py",
   "tools/**/*.py",
   "function_blocks/**/*.py",
+  "engine_http.py",
   # Same extension-less scripts as ruff's extend-include above.
   "gen_clab_topology",
   "gen_device_configs",
