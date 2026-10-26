@@ -20,7 +20,7 @@ The target does three things:
 
 1. `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` — confirm an online worker is registered for the discovery function block.
 2. `docker compose exec -T worker python3 lab/wait_devices` — confirm every device in the scenario's `topology.json` accepts SSH.
-3. `./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.2.0 @scenarios/wan-and-fabric/workflow-execution-parameters/discover-params.json`
+3. `./run_workflow --timeout 900 wf.lab.neops.io/simple_lab_discovery:1.3.0 @scenarios/wan-and-fabric/workflow-execution-parameters/discover-params.json`
 
 `run_workflow` POSTs to `/workflow-execution`, prints the execution UUID, then polls until the execution reaches a terminal state:
 
@@ -124,14 +124,14 @@ The precedence rules behind these — longest prefix wins, credentials scoped fr
 
 ```bash
 # Parameters from a file (curl-style "@file")
-./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 \
+./run_workflow wf.lab.neops.io/simple_lab_discovery:1.3.0 \
   @scenarios/wan-and-fabric/workflow-execution-parameters/discover-params.json
 
 # Inline JSON
-./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 '{"subnets": []}'
+./run_workflow wf.lab.neops.io/simple_lab_discovery:1.3.0 '{"subnets": []}'
 
 # From stdin
-echo '{"subnets": []}' | ./run_workflow wf.lab.neops.io/simple_lab_discovery:1.2.0 -
+echo '{"subnets": []}' | ./run_workflow wf.lab.neops.io/simple_lab_discovery:1.3.0 -
 ```
 
 `--ids 12,34` fills `executeOnParameters.ids` for entity-scoped workflows; `--engine-url`, `--timeout` and `--interval` are also available (`./run_workflow --help`).

@@ -16,7 +16,7 @@ tags: [concept, workflow]
 --8<-- "../scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
 ```
 
-Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.2.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
+Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.3.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
 
 `seedEntity: global` and `runOn: global` mean the step is not scoped to an entity — it runs once, globally, which is why `run_workflow` is called with no `--ids`.
 
@@ -58,7 +58,7 @@ Both are relative to the worker image's WORKDIR, `/app`:
 
 ## Parameters
 
-The workflow's `parameterSchema` declares two top-level arrays.
+The workflow's `parameterSchema` declares two top-level arrays and one flag.
 
 ### `subnets`
 
@@ -83,6 +83,10 @@ The global fallback list, tried in order against hosts whose subnet carries none
 - an unscoped entry is tried for anything.
 
 So credential resolution is: **subnet credentials → global credentials**, and within a list, **platform-matched → unscoped**.
+
+### `fail_if_not_discovered`
+
+Optional, default `false`. When `true`, the run fails if any host given as its own `/32` (or `/128`) yields no device; hosts reached only through a wider prefix never fail it. With the default, undiscovered hosts are reported in the result's `failed_hosts`/`skipped_hosts` and the run still succeeds.
 
 ### The four parameter files
 

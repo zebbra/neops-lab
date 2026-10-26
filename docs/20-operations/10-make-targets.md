@@ -59,7 +59,7 @@ The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 | `PROFILE` | `operator` | Grant profile `lab-grant` applies: `author`, `operator` or `admin` |
 | `NEOPS_ENGINE_TOKEN` (env) | *(minted per target)* | Engine access token; export one to reuse it across targets. `local-lab-up` mints a fresh one after the containerlab deploy |
 | `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.1.0` | The function block `wait_ready` blocks on. Shared with the Kubernetes flavour |
-| `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.2.0` | The definition that is executed; must match the version in the workflow YAML. Shared with the Kubernetes flavour |
+| `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.3.0` | The definition that is executed; must match the version in the workflow YAML. Shared with the Kubernetes flavour |
 | `CLAB_TOPO` | `$(GEN_DIR)/clab/neops-lab.clab.json` | The generated containerlab topology |
 | `CONTAINERLAB` | `./containerlab` | The containerlab launcher |
 | `CLAB_IMAGE` (env) | `ghcr.io/srl-labs/clab:0.78.2` | containerlab version the launcher runs |
