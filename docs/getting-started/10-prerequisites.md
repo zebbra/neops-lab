@@ -67,8 +67,8 @@ warns if you are not in `clab_admins`.
 
 - **Docker Desktop VM sizing.** The VM's memory is the whole budget: Settings → Resources → Memory ≥ **16 GB** (the 8 GB default cannot hold 5 SR Linux nodes plus Elasticsearch), then *Apply & restart*.
 - **Apple Silicon.** The four `quay.io/zebbra` images are amd64-only; enable *Use Rosetta for x86_64/amd64 emulation* (Settings → General) or they run under QEMU, much slower. containerlab, FRR and SR Linux are native arm64.
-- **No route from the Mac to `lab-net`** (`172.30.0.0/24`): the make targets poll device readiness from inside the worker, and nothing in these docs reaches a device from the host.
-- A slow first run wants larger wait budgets, not fewer waits: `make local-lab-up WAIT_READY_TIMEOUT=600 WAIT_DEVICES_TIMEOUT=600`.
+- **No route from the Mac to `lab-net`** (`172.30.0.0/24`): the make targets poll device readiness from a throwaway container attached to that network, and nothing in these docs reaches a device from the host.
+- A slow first run wants larger wait budgets, not fewer waits: `make local-lab-up WAIT_DEVICES_TIMEOUT=600` for the devices, `make local-env-up WAIT_READY_TIMEOUT=600` for the worker's function blocks.
 - `make doc-fix-symlinks` needs `brew install symlinks`; nothing else in the docs workflow differs.
 
 ## Registry access
@@ -104,7 +104,7 @@ rest — see [Images](../20-operations/20-images.md).
 
 ## Running locally-built images instead
 
-Every published image can be swapped for a local tag through an environment variable; edit `.env` (docker compose reads it automatically, and `make local-lab-up` creates it from `.env.example` if missing) or export the variable:
+Every published image can be swapped for a local tag through an environment variable; edit `.env` (docker compose reads it automatically, and `make lab-env` — chained into `local-env-init` and `local-env-up` — creates it from `.env.example` if missing) or export the variable:
 
 | Variable | Default |
 |---|---|

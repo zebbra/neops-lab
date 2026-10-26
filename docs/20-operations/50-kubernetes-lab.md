@@ -25,7 +25,7 @@ Both shipped scenarios do. `make kind-lab-up SCENARIO=frr-only` brings up the sa
 | `make kind-lab-up` | Builds `neops-lab-frr:latest`, `kind load`s it onto the cluster nodes, resolves the scenario, runs `./gen_kind_manifests`, applies the result, waits for every Deployment to become Available, then prints each device's DNS name. |
 | `make kind-lab-status` | `kubectl get pods,svc` in the lab namespace. |
 | `make kind-lab-down` | Deletes the namespace, and nothing else. |
-| `make kind-lab-discover` | Publishes the workflow definition, generates the per-device targets, waits for the discovery function block, then runs it — see [Discovery](#discovery). |
+| `make kind-discover` | Publishes the workflow definition, generates the per-device targets, waits for the discovery function block, then runs it — see [Discovery](#discovery). |
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -69,14 +69,14 @@ ssh frr@core-rtr-01.neops-lab.svc.cluster.local   # password: frr
 
 There are no management IPs here. The topology's `mgmt_ip` values belong to the containerlab `lab-net` bridge and are unused by this flavour — in-cluster DNS is the address.
 
-That holds for reaching a device by hand, not for discovery. Discovery scans CIDRs and cannot be pointed at a name: the CMS keeps a device's address in a Postgres `inet` column, so a `*.svc.cluster.local` hostname is rejected outright rather than resolved. The addresses that do work here are the Service ClusterIPs, which `kubectl -n neops-lab get svc` prints — and the cluster assigns a fresh set every time the namespace is recreated, so nothing may hardcode them. `make kind-lab-discover` reads them per run for exactly that reason.
+That holds for reaching a device by hand, not for discovery. Discovery scans CIDRs and cannot be pointed at a name: the CMS keeps a device's address in a Postgres `inet` column, so a `*.svc.cluster.local` hostname is rejected outright rather than resolved. The addresses that do work here are the Service ClusterIPs, which `kubectl -n neops-lab get svc` prints — and the cluster assigns a fresh set every time the namespace is recreated, so nothing may hardcode them. `make kind-discover` reads them per run for exactly that reason.
 
 ## Making the CMS usable
 
-Bringing the pods up needs no product stack. Wiring them to one is a separate target, the same way `local-lab-up` and `local-lab-discover` are separate:
+Bringing the pods up needs no product stack. Wiring them to one is a separate target, the same way `local-lab-up` and `discover` are separate:
 
 ```bash
-make kind-lab-cms-config   # grant the CMS role and seed the Global scope
+make kind-apply-cms-config   # grant the CMS role and seed the Global scope
 ```
 
 That runs `apply_cms_config`, the compose lab's own script, reused rather than copied: it drives `manage.py` through a `CMS_EXEC` prefix, which this flavour sets to `kubectl exec` instead of `docker compose exec`. Without it a freshly installed CMS gives the `neops` user no role, and the web client shows *You don't have access to any scope*.
@@ -101,12 +101,12 @@ The host reaches the CMS through a short-lived `kubectl port-forward` that the t
 ## Discovery
 
 ```bash
-make kind-lab-discover
+make kind-discover
 ```
 
 Four steps, each one of the repo's existing scripts, so nothing about publishing, waiting or executing exists twice:
 
-1. **Publish** the resolved scenario's workflow documents (`generated/<scenario>/scenario/workflows/`) by running `bootstrap/register.py` in the `neops-lab-bootstrap` image. The compose flavour does this from its `lab_bootstrap` service during `local-lab-up`; `kind-lab-up` has no equivalent step, so the definition is published here instead. Re-publishing unchanged content is a no-op (`200`); publishing a *changed* definition under a version that already exists fails with `409`, because published versions are immutable.
+1. **Publish** the resolved scenario's workflow documents (`generated/<scenario>/scenario/workflows/`) by running `bootstrap/register.py` in the `neops-lab-bootstrap` image. The compose flavour does this from its `lab_bootstrap` service during `local-env-up`; `kind-lab-up` has no equivalent step, so the definition is published here instead. Re-publishing unchanged content is a no-op (`200`); publishing a *changed* definition under a version that already exists fails with `409`, because published versions are immutable.
 2. **Generate the targets** with `./gen_kind_discover_params`, which writes `generated/<scenario>/kind/discover-params.json`.
 3. **Wait** for an online worker registering the discovery block, with `./wait_ready`. The worker registers its blocks asynchronously; without the wait the execution fails with *Function block not found*.
 4. **Execute** with `./run_workflow`, polling to a terminal state. Ten devices take roughly two minutes.
@@ -135,18 +135,18 @@ The device set comes from `gen_kind_manifests` and the credentials from `gen_cla
 
 The output is git-ignored and regenerated on every run, because a `kind-lab-down` / `kind-lab-up` cycle hands out a fresh set of addresses.
 
-### The worker image has to carry `global_discover_network`
+### The worker image has to carry the base blocks
 
 Discovery runs the `fb.base.neops.io/global_discover_network:0.1.0` block, which ships **inside the worker image** rather than being mounted from here. Which image you deployed decides whether this works at all:
 
 | Worker image built from | Function blocks | Discovery |
 |---|---|---|
-| `quay.io/zebbra/neops-worker-sdk:develop`, the default | base blocks, **without** `global_discover_network` | The worker runs but never announces the block; `wait_ready` times out with *no online worker* |
-| `quay.io/zebbra/neops-worker-sdk:0.2.0-beta.*` (prerelease, expires after 20 days) | base blocks, including `global_discover_network` | Works once [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402) is in develop |
-| the `neops-worker-sdk-py` checkout, `make build-docker` | whatever the checked-out branch carries | Works if that branch has `global_discover_network` |
-| any image built without `neops/fb` | none | `wait_ready` times out with *no online worker* |
+| `quay.io/zebbra/neops-worker-sdk:0.2.0-beta.7`, what `.env.example` pins | includes `global_discover_network` | Works |
+| `quay.io/zebbra/neops-worker-sdk:develop`, the compose default | no `global_discover_network` — the pin note in `.env.example` holds the check, and the expiry after which this is the only published option | *Function block not found* |
+| the `neops-worker-sdk-py` checkout, `make build-docker` | 25, plus whatever you are editing | Works |
+| any image built without `neops/fb` | none | *Function block not found* |
 
-The KIND release deployed against this lab runs a worker built from that checkout and loaded into the cluster as `neops-worker-sdk:cutting-edge`, like every other service — the workspace-root `make deploy-cutting-edge` does both — so discovery works here only while that checkout's branch carries `global_discover_network`. `make kind-lab-discover` fails at step 3 with a `wait_ready` timeout if you point it at a release whose image lacks the block; see [`no online worker` at `wait_ready`](40-troubleshooting.md#no-online-worker-at-wait_ready).
+The KIND release deployed against this lab runs a worker built from that checkout and loaded into the cluster as `neops-worker-sdk:cutting-edge`, like every other service — the workspace-root `make deploy-cutting-edge` does both — which is why discovery works here today. `make kind-discover` fails at step 3 with a `wait_ready` timeout if you point it at a release whose image lacks the block.
 
 ### Variables
 
@@ -161,7 +161,7 @@ The KIND release deployed against this lab runs a worker built from that checkou
 
 ### Why one URL, and where it comes from
 
-The engine is the one thing here that is *not* reached through a `kubectl port-forward`, unlike the CMS in `kind-lab-cms-config`. It has to be reachable from two places — the host scripts and the bootstrap container that publishes the definition — and a port-forward is bound on the host only. One address serving both sides is what keeps this to a single variable.
+The engine is the one thing here that is *not* reached through a `kubectl port-forward`, unlike the CMS in `kind-apply-cms-config`. It has to be reachable from two places — the host scripts and the bootstrap container that publishes the definition — and a port-forward is bound on the host only. One address serving both sides is what keeps this to a single variable.
 
 The default is the umbrella's **offline ingress name**. Every service is published twice, under a public name and a `*.neops.local` twin, and the twins are mapped to `127.0.0.1` by:
 
@@ -177,12 +177,12 @@ A container does not share the host's `/etc/hosts`, so the bootstrap container i
 # A remote engine reachable through real DNS: no --add-host is added, because a
 # public name resolves the same on both sides. This is the URL of *one*
 # deployment; substitute your own.
-make kind-lab-discover KIND_ENGINE_URL=https://engine.neops.lerena.cloud
+make kind-discover KIND_ENGINE_URL=https://engine.neops.lerena.cloud
 
 # Your own port-forward instead: 127.0.0.1 means the host, so the container
 # needs the host's network namespace rather than a name mapping.
 kubectl -n neops port-forward svc/neops-neops-workflow-engine 13030:3030 &
-make kind-lab-discover KIND_ENGINE_URL=http://127.0.0.1:13030 DOCKER_RUN_FLAGS=--network=host
+make kind-discover KIND_ENGINE_URL=http://127.0.0.1:13030 DOCKER_RUN_FLAGS=--network=host
 ```
 
 !!! note "Re-running is safe here"
@@ -215,5 +215,5 @@ Each pod carries a `tcpSocket: 22` readiness probe, so a Deployment reports Avai
 ## What it deliberately leaves out
 
 - **Any non-FRR device.** Each SR Linux node wants several GB of RAM and a slow management-stack boot; only `vendor: "frr"` devices are rendered, whatever the scenario contains. A scenario with no FRR device cannot use this flavour and must not declare `kind` in its `flavours`.
-- **Deploying the control plane.** Nothing here installs a CMS, engine, worker or web client; `make local-env-*` and `make local-lab-up` still do that for the compose flavour. `kind-lab-cms-config` and `kind-lab-discover` *use* a control plane someone else deployed — they configure and drive it, and they never install, upgrade or delete it.
+- **Deploying the control plane.** Nothing here installs a CMS, engine, worker or web client; `make local-env-*` does that for the compose flavour. `kind-apply-cms-config` and `kind-discover` *use* a control plane someone else deployed — they configure and drive it, and they never install, upgrade or delete it.
 - **Real links.** The `swpN` ports are dummy interfaces with the right names and descriptions, not point-to-point wiring. Discovery sees a realistic device; packets do not cross between devices.

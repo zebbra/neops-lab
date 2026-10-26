@@ -24,11 +24,11 @@ make build-docker
     them itself. There is no `quay.io/zebbra/neops-lab-*`, and there is no
     publish pipeline in this repo.
 
-    `docker-compose.worker.yml` pins `lab_bootstrap` to the exact tag
+    `docker-compose.yml` pins `lab_bootstrap` to the exact tag
     `neops-lab-bootstrap:latest` *and* declares `build: ./bootstrap`, so the
     compose build and `make build-docker` cannot drift apart.
 
-`make build-docker` is a prerequisite of `make local-lab-up`, so in normal use you never call it directly. CI runs it as a separate job (on the `hetzner` runner) purely so a broken Dockerfile fails in CI instead of on a developer's first lab bring-up.
+The two split across the two lifecycles. `neops-lab-frr:latest` is a **device** image: `make build-docker-frr` is a prerequisite of `local-lab-up` and `kind-lab-up`. `neops-lab-bootstrap:latest` is an **environment** image: compose builds it for the `lab_bootstrap` service, and `make kind-discover` depends on `build-docker-bootstrap`. `make build-docker` builds both. In normal use you call none of them directly; CI runs `make build-docker` as a separate job (on the `hetzner` runner) purely so a broken Dockerfile fails in CI instead of on a developer's first lab bring-up.
 
 ### `neops-lab-frr`
 
@@ -59,7 +59,7 @@ Interface *descriptions* are not baked in either: containerlab `exec`s `/lab/set
 
 ### `neops-lab-bootstrap`
 
-A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, publishes every workflow document in the resolved scenario (`generated/<scenario>/scenario/workflows/`, sourced from `scenarios/_base/workflows/` unless the scenario overrides or adds one) — `*.yaml`, `*.yml` and `*.json` alike — through the engine's `POST /workflow-definition/publish`, and exits. Publishing is idempotent: an unchanged document answers `200 unchanged`, which is the normal outcome of re-running `make local-lab-up`. Published content is immutable, so *editing* a workflow without bumping its version answers `409` and fails the target — bump `majorVersion`/`minorVersion`/`patchVersion` instead. Engines older than [`068753a0`](https://github.com/zebbra/neops-workflow-engine/commit/068753a0) have no publish route; `register.py` falls back to the legacy `POST /workflow-definition` on a 404. `docker compose wait lab_bootstrap` in `local-lab-up` blocks on that exit and propagates the code.
+A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, publishes every workflow document in the resolved scenario (`generated/<scenario>/scenario/workflows/`, sourced from `scenarios/_base/workflows/` unless the scenario overrides or adds one) — `*.yaml`, `*.yml` and `*.json` alike — through the engine's `POST /workflow-definition/publish`, and exits. Publishing is idempotent: an unchanged document answers `200 unchanged`, which is the normal outcome of re-running `make local-env-up`. Published content is immutable, so *editing* a workflow without bumping its version answers `409` and fails the target — bump `majorVersion`/`minorVersion`/`patchVersion` instead. Engines older than [`068753a0`](https://github.com/zebbra/neops-workflow-engine/commit/068753a0) have no publish route; `register.py` falls back to the legacy `POST /workflow-definition` on a 404. `docker compose wait lab_bootstrap` in `local-env-init` and `local-env-up` blocks on that exit and propagates the code.
 
 ## Pulled — the NeOps control plane
 
@@ -69,6 +69,8 @@ A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `re
 | `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image — e.g. the full licensed `quay.io/zebbra/neops-workflow-engine:develop`) |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` — lacks `global_discover_network`, so `.env.example` pins a prerelease `0.2.0-beta.*` that has it | `NEOPS_WORKER_SDK_IMAGE` |
+
+One more image is pulled but belongs to neither group: `PROBE_IMAGE`, `python:3.12-slim` by default, which `make local-lab-up` and `make discover` run the `wait_devices` poll in. It is pinned to the same base `bootstrap/Dockerfile` uses, so most hosts already have the layers.
 
 The CMS, the web client, the worker and the developer-preview engine are all public, so the default lab pulls with no `docker login`. The **full licensed engine** (`quay.io/zebbra/neops-workflow-engine`) is the one exception.
 
@@ -81,11 +83,11 @@ Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:7
 
 ## Running a locally-built image
 
-Edit `.env` (docker compose reads it automatically; `make local-lab-up` creates it from `.env.example` if missing) or export the variable:
+Edit `.env` (docker compose reads it automatically; `make lab-env`, chained into `local-env-init` and `local-env-up`, creates it from `.env.example` if missing) or export the variable:
 
 ```bash
 export NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest
-make local-lab-up
+make local-env-up
 ```
 
 Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}`. `missing` means an image already present locally is used as-is, with no registry call — which is exactly what makes a local tag work.
@@ -93,8 +95,9 @@ Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}
 !!! note "`docker compose pull` warns on a local tag"
     A tag with no registry host resolves as `docker.io/library/…`, which does
     not exist. The explicit pulls in `local-env-init`, `local-env-up` and
-    `local-lab-up` run with `--ignore-pull-failures`, so an override like this
+    `worker-up` run with `--ignore-pull-failures`, so an override like this
     is a warning; `up -d` uses the local image (`pull_policy: missing`).
+    `local-lab-up` pulls nothing at all.
 
 ### Why you would
 
@@ -110,7 +113,6 @@ Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}
 ## Verifying what you are running
 
 ```bash
-export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
 docker compose images                       # image + tag per service
 docker compose exec worker ls /app/neops/fb # base function blocks in the image

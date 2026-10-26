@@ -12,7 +12,7 @@ tags: [concept, gotcha]
 
 **The whole repo is bind-mounted read-only into the worker container at `/app/lab`.**
 
-```yaml title="docker-compose.worker.yml (excerpt)"
+```yaml title="docker-compose.yml — the worker service (excerpt)"
 volumes:
   - .:/app/lab:ro
 ```
@@ -23,13 +23,20 @@ The worker SDK image's WORKDIR is `/app`. So a path that the *worker* resolves i
 |---|---|---|
 | `Makefile` recipe, host shell | `./gen_clab_topology` | ✅ |
 | `Makefile` recipe, host shell | `./lab/gen_clab_topology` | ❌ |
-| `docker compose exec worker python3 …` | `lab/wait_devices` | ✅ |
-| `docker compose exec worker python3 …` | `wait_devices` | ❌ |
+| `docker compose exec worker ls …` | `lab/scenarios` | ✅ |
+| `docker compose exec worker ls …` | `scenarios` | ❌ |
 | env var read **by the container** | `DIR_FUNCTION_BLOCKS: lab/generated/${SCENARIO}/scenario/function_blocks,neops/fb` | ✅ |
 | env var read by the host | anything with `lab/` | ❌ |
 | compose bind **source** (host side) | `./generated/${SCENARIO}/scenario/workflows` | ✅ |
 
-Put plainly: **a `lab/` inside a `docker compose exec` or a container-read env var is correct; a `lab/` in a Makefile recipe or a host script is a bug.**
+Put plainly: **a `lab/` inside a `docker compose exec` into the worker, or in a container-read env var, is correct; a `lab/` in a Makefile recipe or a host script is a bug.**
+
+!!! note "The rule is about *this* mount, not about containers in general"
+    `/app/lab` is the worker's mount point, and nothing else in the lab uses it.
+    The throwaway container `wait_devices` runs in mounts the repo at `/lab`
+    with `-w /lab`, so it is invoked as plain `python3 wait_devices`; the
+    containerlab device binds land at `/lab` too. A `lab/` prefix outside the
+    worker is as wrong as one on the host.
 
 ## Why it exists
 
@@ -48,13 +55,14 @@ The result is an asymmetry that looks like an inconsistency and is not.
     `generated/…` on the host, `lab/generated/…` inside the worker. The rule is
     unchanged; the path simply got longer.
 
-**Device readiness** — `make local-lab-up` and `make local-lab-discover` both run:
+**Device readiness used to be the other example, and no longer is.** `make local-lab-up` and `make discover` both wait for device SSH, but they do it in a throwaway `python:3.12-slim` container attached to `lab-net`:
 
 ```bash
-docker compose exec -T worker python3 lab/wait_devices
+docker run --rm --network lab-net -v "$PWD:/lab:ro" -w /lab \
+  -e SCENARIO=$SCENARIO python:3.12-slim python3 wait_devices
 ```
 
-That is *this repo's* `wait_devices` script, executed inside the worker container. It runs there rather than on the host for a network reason, not a path reason — see [Troubleshooting](../20-operations/40-troubleshooting.md#devices-never-become-reachable).
+It runs in a container rather than on the host for a network reason — on macOS/Docker Desktop the host has no route to `172.30.0.0/24` — see [Troubleshooting](../20-operations/40-troubleshooting.md#devices-never-become-reachable). It used to run as `docker compose exec worker python3 lab/wait_devices`, which made a *device* wait require a running control plane; the worker did no part of the check and was borrowed for its network attachment alone.
 
 ## Two consequences worth knowing
 

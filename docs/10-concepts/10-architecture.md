@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: The containers, networks and ports that make up the lab — two compose files, one containerlab topology, and the bridge that joins them.
+description: The containers, networks and ports that make up the lab — one compose file, one containerlab topology, and the external bridge that joins them.
 tags: [concept, architecture]
 ---
 
@@ -8,32 +8,29 @@ tags: [concept, architecture]
 
 *Everything the lab runs, and how the control plane reaches the devices.*
 
-## Two compose files, combined
+## One compose file
 
-The lab is declared in two files:
+`docker-compose.yml` declares the whole control plane — CMS, workflow engine,
+monitor app, web client, Postgres, Elasticsearch, Redis, a `wait_health` helper,
+the one-shot `lab_bootstrap`, and the `worker`. There is no overlay file and no
+`COMPOSE_FILE` to export.
 
-| File | Declares |
-|---|---|
-| `docker-compose.yml` | The **base stack**: CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis, plus a `wait_health` helper |
-| `docker-compose.worker.yml` | The **worker overlay**: the `worker`, the one-shot `lab_bootstrap`, and the `lab-net` network definition |
+The **worker** is the one optional service: it sits behind the `worker` compose
+profile, so it starts with the environment only when `COMPOSE_PROFILES` contains
+`worker`. The shipped `.env.example` sets it; `make worker-up` names the service
+on the command line, which enables the profile regardless.
 
-They are combined through docker compose's `COMPOSE_FILE` environment variable, exported only for the lab targets in the `Makefile`:
+`lab-net` is **external** to compose: nothing in this file creates it. `make
+lab-net` does, from `gen_clab_topology.LAB_SUBNET`, and containerlab attaches
+the devices to it.
 
-```make
-LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml
-local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_FILE := $(LAB_COMPOSE_FILES)
-```
-
-The scoping is deliberate: `local-env-*` targets keep using the base `docker-compose.yml` only, so you can run the control plane without the worker or the devices.
-
-!!! warning "`docker compose` by hand needs the same environment"
-    Running `docker compose logs worker` in a plain shell will not find the
-    service — the base file does not declare it. Either use the make targets,
-    or export the variable yourself:
+!!! warning "`docker compose` by hand needs `SCENARIO`"
+    Every scenario bind mount interpolates `${SCENARIO:?…}`, which aborts rather
+    than guessing. Drive compose through `make`, or set it yourself:
 
     ```bash
-    export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
-export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
+    export SCENARIO=wan-and-fabric
+    docker compose ps
     ```
 
 ## Services
@@ -44,8 +41,8 @@ export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
 | `workflow_engine` | `quay.io/zebbra/neops-workflow-engine-preview:develop` | `3030` | Reads the CMS token from `cms_api_key.env`. The **developer preview**, public; `NEOPS_WORKFLOW_ENGINE_IMAGE` swaps in the full licensed engine |
 | `workflow-engine-client` | same image as the engine | `3031` → 5173 | The **monitor app**, run in dev mode (`npm install && npm run dev`) out of `/app/rest/monitor-app` |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `8080` | `FRONTEND_*` env vars are browser-relative, so they point at host ports |
-| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | — | On **both** networks; polls the engine's blackboard and drives the devices |
-| `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: POSTs every workflow document in the resolved scenario to the engine, then exits |
+| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | — | **`profiles: ["worker"]`** — optional, see above. On **both** networks; polls the engine's blackboard and drives the devices |
+| `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: POSTs every workflow document in the resolved scenario to the engine, then exits. **Not** profiled — publishing the definitions is part of the environment |
 | `postgres` | `postgres:15-alpine` | — | Volume `postgres_data` |
 | `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.9.2` | — | Volume `elasticsearch`; 2 CPU / 4 GB limits (2 GB heap) |
 | `redis` | `redis:7-alpine` | — | The CMS's channel layer (GraphQL subscriptions), cache and Celery broker |
@@ -79,7 +76,9 @@ graph LR
   boot -- "POST /workflow-definition/publish" --> engine
 ```
 
-`lab-net` is declared by `docker-compose.worker.yml` with an explicit IPAM subnet of `172.30.0.0/24`, and containerlab's topology sets `mgmt.network: lab-net` with the same subnet. That is the join: compose creates the bridge, containerlab attaches the devices to it at their fixed `mgmt-ipv4`, and the worker — a member of both networks — can reach the engine by service name *and* the devices by IP.
+`lab-net` carries the subnet `172.30.0.0/24`, and containerlab's topology sets `mgmt.network: lab-net` with the same subnet. That is the join: the bridge exists independently of both runtimes, containerlab attaches the devices to it at their fixed `mgmt-ipv4`, and the worker — a member of both networks — can reach the engine by service name *and* the devices by IP.
+
+Compose declares `lab-net` as `external: true`, so it attaches to the bridge and never creates or removes it. That is what lets the two lifecycles be independent: `make local-env-down` cannot pull the network out from under running devices, and `make local-lab-down` passes `--keep-mgmt-net` so containerlab cannot pull it out from under a running worker. The flip side is that compose *aborts* on a missing external network rather than creating one, which is why `make lab-net` is a prerequisite of `local-env-init`, `local-env-up`, `local-lab-up` and `worker-up`.
 
 !!! note "Every project network has a fixed subnet"
     The compose `default` network is pinned to `172.30.1.0/24`
@@ -91,10 +90,11 @@ graph LR
     and cross-checked by `tests/test_host_invariants.py`; `make doctor` names
     any existing network overlapping `172.30.0.0/23`.
 
-!!! note "Ordering matters"
-    `make local-lab-up` runs `docker compose up -d` **before**
-    `./containerlab deploy`, because compose is what creates `lab-net`.
-    Deploying containerlab first would fail to find the network.
+!!! note "Order does not matter"
+    Because `lab-net` belongs to neither runtime, `make local-env-up` and `make
+    local-lab-up` can run in either order, and either can be torn down without
+    the other. Each chains `make lab-net` first, so whichever runs first brings
+    the bridge into being.
 
 ## The devices
 
@@ -173,7 +173,7 @@ Shared across scenarios, under `scenarios/_base/`, each overridable by a scenari
 At the repo root:
 
 - `devices/frr/Dockerfile` and `devices/frr/entrypoint.sh` — image build inputs, not scenario data
-- `bootstrap/`, the compose files, the `Makefile`, and the host scripts (`resolve_scenario`, `gen_clab_topology`, `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`, `run_workflow`, `wait_ready`, `wait_devices`)
+- `bootstrap/`, `docker-compose.yml`, the `Makefile`, and the host scripts (`resolve_scenario`, `gen_clab_topology`, `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`, `lab_token`, `run_workflow`, `wait_ready`, `wait_devices`)
 
 **Generated, git-ignored.** For `SCENARIO=wan-and-fabric`:
 
@@ -186,6 +186,6 @@ At the repo root:
 | `generated/wan-and-fabric/kind/lab.yaml`, `kind/discover-params.json` | `gen_kind_manifests`, `gen_kind_discover_params` |
 | `cms/jwt/`, `cms_api_key.env` | `make lab-jwt`, `make local-env-init` |
 
-Everything under `generated/` is rebuilt on every `make local-lab-up`. Never commit it — containerlab mints TLS private keys in there.
+Everything under `generated/` is rebuilt on every `make local-lab-up` and `make scenario-resolve`. Never commit it — containerlab mints TLS private keys in there.
 
 The one thing generated *outside* `generated/` is the committed `workflow-execution-parameters/*.json`, written back beside the topology that produced it. `make test` asserts it reproduces byte-for-byte, for every scenario.

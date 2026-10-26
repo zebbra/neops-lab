@@ -10,15 +10,15 @@ tags: [contributing, gotcha]
 
 ## 1. The extension-less scripts must keep their names
 
-`tests/*` load them by path via `SourceFileLoader`, `gen_clab_topology` loads `gen_device_configs` the same way (and that one loads `resolve_scenario`), and the `Makefile` invokes them as `./gen_clab_topology`. Because they have no `.py`, ruff and pyrefly see them only through the explicit `extend-include` / `project-includes` lists in `pyproject.toml` — **add any new script to both lists, and to `tools/import_host_scripts.py`, or it is silently never checked.** The current set is `resolve_scenario`, `gen_clab_topology`, `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`, `run_workflow`, `wait_ready` and `wait_devices`. See [Dev setup](10-dev-setup.md#the-extension-less-script-rule).
+`tests/*` load them by path via `SourceFileLoader`, `gen_clab_topology` loads `gen_device_configs` the same way (and that one loads `resolve_scenario`), and the `Makefile` invokes them as `./gen_clab_topology`. Because they have no `.py`, ruff and pyrefly see them only through the explicit `extend-include` / `project-includes` lists in `pyproject.toml` — **add any new script to both lists, and to `tools/import_host_scripts.py`, or it is silently never checked.** The current set is `resolve_scenario`, `gen_clab_topology`, `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`, `lab_token`, `run_workflow`, `wait_ready` and `wait_devices`. See [Dev setup](10-dev-setup.md#the-extension-less-script-rule).
 
 ## 2. The repo is bind-mounted read-only at `/app/lab`
 
-That is why in-container paths keep a `lab/` prefix (`DIR_FUNCTION_BLOCKS: lab/generated/<scenario>/scenario/function_blocks,neops/fb`, `docker compose exec worker python3 lab/wait_devices`) while host-side paths never do. **A `lab/` in a Makefile recipe or a host script is a bug; a `lab/` inside a `docker compose exec` or a container-read env var is correct.** Full explanation: [The `/app/lab` mount](../10-concepts/40-container-paths.md).
+That is why in-container paths keep a `lab/` prefix (`DIR_FUNCTION_BLOCKS: lab/generated/<scenario>/scenario/function_blocks,neops/fb`, or a `docker compose exec worker ls lab/scenarios`) while host-side paths never do. **A `lab/` in a Makefile recipe or a host script is a bug; a `lab/` inside a `docker compose exec` into the worker, or in a container-read env var, is correct.** The rule is about *this* mount only: the throwaway container `wait_devices` runs in mounts the repo at `/lab` with `-w /lab`, so it is invoked as plain `python3 wait_devices`. Full explanation: [The `/app/lab` mount](../10-concepts/40-container-paths.md).
 
 ## 3. `neops/fb` ships inside the published worker image
 
-It is not mounted from here. If discovery fails with `Function block … not found`, check that the `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `/app/neops/fb`.
+It is not mounted from here. If discovery fails with `Function block … not found`, check that the `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `/app/neops/fb`. The published `:develop` tag does not currently carry `global_discover_network`; `.env.example` pins a tag that does, and its note holds the check for when the pin can go.
 
 ## 4. `gen_clab_topology` emits `"../scenario/devices/frr/…"` on purpose
 
@@ -40,7 +40,7 @@ Corollary: **`discover-params-mixed.json` has no generator and no test coverage.
 
 ## 6. Images are local-tag only
 
-`neops-lab-frr:latest` and `neops-lab-bootstrap:latest` are built by `make build-docker` on whatever host runs the lab; nothing is pushed to a registry. `docker-compose.worker.yml` pins `lab_bootstrap` to that exact tag so the compose build and `build-docker` cannot diverge. Everything else — CMS, engine, web client, worker — comes from `quay.io/zebbra`.
+`neops-lab-frr:latest` and `neops-lab-bootstrap:latest` are built by `make build-docker` on whatever host runs the lab; nothing is pushed to a registry. `docker-compose.yml` pins `lab_bootstrap` to that exact tag so the compose build and `build-docker` cannot diverge. They split across the two lifecycles: the FRR image is a device image (`build-docker-frr` is a prerequisite of `local-lab-up` and `kind-lab-up`), the bootstrap image an environment one. Everything else — CMS, engine, web client, worker — comes from `quay.io/zebbra`.
 
 ## 7. The FRR image needs both `NET_ADMIN` and `SYS_ADMIN`
 
@@ -66,14 +66,26 @@ It also requires `SCENARIO` and reads the scope JSON from `generated/$SCENARIO/s
 
 Related: **the scope is `Global`, capital G.** The CMS image seeds a scope by that exact name, and Postgres name uniqueness is case-sensitive — a lowercase `global` creates a silent duplicate.
 
-## 12. The race ordering in `local-lab-up` is deliberate
+## 12. The race ordering in `local-env-up` is deliberate
 
 ```text
 make scenario-resolve                # materialise the overlay the mounts read
+docker compose up -d --wait cms      # ./lab_token logs in against it
+./apply_cms_config                   # a token carries the grants held at login
+MINT_ENGINE_TOKEN                    # the token lab_bootstrap gets at `up -d`
+docker compose up -d
 docker compose wait lab_bootstrap    # workflow registration
-./containerlab deploy --reconfigure  # SR Linux boots slowly — start it early
-./wait_ready <fb>                    # the worker registers FBs asynchronously
-wait_devices, from inside the worker # the host has no route to lab-net on macOS
+./wait_ready <fb>                    # only with the worker profile on
+```
+
+`local-lab-up` has its own, much shorter one, and it shares nothing with the above:
+
+```text
+make lab-net                         # compose aborts on a missing external net
+./containerlab deploy --reconfigure  # SR Linux boots slowly; re-runnable
+wait_devices, in a container on      # the host has no route to lab-net on macOS
+  lab-net
+write the deployed-scenario marker   # only after the deploy succeeded
 ```
 
 Each wait exists because of a real, reproduced failure, and each has a distinctive symptom listed in [Troubleshooting](../20-operations/40-troubleshooting.md). **Do not replace one with a `sleep`.**
@@ -92,7 +104,9 @@ In the Makefile (`$(CONTAINERLAB)`) and in every doc. The launcher runs `ghcr.io
 
 ## 16. `SCENARIO` has exactly one default, and it lives in the `Makefile`
 
-`SCENARIO ?= wan-and-fabric` plus `export SCENARIO`. Every other consumer — the four generators, `resolve_scenario`, `apply_cms_config` and both compose files — **fails when it is unset** rather than falling back. A second default is how a scenario gets applied half from one lab and half from another, which stays invisible until discovery produces a confusing result. `tests/test_host_invariants.py` asserts no consumer grows one.
+`SCENARIO ?= wan-and-fabric` plus `export SCENARIO`. Every other consumer — the four generators, `resolve_scenario`, `apply_cms_config` and `docker-compose.yml` — **fails when it is unset** rather than falling back. A second default is how a scenario gets applied half from one lab and half from another, which stays invisible until discovery produces a confusing result. `tests/test_host_invariants.py` asserts no consumer grows one.
+
+`SCENARIO` may also be set in `.env`, and make reads that file itself (`$(call dotenv,SCENARIO)`) rather than leaving it to compose: command line/environment → `.env` → the default, with the result `export`ed so it wins over `.env` for compose too. Left to compose alone the two would disagree — the containers would mount one lab's assets while the generators built another's, and no consumer could object, because both names are valid. `make scenario` prints the resolved value and its source.
 
 ## 17. Compose uses `${SCENARIO:?…}`, never a bare `${SCENARIO}`
 
@@ -113,3 +127,15 @@ A stock macOS ships `/usr/bin/python3` 3.9, where a PEP 604 `X | None` annotatio
 ## 21. The monitor's runtime config reaches it through a bind mount
 
 `monitor/config.js` is mounted over `/app/rest/monitor-app/static/config.js` on the `workflow-engine-client` service, and that mount is the only path by which `window.__NEOPS_CONFIG__.webclientOrigin` reaches the monitor in this lab. The image's own `docker-entrypoint.d/40-runtime-config.sh` regenerates that file from `WEBCLIENT_ORIGIN`, and it runs under nginx; this service runs the engine image with `npm install && npm run dev`, where the entrypoint plays no part. **Setting `WEBCLIENT_ORIGIN` on the service has no effect here — edit `monitor/config.js`.** The mount is cross-checked by `tests/test_compose_authz.py`.
+
+## 22. `lab-net` is `external: true` to compose
+
+It belongs to neither runtime: `make lab-net` creates it from `gen_clab_topology.LAB_SUBNET` — the single place the subnet is written — and containerlab attaches the devices to it from the generated topology's `mgmt` block. Compose attaches and never creates or removes, so `make local-env-down` cannot pull the network out from under running devices; `make local-lab-down` passes `--keep-mgmt-net` so containerlab cannot pull it out from under a running worker. The flip side is that compose **aborts** on a missing external network rather than creating one, which is why `lab-net` is a prerequisite of `local-env-init`, `local-env-up`, `local-lab-up` and `worker-up`.
+
+## 23. The device targets never touch the compose project
+
+`local-lab-*` drives `./containerlab` alone and `kind-lab-*` drives `kubectl` alone: no `docker compose`, no CMS, no engine, no token. `local-env-*` and `worker-*` are the mirror image, and the operations that genuinely need both are un-prefixed — `discover`, `kind-discover`, `apply-cms-config`, `kind-apply-cms-config`, `lab-grant`. `tests/test_target_families.py` pins the boundary, so adding a stray `docker compose` to a device recipe is a test failure rather than a review comment.
+
+## 24. The worker is behind a compose profile
+
+`profiles: ["worker"]`, switched by `COMPOSE_PROFILES` in `.env`. Compose resolves that variable itself; the Makefile reads it only to report which way it is set and to decide whether to `wait_ready`, and deliberately does not export it, so a value read wrongly in make cannot turn off a worker compose would have started. `lab_bootstrap` is **not** profiled — publishing the workflow definitions is part of the environment. Because `make lab-env` never overwrites an existing `.env`, an environment created before the profile existed has no such line and its worker silently stops coming up; `local-env-up` prints `worker: enabled` / `worker: disabled` on every run so that is visible rather than mysterious.

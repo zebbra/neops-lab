@@ -50,7 +50,7 @@ Add an entry under `devices`, keyed by hostname:
 make local-lab-up
 ```
 
-`local-lab-up` resolves the scenario and runs `./gen_clab_topology` for you, so this single command rebuilds the containerlab topology (real link or `dummy` stub, plus the node's image and credentials) and the three generated parameter files, then redeploys.
+`local-lab-up` resolves the scenario and runs `./gen_clab_topology` for you, so this single command rebuilds the containerlab topology (real link or `dummy` stub, plus the node's image and credentials) and the three generated parameter files, then redeploys. The control plane is untouched and needs no restart — the new device is data, not configuration.
 
 To regenerate without touching the running lab:
 
@@ -62,7 +62,7 @@ make generate SCENARIO=frr-only    # another one
 ## 3. Discover it
 
 ```bash
-make local-lab-discover
+make discover
 ```
 
 The new device is picked up automatically: the scenario's `discover-params.json` now contains its `/32`, and `wait_devices` reads the mgmt IPs straight from the scenario's `topology.json`.

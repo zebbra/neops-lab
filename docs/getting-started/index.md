@@ -11,13 +11,16 @@ tags: [tutorial]
 ## The short version
 
 ```bash
-make lab-jwt          # dev RSA keypair for the CMS (idempotent)
-make local-env-init   # pull + start the base stack, mint the CMS API key, seed CMS config
-make local-lab-up     # resolve the scenario, build lab images, deploy the devices
-make local-lab-discover
+make local-env-init   # the control plane: pull, start, mint the CMS API key, seed CMS config
+make local-lab-up     # the devices: resolve the scenario, build the FRR image, deploy
+make discover         # populate the CMS from them
 ```
 
-If any of those four words mean nothing to you yet, read on — each page below explains one step and the failure modes it protects you from.
+The first two are independent — `local-env-*` drives `docker compose` alone,
+`local-lab-*` drives `containerlab` alone — so they run in either order and
+either can be torn down without the other. `make discover` is what joins them.
+
+If any of that means nothing to you yet, read on — each page below explains one step and the failure modes it protects you from.
 
 !!! tip "In a hurry, or short on RAM"
     Those commands run the default `wan-and-fabric` scenario: 15 devices, five
@@ -27,8 +30,11 @@ If any of those four words mean nothing to you yet, read on — each page below 
 
     ```bash
     make local-lab-up SCENARIO=frr-only
-    make local-lab-discover SCENARIO=frr-only
+    make discover SCENARIO=frr-only
     ```
+
+    A checkout that always runs one lab can put `SCENARIO=frr-only` in `.env`
+    instead; `make scenario` says which is selected and where it came from.
 
     See [Scenarios](../30-scenarios/index.md).
 

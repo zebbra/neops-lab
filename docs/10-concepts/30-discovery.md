@@ -10,19 +10,19 @@ tags: [concept, workflow]
 
 ## The workflow
 
-`scenarios/_base/workflows/simple-lab-discovery.workflow.yaml` is registered with the engine by the `lab_bootstrap` container on every `make local-lab-up`. It is a single-step workflow whose entire job is to pass parameters through to a function block:
+`scenarios/_base/workflows/simple-lab-discovery.workflow.yaml` is registered with the engine by the `lab_bootstrap` container on every `make local-env-up`. It is a single-step workflow whose entire job is to pass parameters through to a function block:
 
 ```yaml title="scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
 --8<-- "../scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
 ```
 
-Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.2.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
+Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.2.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
 
 `seedEntity: global` and `runOn: global` mean the step is not scoped to an entity — it runs once, globally, which is why `run_workflow` is called with no `--ids`.
 
 ### How registration works
 
-`bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then publishes each `*.yaml`, `*.yml` and `*.json` it finds in `/workflows` — the selected scenario's resolved `workflows/` directory, bind-mounted there — through `POST /workflow-definition/publish` as `{"workflow": <parsed document>}`. JSON is a subset of YAML, so one parser reads both and the engine is handed the same structure either way; anything else in that directory (a README, say) is skipped rather than posted. It is **idempotent**: `201` means the version was written, `200` means this version already held exactly this document. Published content is **immutable**, so a `409` is a real failure — it means the version exists with *different* content, and the fix is to bump `majorVersion`/`minorVersion`/`patchVersion` in the document rather than edit in place. A `422` means the engine computed a higher version floor than the document declares. Either exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-lab-up` fails rather than continuing into a broken discovery. Against an engine from before the publish route the script falls back to the legacy `POST /workflow-definition` on a `404`.
+`bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then publishes each `*.yaml`, `*.yml` and `*.json` it finds in `/workflows` — the selected scenario's resolved `workflows/` directory, bind-mounted there — through `POST /workflow-definition/publish` as `{"workflow": <parsed document>}`. JSON is a subset of YAML, so one parser reads both and the engine is handed the same structure either way; anything else in that directory (a README, say) is skipped rather than posted. It is **idempotent**: `201` means the version was written, `200` means this version already held exactly this document. Published content is **immutable**, so a `409` is a real failure — it means the version exists with *different* content, and the fix is to bump `majorVersion`/`minorVersion`/`patchVersion` in the document rather than edit in place. A `422` means the engine computed a higher version floor than the document declares. Either exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-env-up` fails rather than continuing into a broken discovery. Against an engine from before the publish route the script falls back to the legacy `POST /workflow-definition` on a `404`.
 
 ## The function block
 

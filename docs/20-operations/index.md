@@ -46,18 +46,39 @@ tags: [operations]
 
 ## The lifecycle at a glance
 
+The environment and the devices are independent — the arrows below cross only at `make discover`, and either half can be torn down without the other.
+
+The control plane:
+
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> Clean
-    Clean --> BaseUp: make local-env-init
-    BaseUp --> LabUp: make local-lab-up
-    LabUp --> Populated: make local-lab-discover
-    Populated --> BaseUp: make local-lab-down
-    LabUp --> BaseUp: make local-lab-down
-    BaseUp --> Clean: make local-env-prune
-    Populated --> Populated: make local-lab-discover
+    Clean --> EnvUp: make local-env-init
+    EnvUp --> EnvDown: make local-env-down
+    EnvDown --> EnvUp: make local-env-up
+    EnvUp --> Clean: make local-env-prune
+    EnvDown --> Clean: make local-env-prune
 ```
 
-`local-lab-down` destroys the devices and stops the containers but **keeps** the Elasticsearch and Postgres volumes, so the CMS data survives. `local-env-prune` is the real reset.
+The devices, independently:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> NoDevices
+    NoDevices --> DevicesUp: make local-lab-up
+    DevicesUp --> NoDevices: make local-lab-down
+```
+
+`make discover` needs `EnvUp` **and** `DevicesUp`, and is what writes the `Device` and `Interface` rows into the CMS. It is re-runnable; nothing else joins the two halves.
+
+`local-lab-down` destroys the devices and touches nothing else — the control plane keeps running, `lab-net` survives (`--keep-mgmt-net`), and the worker stays attached to it. `local-env-down` stops the control plane but **keeps** the Elasticsearch and Postgres volumes, so the CMS data survives. `local-env-prune` is the real reset — and because it leaves `cms_api_key.env` on disk, the next bring-up must be `local-env-init`, not `local-env-up`.
+
+!!! note "Devices down, worker up"
+    After `make local-lab-down` the worker is still healthy and still registered
+    with the engine, so `wait_ready` passes — but `make discover` fails against
+    devices that are no longer there. That is the intended end state, not a
+    broken one.
 
 Every target above acts on one scenario, selected with `SCENARIO` and defaulting to `wan-and-fabric`. One scenario runs at a time — see [Scenarios](../30-scenarios/index.md).

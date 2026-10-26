@@ -16,7 +16,7 @@ tags: [concept]
 
     ---
 
-    Every container, which compose file declares it, which network it is on, which port it publishes. Why the lab uses two compose files combined through `COMPOSE_FILE`, and how the devices end up on the same bridge as the worker.
+    Every container, which network it is on, which port it publishes, and which of them is optional. Why `lab-net` is external to compose, and how the devices end up on the same bridge as the worker.
 
 -   :material-file-tree:{ .lg .middle } &nbsp; **[Topology as source of truth](20-topology.md)**
 

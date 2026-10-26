@@ -150,7 +150,7 @@ Run [the quickstart](getting-started/20-quickstart.md) and you get:
 !!! info "You want a *different* network"
     [Scenarios](30-scenarios/index.md). Group a topology, its workflows and its
     CMS scope configuration into `scenarios/<name>/`, then
-    `make local-lab-up SCENARIO=<name>`.
+    `make local-lab-up SCENARIO=<name>` — or set `SCENARIO` in `.env` once.
 
 !!! info "Discovery found nothing / found the wrong thing"
     [Discovery](10-concepts/30-discovery.md) → [The `/app/lab` mount](10-concepts/40-container-paths.md) → [Troubleshooting](20-operations/40-troubleshooting.md). The function block lives in the *worker image*, not in this repo.

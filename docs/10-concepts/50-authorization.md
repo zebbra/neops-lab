@@ -80,7 +80,7 @@ To change the model, edit the file and re-apply:
 make apply-cms-config
 ```
 
-`make local-lab-up` and `make local-lab-discover` apply it too, before they mint their token, so an edit reaches the engine on the next lab target.
+`make local-env-up` and `make discover` apply it too, before they mint their token, so an edit reaches the engine on the next target.
 
 For a one-off grant outside the file:
 
@@ -112,9 +112,9 @@ Opening `http://localhost:3031` directly gives an unauthenticated monitor, becau
 
 ## Tokens expire, and logins are rate-limited
 
-Access tokens last 15 minutes (`NEOPS_JWT_ACCESS_LIFETIME_MINUTES`, a CMS default this lab keeps). A token carries the grants its account held at the moment it was issued, and the engine reads them from the token alone, so a grant added or withdrawn afterwards reaches the engine at the next login and no sooner. `make local-lab-discover` polls to a 900-second ceiling, so a discovery minted at the start and still running at the end outlives its token; `run_workflow` reports that, stops polling and exits 2, not the 1 of a failed workflow. The execution itself continues — watch it in the monitor.
+Access tokens last 15 minutes (`NEOPS_JWT_ACCESS_LIFETIME_MINUTES`, a CMS default this lab keeps). A token carries the grants its account held at the moment it was issued, and the engine reads them from the token alone, so a grant added or withdrawn afterwards reaches the engine at the next login and no sooner. `make discover` polls to a 900-second ceiling, so a discovery minted at the start and still running at the end outlives its token; `run_workflow` reports that and stops polling. The execution itself continues — watch it in the monitor.
 
-The CMS rate-limits local logins to 5 per minute per client IP (`NEOPS_LOCAL_LOGIN_RATE_LIMIT`), and every lab call leaves the host from the same address. A make target mints a token and passes it to every caller in it. `local-lab-up` mints a second one after `containerlab deploy`, whose minutes can outlast the first, so a full `local-lab-up` plus `local-lab-discover` cycle is three logins. Re-running a target several times inside a minute is what reaches the limit; `./lab_token` names the setting when it does.
+The CMS rate-limits local logins to 5 per minute per client IP (`NEOPS_LOCAL_LOGIN_RATE_LIMIT`), and every lab call leaves the host from the same address. A make target mints **one** token in a single shell and passes it to every caller after it, so a full `local-env-up` plus `discover` cycle is two logins. `local-lab-up` mints none at all — it touches no engine. Re-running a target several times inside a minute is what reaches the limit; `./lab_token` names the setting when it does.
 
 Mint a token by hand with:
 

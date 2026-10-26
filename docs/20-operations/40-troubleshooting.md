@@ -12,15 +12,18 @@ tags: [operations, debugging]
 
 ```bash
 make doctor                       # host preflight: RAM, subnets, mount, images
-export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
-export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
+make scenario                     # which lab the next target acts on
+export SCENARIO=wan-and-fabric    # compose refuses to interpolate without it
 docker compose ps                 # what is running, what exited
-make local-lab-logs               # worker + lab_bootstrap, followed
+make local-env-logs               # every control-plane service, followed
+make worker-logs                  # the worker alone (works with the profile off)
 docker compose logs cms           # CMS startup crashes land here
-./containerlab inspect -t generated/wan-and-fabric/clab/neops-lab.clab.json
+make local-lab-status             # the deployed devices
 ```
 
-Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the `worker` or `lab_bootstrap` services — the base compose file does not declare them. The make targets set it themselves.
+Which half is broken decides where to look: `local-env-*` owns the control plane
+and `local-lab-*` owns the devices, and neither touches the other. A failure in
+`make discover` is one of the two, plus the path between them.
 
 ---
 
@@ -40,9 +43,9 @@ Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the 
 
 **Cause:** the workflow definition has not been registered yet. `docker compose up -d` returns once containers are *Started*, not *Completed*, and `lab_bootstrap` is a one-shot container that POSTs the definitions and exits.
 
-**The guard:** `make local-lab-up` runs `docker compose wait lab_bootstrap`, which blocks until that container exits and propagates its exit code — so a failed registration fails the target instead of silently producing this error later.
+**The guard:** `make local-env-up` runs `docker compose wait lab_bootstrap`, which blocks until that container exits and propagates its exit code — so a failed registration fails the target instead of silently producing this error later.
 
-**Fix:** let `make local-lab-up` finish before running discovery. If the container exited non-zero, read its log:
+**Fix:** let `make local-env-up` finish before running discovery. If the container exited non-zero, read its log:
 
 ```bash
 docker compose logs lab_bootstrap
@@ -54,7 +57,7 @@ docker compose logs lab_bootstrap
 
 ## Discovery stays `running`, the worker log says `413 Payload Too Large`
 
-**Where:** `make local-lab-discover` after the worker discovered every device (`Generated 448 db update(s)`) and then `Failed to push job result … (413)`.
+**Where:** `make discover` after the worker discovered every device (`Generated 448 db update(s)`) and then `Failed to push job result … (413)`.
 
 **Cause:** an engine image without the raised per-route body limits (older than `0.42.2-beta.3`). Discovery returns a few hundred `Interface` rows in one job result; the engine rejects the push and re-dispatches the job.
 
@@ -68,7 +71,7 @@ docker compose logs lab_bootstrap
 
 **Two different causes, in order of likelihood:**
 
-1. **You raced the worker.** The worker registers its function blocks with the engine *asynchronously* after its container starts. `make local-lab-up` and `make local-lab-discover` both run `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` first, which polls the engine's per-function-block worker registry until an online worker exists. Run the make target rather than `run_workflow` directly.
+1. **You raced the worker.** The worker registers its function blocks with the engine *asynchronously* after its container starts. `make local-env-up` (when the worker profile is on) and `make discover` both run `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` first, which polls the engine's per-function-block worker registry until an online worker exists. Run the make target rather than `run_workflow` directly.
 
 2. **The image does not carry the block.** `neops/fb` ships *inside* the `neops-worker-sdk` image; it is not mounted from this repo. Check what you are running:
 
@@ -84,7 +87,7 @@ See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10
 
 ## `no online worker` at `wait_ready`
 
-**Where:** `make local-lab-up` burns its full `wait_ready` budget and gives up with
+**Where:** `make local-env-up` or `make discover` burns its full `wait_ready` budget and gives up with
 
 ```
 timeout: no online worker for fb.base.neops.io/global_discover_network:0.1.0 within 180s
@@ -104,7 +107,36 @@ an SDK checkout that has it:
 docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global/discover_network.py'
 make -C ../neops-worker-sdk-py build-docker          # -> neops-worker-sdk:latest
 echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
-make local-lab-up
+make local-env-up
+```
+
+---
+
+## `wait_ready` times out and `docker compose ps` shows no worker at all
+
+**Where:** `make discover`, or `make local-env-up` on an environment that used to
+start a worker and now does not.
+
+**Cause:** the worker lives behind the `worker` compose profile, switched by
+`COMPOSE_PROFILES` in `.env`. **`make lab-env` never overwrites an existing
+`.env`**, so an environment created before the profile existed has no such line,
+compose never starts a worker, and nothing announces the function block.
+`docker compose ps` shows no `worker` row — not an exited one, no row at all —
+which is the tell that distinguishes this from a crashed worker.
+
+The same reading is what you get from a worker that *is* running: with no
+service named, `docker compose ps` and `logs` cover the **active profile set**,
+so a worker you started by hand with `make worker-up` is absent from both even
+though its container is up. `docker compose ps worker` names it and shows it.
+
+`make local-env-up` prints `worker: enabled (COMPOSE_PROFILES)` or `worker:
+disabled …` on every run, so the line above the failure already says which.
+
+**Fix:** add the line, or start one by hand:
+
+```bash
+echo 'COMPOSE_PROFILES=worker' >> .env   # the shipped .env.example has this
+make worker-up                           # naming the service enables the profile
 ```
 
 Re-pinning a newer `0.2.0-beta.*` the same way? Run the `discover_network.py`
@@ -151,8 +183,8 @@ make local-lab-up
   re-running is exactly what triggers this. Bump
   `majorVersion`/`minorVersion`/`patchVersion` in the YAML, and update the
   matching `wf.lab.neops.io/simple_lab_discovery:<version>` in the `Makefile`'s
-  `DISCOVER_WORKFLOW` variable, which both `local-lab-discover` and
-  `kind-lab-discover` read.
+  `DISCOVER_WORKFLOW` variable, which both `discover` and
+  `kind-discover` read.
 - **`422`** — the document is publishable but the engine computed a higher
   version floor than the document declares. Raise the version.
 - **A `404` handled silently** — the engine predates
@@ -192,23 +224,24 @@ See [Authorization](../10-concepts/50-authorization.md).
 
 **Cause:** devices boot slower than `containerlab deploy` returns. FRR is up in a second or two; Nokia SR Linux takes tens of seconds to bring up its management stack. Running discovery before then makes those hosts fail with a connection error and drop out of the 15-device count.
 
-**The guard:** `make local-lab-up` deploys containerlab *early* — before the worker-readiness wait — precisely so SR Linux boot time overlaps with something useful, then polls TCP 22 on every mgmt IP.
+**The guard:** `make local-lab-up` polls TCP 22 on every mgmt IP after the deploy returns, and `make discover` polls again before it executes anything.
 
 !!! important "The poll runs from *inside* the lab network, on purpose"
     ```bash
-    docker compose exec -T worker python3 lab/wait_devices
+    docker run --rm --network lab-net -v "$PWD:/lab:ro" -w /lab \
+      -e SCENARIO=$SCENARIO python:3.12-slim python3 wait_devices
     ```
 
     Not from the host. On macOS and Docker Desktop the host has **no route** to
     the `lab-net` bridge IPs (`172.30.0.0/24`), so a host-side poll hangs until
-    timeout even when every device is perfectly healthy. The worker is on
-    `lab-net`, so container-to-container reachability — the same path discovery
-    actually uses — works on every platform.
+    timeout even when every device is perfectly healthy. A container on
+    `lab-net` reaches them the same way discovery does, on every platform.
 
-    This is also why the command carries a `lab/` prefix: the repo is mounted
-    at `/app/lab` inside the worker.
+    It is a throwaway `PROBE_IMAGE` container and **not** the worker: waiting for
+    devices must not require a running control plane. The worker did no part of
+    this check; it was borrowed for its network attachment alone.
 
-**Fix:** give it more time (`./wait_devices --timeout 600` from inside the worker), or check the device itself:
+**Fix:** give it more time (`make local-lab-up WAIT_DEVICES_TIMEOUT=600`), or check the device itself:
 
 ```bash
 docker logs spine-01
@@ -216,8 +249,8 @@ docker logs spine-01
 ```
 
 !!! warning "Never replace a wait with a `sleep`"
-    Each of the three waits exists because of a real, reproduced failure. A
-    fixed sleep is both slower on a fast machine and still racy on a slow one.
+    Each wait exists because of a real, reproduced failure. A fixed sleep is
+    both slower on a fast machine and still racy on a slow one.
 
 ---
 
@@ -302,7 +335,7 @@ With `CLAB_NATIVE` (a host binary) the classic failure is *"This containerlab co
 
 ```bash
 make local-lab-down local-env-prune
-make local-env-init && make local-lab-up && make local-lab-discover
+make local-env-init && make local-lab-up && make discover
 ```
 
 ---
@@ -311,7 +344,9 @@ make local-env-init && make local-lab-up && make local-lab-discover
 
 ```bash
 make local-lab-down local-env-prune
-make local-env-init && make local-lab-up && make local-lab-discover
+make local-env-init && make local-lab-up && make discover
 ```
 
-`local-lab-down` tolerates there being no deployed lab (the `./containerlab destroy` line is prefixed with `-`, so `make` continues on failure). `local-env-prune` drops the Elasticsearch and Postgres volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.
+`local-lab-down` treats "nothing is deployed" as an answer, not a failure: with no generated topology it says so and exits 0. A destroy that genuinely *fails*, though, **fails the target**, so the two commands stop there rather than pruning the control plane while fifteen devices are still running — and the deployed-scenario marker survives, which is what keeps the next `local-lab-up SCENARIO=other` from getting past its guard.
+
+`local-env-prune` drops the Elasticsearch and Postgres volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits. It leaves `cms_api_key.env` on disk, which is why the second line is `local-env-init` (mints a fresh key) and not `local-env-up` (which would boot the engine on the old one).

@@ -101,7 +101,7 @@ Eight modules, each loading the script under test through `labscripts`:
 - `tests/test_scenario_manifests.py` — every `scenario.json` is complete and matches its directory, and every scenario's device-to-device links are symmetric.
 - `tests/test_gen_kind_manifests.py` and `tests/test_gen_kind_discover_params.py` — the Kubernetes flavour's Deployments, Services and `/32` discovery targets, with `kubectl` stubbed so the suite never touches a cluster.
 - `tests/test_wait_devices.py` — which hosts the readiness poll waits on, per scenario. The regression guard for a poller that reads one fixed topology whatever scenario is selected.
-- `tests/test_host_invariants.py` — the cross-file constants the compose files and the generators must agree on.
+- `tests/test_host_invariants.py` — the cross-file constants `docker-compose.yml` and the generators must agree on.
 
 The byte-for-byte assertion is the repo's real guard. `_dump_discover_params` hand-rolls a compact layout `json.dumps` cannot produce, so it is exact: change a scenario's `topology.json`, run `make generate SCENARIO=<name>`, and commit the regenerated JSON — or `make test` fails. It is parametrised over `scenarios/*`, so adding a scenario extends the guard rather than leaving it covering only the first one.
 

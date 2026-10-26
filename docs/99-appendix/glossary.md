@@ -31,7 +31,7 @@ FRR / FRRouting
 :   The open-source routing stack behind the `frr` nodes — 10 of them in both shipped scenarios. Run here as `kind: linux` from the locally built `neops-lab-frr:latest`, which takes its `frr.conf` and `daemons` from the scenario at runtime rather than baking them. Vendor string in the CMS: `FRRouting`.
 
 `lab-net`
-:   The docker bridge network (`172.30.0.0/24`) declared by `docker-compose.worker.yml` and used by containerlab as the devices' management network. The worker sits on it *and* on the compose default network, which is how it reaches both the engine and the devices.
+:   The docker bridge network (`172.30.0.0/24`) used by containerlab as the devices' management network. It belongs to neither runtime: `make lab-net` creates it, `docker-compose.yml` declares it `external: true`, and `make local-lab-down` passes `--keep-mgmt-net` so containerlab leaves it alone. The worker sits on it *and* on the compose default network, which is how it reaches both the engine and the devices.
 
 Monitor app
 :   The SvelteKit UI shipped inside the workflow-engine image (`/app/rest/monitor-app`), run here as the `workflow-engine-client` service on <http://localhost:3031>. Today the primary UI for workflow authoring and execution monitoring; explicitly temporary — the functionality is planned to move into the NeOps web client.

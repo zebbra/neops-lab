@@ -13,9 +13,16 @@ OIDC configuration.
 
 ```bash
 make scenarios                          # what is available
-make local-lab-up                       # the default scenario
+make scenario                           # what is selected right now
+make local-lab-up                       # deploy the default scenario's devices
 make local-lab-up SCENARIO=frr-only     # a different one
 ```
+
+`SCENARIO` resolves from the command line or environment first, then `.env`,
+then the Makefile's default. make reads `.env` itself and exports the result, so
+the generators, the host scripts and the containers can never disagree about
+which lab is in play — pin a checkout to one lab with a `SCENARIO=frr-only` line
+in `.env` rather than typing it on every call.
 
 One scenario runs at a time. They share `lab-net`, the `172.30.0.0/24` subnet
 and the compose project, so switching means tearing the running one down first:
@@ -87,7 +94,7 @@ rather than guessing. A scenario applied half from one lab and half from another
 is invisible until discovery produces a confusing result, which is a far more
 expensive failure than a target that refuses to run.
 
-The compose files use `${SCENARIO:?…}` rather than a bare reference for the same
+`docker-compose.yml` uses `${SCENARIO:?…}` rather than a bare reference for the same
 reason: left to warn, compose interpolates a blank path and docker creates the
 missing bind source as an empty directory — the lab would come up having
 registered no workflows at all.
