@@ -18,13 +18,21 @@ itself: the scenarios,
 the device configs, the workflow, the bootstrap sequencing and the two small
 helper images.
 
-End state: run a make target, click Run in the engine UI (or use the matching
-make target), and one `Device` row per device in the scenario (FRR
-`vendor=FRRouting`, Nokia `vendor=Nokia`) appears in the CMS — each with its
-interfaces recorded. The discovery function block records each device **and its
-interfaces** in one pass: it connects to every host via the matching connection
-plugin, reads facts + interfaces, and writes both `Device` and `Interface` rows
-to the CMS.
+The environment and the devices are **separate lifecycles**, brought up in
+either order, and discovery is the step that joins them:
+
+```bash
+make local-env-init   # the control plane — one-time per environment
+make local-lab-up     # the scenario's devices
+make discover         # populate the CMS from them
+```
+
+End state: one `Device` row per device in the scenario (FRR `vendor=FRRouting`,
+Nokia `vendor=Nokia`) in the CMS — each with its interfaces recorded. The
+discovery function block records each device **and its interfaces** in one pass:
+it connects to every host via the matching connection plugin, reads facts +
+interfaces, and writes both `Device` and `Interface` rows to the CMS. Clicking
+Run in the engine UI does the same thing.
 
 ## Documentation
 
@@ -81,17 +89,13 @@ make doctor
   stdlib-only and import under the `/usr/bin/python3` a stock macOS ships.
 - **`uv`** — only for `make test` / `make lint` / `make check` and the docs.
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
-- **A worker image that carries `fb.base.neops.io/global_discover_network:0.1.0`.**
-  `quay.io/zebbra/neops-worker-sdk:develop` does not: only prerelease
-  `0.2.0-beta.*` builds of the SDK's function-block branch do, and
-  `.env.example` pins one. Prerelease tags expire 20 days after they are
-  pushed, so when the pin stops pulling, move it to the newest `0.2.0-beta.*`
-  and run the `discover_network.py` check below against it. Until
-  [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402) is in the engine's `develop` image,
-  that worker still cannot discover — see
-  [Troubleshooting](docs/20-operations/40-troubleshooting.md).
-  To try SDK changes before they are released, build the checkout and point the
-  lab at it:
+- **A worker image carrying the base function blocks.**
+  `fb.base.neops.io/global_discover_network:0.1.0` ships *inside* the image, and
+  `quay.io/zebbra/neops-worker-sdk:develop` does not currently carry it — which
+  is why `.env.example` pins a tag that does. That pin is a prerelease and
+  expires; read its note before a fresh clone, and build the checkout once it
+  has expired. Building it is also how you try SDK changes before they are
+  released:
 
   ```bash
   make -C ../neops-worker-sdk-py build-docker      # -> neops-worker-sdk:latest
@@ -102,12 +106,12 @@ make doctor
   block, not just build:
 
   ```bash
-  docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global/discover_network.py'
+  docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global'
   ```
 
-  Without the block the worker runs but never announces it, so `local-lab-up`
-  burns its full `wait_ready` budget and gives up with `timeout: no online
-  worker for fb.base.neops.io/global_discover_network:0.1.0`.
+  Without this the worker container exits, `local-env-up` burns its full
+  `wait_ready` budget and gives up with `timeout: no online worker for
+  fb.base.neops.io/global_discover_network:0.1.0`.
 - **A workflow-engine image with the publish route and the large-payload +
   reference-resolution fixes.** Discovery emits a few hundred `Interface` rows in
   one job result, and `bootstrap/register.py` writes definitions through
@@ -127,9 +131,9 @@ make doctor
   fits in far less. On macOS that is the Docker Desktop **VM** budget (Settings →
   Resources → Memory; the 8 GB default is too small). On Apple Silicon enable
   *Use Rosetta for x86_64/amd64 emulation* — the `quay.io/zebbra` images are
-  amd64-only. The first `make local-lab-up` takes a couple of minutes; on a
-  slow host raise the wait budgets
-  (`make local-lab-up WAIT_READY_TIMEOUT=600 WAIT_DEVICES_TIMEOUT=600`).
+  amd64-only. The first run takes a couple of minutes; on a slow host raise the
+  wait budgets (`make local-lab-up WAIT_DEVICES_TIMEOUT=600`,
+  `make local-env-up WAIT_READY_TIMEOUT=600`).
 
 ## Scenarios
 
@@ -141,7 +145,8 @@ configuration. Anything a scenario does not carry comes from
 
 ```bash
 make scenarios                        # what is available
-make local-lab-up                     # the default scenario
+make scenario                         # what is selected right now
+make local-lab-up                     # deploy the default scenario's devices
 make local-lab-up SCENARIO=frr-only   # a different one
 ```
 
@@ -151,11 +156,14 @@ make local-lab-up SCENARIO=frr-only   # a different one
 | `frr-only` | 10 | clab, kind | The FRR half alone; carries only a topology, everything else inherited — see [`scenarios/frr-only/README.md`](./scenarios/frr-only/README.md) |
 
 `SCENARIO` selects it. The [`Makefile`](./Makefile) holds the **only** default
-and exports it; every host script, both compose files and
+and exports it; every host script, `docker-compose.yml` and
 [`apply_cms_config`](./apply_cms_config) fail when it is unset rather than guess,
 because a scenario applied half from one lab and half from another stays
-invisible until discovery produces a confusing result. Running `docker compose`
-by hand therefore needs `SCENARIO=<name>` in front of it (or in `.env`).
+invisible until discovery produces a confusing result. Set it on the command
+line, or in `.env` — make reads that file itself, in the one place `SCENARIO` is
+resolved, and exports the result, so make and docker compose can never disagree
+about which lab is in play. Running `docker compose` by hand therefore needs
+`SCENARIO=<name>` in front of it (or in `.env`).
 
 **One scenario runs at a time**: they share `lab-net`, the `172.30.0.0/24`
 subnet and the compose project. Switching means `make local-lab-down` first —
@@ -293,19 +301,19 @@ lab_token               # prints a Neops access token for the engine (NEOPS_ENGI
 run_workflow            # triggers a workflow execution and waits for a terminal state
 wait_ready              # blocks until the worker's function block has an online worker
 wait_devices            # blocks until every device in the scenario accepts SSH
-docker-compose.yml               # base stack (CMS, engine, monitor app, web client, postgres, ES, redis)
-docker-compose.worker.yml        # worker + lab_bootstrap + the lab-net network definition
+docker-compose.yml               # every service: control plane + lab_bootstrap + worker (profile)
 tests/                  # unit tests for the generators and the scenario overlay
 ```
 
-The base stack + worker compose files are combined via docker compose's
-`COMPOSE_FILE` (target-scoped in the `Makefile`); containerlab provisions the
-devices onto the `lab-net` that the worker compose defines.
+One compose file holds the whole control plane; the worker sits behind the
+`worker` profile, switched by `COMPOSE_PROFILES` in `.env`. `lab-net` is
+`external` to compose — `make lab-net` creates it, containerlab attaches the
+devices to it, and the worker joins it to reach them.
 
 The whole repo is bind-mounted **read-only into the worker at `/app/lab`**, which
-is why in-container paths keep a `lab/` prefix (`DIR_FUNCTION_BLOCKS:
-lab/generated/${SCENARIO}/scenario/function_blocks,neops/fb`, `docker compose
-exec worker python3 lab/wait_devices`). Host-side paths never have one.
+is why in-container paths keep a `lab/` prefix — `DIR_FUNCTION_BLOCKS:
+lab/generated/${SCENARIO}/scenario/function_blocks,neops/fb` resolves inside the
+container, and there is no such path on the host. Host-side paths never have one.
 
 ## Discovery inputs
 
@@ -328,41 +336,89 @@ by `make generate` and must be committed.
   to mix when every device runs the same NOS.
 
 Override with `DISCOVER_PARAMS`, e.g.
-`make local-lab-discover DISCOVER_PARAMS=scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-autodetect.json`.
+`make discover DISCOVER_PARAMS=scenarios/wan-and-fabric/workflow-execution-parameters/discover-params-autodetect.json`.
 
 ## Make targets
 
+The targets come in **three families**, split by what they own. The environment
+is the NeOps control plane and is driven by `docker compose` alone; the device
+families are driven by `containerlab` or `kubectl` alone and touch no compose
+project, no CMS, no engine and no token. A handful of un-prefixed targets are
+the operations that need both. `tests/test_target_families.py` enforces that
+direction — a device recipe reaching for `docker compose`, `apply_cms_config`,
+`lab_token`, `wait_ready` or an engine token is a test failure. The reverse is
+convention: nothing stops a `local-env-*` target calling `./containerlab`.
+
 Every target below takes `SCENARIO=<name>` to run against a different scenario;
-without it they use the `Makefile`'s default, `wan-and-fabric`.
+without it they use `SCENARIO` from `.env`, else the `Makefile`'s default,
+`wan-and-fabric`. `make scenario` prints which one is selected and where it came
+from.
+
+### Environment — the control plane (`docker compose` only)
+
+| Target | What it does |
+|---|---|
+| `make local-env-init` | **One-time per environment.** Pulls every image, brings up *only* the CMS (the engine would refuse to start on the placeholder token and fail the whole `up`), mints the CMS API key into `cms_api_key.env`, runs `apply_cms_config`, force-recreates the engine so it loads the key, mints an engine token, brings up the rest of the stack and waits for `lab_bootstrap` to publish the workflow definitions. Chains `lab-env`, `lab-jwt`, `lab-net` and `scenario-resolve`. |
+| `make local-env-up` | Start the control plane again later. Prints whether the worker profile is on, then `apply_cms_config` → mint an engine token → `up -d` → wait for `lab_bootstrap` → and, only with the worker profile active, `wait_ready` on the discovery function block. Fails clearly if `cms_api_key.env` is missing. |
+| `make local-env-down` | `docker compose down` — keeps the volumes. The devices keep running. |
+| `make local-env-prune` | `docker compose down -v` — the true reset, drops the ES + Postgres volumes. It leaves `cms_api_key.env` on disk, and that key is invalid against the new database, so **always follow a prune with `local-env-init`**, never `local-env-up`. |
+| `make local-env-logs` | `docker compose logs -f` — every service compose has enabled. |
+| `make worker-up` / `worker-down` / `worker-logs` | Run the worker by hand. Naming the service enables its profile, so these work with `COMPOSE_PROFILES` unset. |
+
+The worker is optional and lives behind the `worker` compose profile, switched by
+`COMPOSE_PROFILES` in `.env` (the shipped `.env.example` sets it to `worker`).
+`make lab-env` never overwrites an existing `.env`, so **an environment created
+before the profile existed has no such line and its worker silently stops coming
+up** — add it, or use `make worker-up`. `local-env-up` prints `worker: enabled`
+or `worker: disabled` on every run.
+
+### Devices — containerlab (`./containerlab` only)
+
+| Target | What it does |
+|---|---|
+| `make local-lab-up` | Generates the containerlab topology + configs from the scenario's `topology.json`, then `containerlab deploy --reconfigure`s the devices with real links and waits for every device's SSH. Refuses to run while a *different* scenario is deployed. Chains `build-docker-frr`, `lab-net` and `scenario-resolve` — one image built, nothing pulled. |
+| `make local-lab-down` | `containerlab destroy --cleanup --keep-mgmt-net` on the scenario the deployed-scenario marker names, then removes the marker. The control plane is untouched; `lab-net` survives, because the worker sits on it. A failed destroy fails the target and keeps the marker. |
+| `make local-lab-status` | `containerlab inspect` against the deployed scenario. |
+
+### Devices — Kubernetes (`kubectl` only)
+
+| Target | What it does |
+|---|---|
+| `make kind-lab-up` | Renders the scenario's **FRR** devices into `generated/$(SCENARIO)/kind/lab.yaml` and runs them as pods in a local KIND cluster, reachable over SSH at `<device>.neops-lab.svc.cluster.local`. Needs no containerlab, no compose stack and no control plane. |
+| `make kind-lab-status` / `make kind-lab-down` | Pods and services; the latter deletes the namespace, never the cluster. |
+
+### Operations — across both
+
+| Target | What it does |
+|---|---|
+| `make discover` | POSTs an execution of the discovery workflow; every device in the scenario **and its interfaces** appears in the CMS. Override `DISCOVER_PARAMS` to exercise explicit hosts, autodetection, or subnet expansion. Devices are keyed by IP (re-running skips existing devices); interfaces are always recorded, so run discovery against a **fresh** CMS to avoid duplicate interface rows. |
+| `make apply-cms-config` | Applies the scenario's `cms/permissions.json` (roles, users and their workflow grant profiles), grants the `neops` user the full-permission `lab-admin` role + creates the `Global` scope so the web client can see all entities. Idempotent. Chained into `local-env-init`, `local-env-up` and `discover`. |
+| `make lab-grant` | `make lab-grant ROLE=<role> [PROFILE=operator]` — one ad-hoc workflow grant, the same command `apply_cms_config` runs per role. Additive. |
+| `make kind-apply-cms-config` | Points the existing `apply_cms_config` at a Kubernetes-deployed CMS through `CMS_EXEC` (reused, not reimplemented). Idempotent. Getting devices into the CMS stays discovery's job. |
+| `make kind-discover` | Discovery against the pods, through the same scripts the containerlab flavour uses: publishes the workflow definition with `bootstrap/register.py`, generates one `/32` per device from the Service ClusterIPs with `./gen_kind_discover_params`, waits with `./wait_ready`, executes with `./run_workflow`. Needs a worker image that carries the base function blocks, and the engine reachable at `KIND_ENGINE_URL` — the offline ingress name `http://engine.neops.local` by default, so run `make -C neops-helm config-hosts` once. |
+
+### Scenarios, setup and gates
 
 | Target | What it does |
 |---|---|
 | `make scenarios` | Lists every scenario with its device count, flavours and summary, read from each `scenarios/<name>/scenario.json`. |
+| `make scenario` | Prints the scenario the next target will act on, and says when it came from `.env`. |
 | `make scenario-resolve` | Materialises `scenarios/_base/` + `scenarios/$(SCENARIO)/` into `generated/$(SCENARIO)/scenario/` — the flat directory the containers mount and `apply_cms_config` reads. A prerequisite of every target that consumes a scenario, so it is rarely run by hand. |
 | `make generate` | Resolves the scenario, then regenerates the containerlab topology, the per-device configs and the committed `scenarios/$(SCENARIO)/workflow-execution-parameters/*.json`. Commit those — `make test` asserts they reproduce byte-for-byte. |
-| `make clab-suid` | Sets the SUID bit on the `containerlab` binary so the lab targets can deploy without sudo. Run once after installing containerlab and again after every upgrade (an upgrade drops the bit). Idempotent; needs sudo only when the bit is missing. Not chained into `local-lab-up`, which must never prompt for a password mid-run. |
-| `make lab-jwt` | Mints the dev RSA keypair the CMS needs (`cms/jwt/`, created by the target). Idempotent; chained into `local-env-init`. |
-| `make local-env-init` | Pull + start the base stack, mint the CMS API key, force-recreate the engine to load it, then chain `apply-cms-config`. One-time per env. |
-| `make build-docker` | Builds the two local-only images: `neops-lab-frr:latest` (scenario-independent — it bakes no FRR config) and `neops-lab-bootstrap:latest`. A prerequisite of `local-lab-up`. `build-docker-frr` / `build-docker-bootstrap` build one each; `DOCKER_BUILD_FLAGS=--network=host` covers a host whose docker bridge has no DNS. |
-| `make local-lab-up` | Resolves the scenario, generates the containerlab topology + configs from its `topology.json`, builds the lab images, brings up the base stack + worker + bootstrap (creating `lab-net`), then `containerlab deploy --reconfigure`s the scenario's devices with real links. Waits for workflow registration, the worker's function blocks, and every device's SSH. |
-| `make apply-cms-config` | Applies the scenario's `cms/permissions.json` (roles, users and their workflow grant profiles), grants the `neops` user the full-permission `lab-admin` role + creates the `Global` scope so the web client can see all entities. Idempotent. Chained into `local-env-init`. |
-| `make lab-grant` | `make lab-grant ROLE=<role> [PROFILE=operator]` — one ad-hoc workflow grant, the same command `apply_cms_config` runs per role. Additive. |
-| `make local-lab-discover` | POSTs an execution of the discovery workflow; every device in the scenario **and its interfaces** appears in the CMS. Override `DISCOVER_PARAMS` to exercise explicit hosts, autodetection, or subnet expansion. Devices are keyed by IP (re-running skips existing devices); interfaces are always recorded, so run discovery against a **fresh** CMS to avoid duplicate interface rows. |
-| `make local-lab-logs` | Tails worker + bootstrap logs. |
-| `make local-lab-down` | `containerlab destroy --cleanup` (removes the devices and `generated/$(SCENARIO)/clab/clab-neops-lab`) then `docker compose down` (preserves volumes). |
-| `make local-env-prune` | `docker compose down -v` — the true reset, drops the ES + postgres volumes. |
-| `make kind-lab-up` | The Kubernetes flavour: renders the scenario's **FRR** devices into `generated/$(SCENARIO)/kind/lab.yaml` and runs them as pods in a local KIND cluster, reachable over SSH at `<device>.neops-lab.svc.cluster.local`. Needs no containerlab, no compose stack and no control plane. `make kind-lab-status` / `make kind-lab-down` alongside it — the latter deletes the namespace, never the cluster. |
-| `make kind-lab-cms-config` | Points the existing `apply_cms_config` at a Kubernetes-deployed CMS through `CMS_EXEC` (reused, not reimplemented): grants the `neops` user the `lab-admin` role and seeds the `Global` scope, without which the web client shows no scope. Idempotent. Getting devices into the CMS stays discovery's job. |
-| `make kind-lab-discover` | Discovery against the pods, through the same scripts the containerlab flavour uses: publishes the workflow definition with `bootstrap/register.py`, generates one `/32` per device from the Service ClusterIPs with `./gen_kind_discover_params`, waits with `./wait_ready`, executes with `./run_workflow`. Needs a worker image that carries `global_discover_network`, and the engine reachable at `KIND_ENGINE_URL` — the offline ingress name `http://engine.neops.local` by default, so run `make -C neops-helm config-hosts` once. |
-| `make lab-env` | Copies `.env.example` to `.env` if absent, so compose has one. A prerequisite of `local-lab-up`; never overwrites an existing `.env`. |
-| `make local-env-up` / `make local-env-down` | The control plane alone — CMS, engine, monitor app, web client and their datastores — with no devices and no containerlab. |
-| `make test` | `pytest tests` — unit tests for the generators and the scenario overlay, incl. that every scenario still reproduces its committed `workflow-execution-parameters/*.json` byte-for-byte. |
+| `make lab-env` | Copies `.env.example` to `.env` if absent, so compose has one. Never overwrites an existing `.env`. |
+| `make lab-jwt` | Mints the dev RSA keypair the CMS needs (`cms/jwt/`, created by the target). Idempotent. |
+| `make lab-net` | Creates the `lab-net` bridge from `gen_clab_topology.LAB_SUBNET` if it does not exist. It is `external` to compose, which aborts on a missing external network rather than creating one. Chained into `local-env-init`, `local-env-up`, `local-lab-up` and `worker-up`. |
+| `make clab-suid` | Sets the SUID bit on the `containerlab` binary so the device targets can deploy without sudo — only for the `CLAB_NATIVE` path. Run once after installing containerlab and again after every upgrade (an upgrade drops the bit). Idempotent; needs sudo only when the bit is missing. Not chained into `local-lab-up`, which must never prompt for a password mid-run. |
+| `make build-docker` | Builds the two local-only images: `neops-lab-frr:latest` (scenario-independent — it bakes no FRR config) and `neops-lab-bootstrap:latest`. `build-docker-frr` is the device image and a prerequisite of `local-lab-up` and `kind-lab-up`; `build-docker-bootstrap` is the environment one. `DOCKER_BUILD_FLAGS=--network=host` covers a host whose docker bridge has no DNS. |
+| `make test` | `pytest tests` — unit tests for the generators and the scenario overlay, incl. that every scenario still reproduces its committed `workflow-execution-parameters/*.json` byte-for-byte, and that no target strays out of its family. |
 | `make lint` / `make format` / `make typeCheck` | ruff / pyrefly over the repo, including the extension-less host scripts. |
 | `make py39-check` / `make shell-syntax` | The host scripts import under Python 3.9 (the stock macOS interpreter), and the bash entry points parse. |
 | `make check` | All five gates together: lint, typeCheck, test, py39-check, shell-syntax. |
 
-Full reset from scratch, ending in a discovery run: `make full-e2e-test` (`local-lab-down`,
-`local-env-prune`, `local-env-init`, `local-lab-up`, `local-lab-discover`, in that order).
+Full reset from scratch:
+`make local-lab-down local-env-prune && make local-env-init && make local-lab-up && make discover`.
+The first command stops before the prune if the devices did not go down — that
+is deliberate, so the deployed-scenario marker survives a failed teardown.
 
 ## URLs
 
@@ -396,7 +452,7 @@ Full model, including how the monitor app is handed a token:
    device-to-device links are symmetric.
 2. `make generate SCENARIO=<name>` — rebuilds the containerlab topology (real
    link or `dummy` stub) and the discovery parameter files.
-3. `make local-lab-up SCENARIO=<name> && make local-lab-discover SCENARIO=<name>`.
+3. `make local-lab-up SCENARIO=<name> && make discover SCENARIO=<name>`.
 4. `make test` — the generator tests assert the regenerated parameter files match
    what is committed, so they fail until you commit the regenerated JSON.
 

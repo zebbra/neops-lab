@@ -2,9 +2,11 @@
 
 Local containerlab developer environment for the NeOps platform: **a scenario's
 devices with real veth wiring**, plus the full control plane (CMS, workflow
-engine, monitor app, web client, worker) on docker-compose. One command ends
-with that scenario's `Device` rows — each with its interfaces — visible in the
-web client.
+engine, monitor app, web client, worker) on docker-compose. The environment and
+the devices are separate lifecycles: `make local-env-init` brings up the control
+plane, `make local-lab-up` deploys the devices, and `make discover` ends with
+that scenario's `Device` rows — each with its interfaces — visible in the web
+client.
 
 **Which lab runs is a `SCENARIO`.** Each lives under `scenarios/<name>/`,
 overlaid on `scenarios/_base/`; `make scenarios` lists them. The default,
@@ -62,7 +64,7 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
   filters by suffix rather than taking the whole listing, so a README beside
   them is skipped, and it registers **every** document before failing rather
   than short-circuiting on the first refusal — one unpublishable file must not
-  keep the discovery workflow `local-lab-up` waits for off the engine.
+  keep the discovery workflow `make discover` needs off the engine.
 - Everything generated goes under `generated/` and is git-ignored. Never commit
   it — containerlab mints TLS private keys in there.
 - **Docs live in `docs/`** (shared Zebbra MkDocs tooling, vendored under
@@ -107,11 +109,20 @@ Load-bearing and usually not obvious from the code:
   in every scenario — `resolve_scenario.source_dir` refuses one that lacks them.
 - **`SCENARIO` has exactly one default, `SCENARIO ?= wan-and-fabric` in the
   Makefile, which `export`s it.** The four generators, `resolve_scenario`,
-  `apply_cms_config` and both compose files must **fail** when it is unset, never
-  guess. A second default is how a scenario gets half-applied — some assets from
-  the new lab, some from the old — which stays invisible until discovery produces
-  a confusing result. `tests/test_host_invariants.py` enforces the absence of a
-  second default.
+  `apply_cms_config` and `docker-compose.yml` must **fail** when it is unset,
+  never guess. A second default is how a scenario gets half-applied — some
+  assets from the new lab, some from the old — which stays invisible until
+  discovery produces a confusing result. `tests/test_host_invariants.py`
+  enforces the absence of a second default.
+- **`SCENARIO` may also be set in `.env`, and make reads that file itself.**
+  `$(call dotenv,SCENARIO)` is the one place it is resolved: command line /
+  environment → `.env` → the Makefile default, and the result is `export`ed, so
+  it wins over `.env` for compose too and the two can never disagree. Left to
+  compose alone, `SCENARIO=frr-only` in `.env` would hand the containers
+  frr-only's assets while the generators and `apply_cms_config` still worked on
+  the default. `make scenario` prints the resolved value and where it came
+  from. The readable forms are `SCENARIO=name`, optionally prefixed with
+  `export`, unquoted and uncommented — the forms compose reads.
 - **Compose interpolates `${SCENARIO:?…}`, never a bare `${SCENARIO}`.** Left
   bare, compose only *warns* on an unset variable and interpolates a blank path;
   docker then creates the missing bind source as an empty directory and the lab
@@ -131,12 +142,15 @@ Load-bearing and usually not obvious from the code:
   `pyproject.toml` — **add any new script to both lists, and to
   `tools/import_host_scripts.py`, or it is silently never checked**.
 - **The repo is bind-mounted read-only into the worker at `/app/lab`**
-  (`docker-compose.worker.yml`; the SDK image's WORKDIR is `/app`). That is why
-  in-container paths keep a `lab/` prefix — `DIR_FUNCTION_BLOCKS:
-  lab/generated/<scenario>/scenario/function_blocks,neops/fb` and `docker compose
-  exec worker python3 lab/wait_devices`. Host-side paths never have one. A `lab/`
-  in a Makefile recipe or a host script is a bug; a `lab/` inside a `docker
-  compose exec` or an env var read by the container is correct.
+  (`docker-compose.yml`, the `worker` service; the SDK image's WORKDIR is
+  `/app`). That is why in-container paths keep a `lab/` prefix —
+  `DIR_FUNCTION_BLOCKS: lab/generated/<scenario>/scenario/function_blocks,neops/fb`
+  resolves inside the container and nowhere on the host. Host-side paths never
+  have one. A `lab/` in a Makefile recipe or a host script is a bug; a `lab/`
+  inside an env var read by the container, or inside a `docker exec` into it, is
+  correct. `wait_devices` is **not** an example of this any more: it runs in a
+  throwaway `$(PROBE_IMAGE)` container that mounts the repo at `/lab` with
+  `-w /lab`, so it is invoked as `python3 wait_devices`.
 - **`neops/fb` ships inside the worker image**, it is not mounted from here. If
   discovery fails with "Function block … not found", check that the
   `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `neops/fb`.
@@ -165,7 +179,7 @@ Load-bearing and usually not obvious from the code:
   assertion.
 - **Images are local-tag only.** `neops-lab-frr:latest` and
   `neops-lab-bootstrap:latest` are built by `make build-docker` on whatever host
-  runs the lab; nothing is pushed to a registry. `docker-compose.worker.yml`
+  runs the lab; nothing is pushed to a registry. `docker-compose.yml`
   pins `lab_bootstrap` to that exact tag so the compose build and `build-docker`
   cannot diverge. Everything else (CMS, engine, web client, worker) comes from
   `quay.io/zebbra`.
@@ -175,7 +189,7 @@ Load-bearing and usually not obvious from the code:
   entrypoint, which **exits non-zero if either is missing** rather than booting
   FRR on whatever happens to be there. That is what lets one
   `neops-lab-frr:latest` serve every scenario — the tag is pinned in the clab
-  topology, the kind manifests and `docker-compose.worker.yml`, so a
+  topology, the kind manifests and `docker-compose.yml`, so a
   per-scenario image would have had to be threaded through all three. Both
   flavours mount the same three files (`resolve_scenario.LAB_FILE_KEYS`) at
   `/lab`, and both exec `/lab/set-aliases.sh`.
@@ -203,9 +217,9 @@ Load-bearing and usually not obvious from the code:
   mints one per recipe through `MINT_ENGINE_TOKEN` (`./lab_token`, which logs in
   against the CMS). A token carries the grants its account held **at login** and
   keeps them for its whole 15-minute life, so `apply_cms_config` runs before
-  every mint, and `local-lab-up` mints a second one after `containerlab deploy`
-  because that deploy can outlast the first. The CMS rate-limits logins to 5/m
-  per IP — pass one token to many callers rather than minting per call.
+  every mint. The CMS rate-limits logins to 5/m per IP — pass one token to many
+  callers rather than minting per call, which is why each target mints once in a
+  single `set -e` shell and exports it to everything after it.
 - **The monitor app's runtime config reaches it only through
   `monitor/config.js`**, bind-mounted over
   `/app/rest/monitor-app/static/config.js`. `WEBCLIENT_ORIGIN` on the service
@@ -248,25 +262,74 @@ Load-bearing and usually not obvious from the code:
   create a silent duplicate.
 - **`generated/.deployed-scenario-{clab,kind}` is what makes switching safe.**
   Each up target writes the scenario it deployed and refuses to run while a
-  different one is recorded; each down target reads the marker to tear down what
-  is actually deployed, not what `SCENARIO` currently says, and then removes it.
-  Neither runtime removes devices the handed input does not name —
-  `containerlab destroy` acts on the topology's node list, `kubectl apply` never
-  deletes — so without the marker a switch to a smaller scenario strands the
-  difference and it keeps answering discovery. `rm -rf generated/` while a lab is
-  up therefore drops the guard: tear the lab down first.
-- **Race ordering in `local-lab-up` is deliberate**: `scenario-resolve`
+  different one is recorded. Neither runtime removes devices the handed input
+  does not name — `containerlab destroy` acts on the topology's node list
+  (`--reconfigure` destroys that same handed set, so it does not help),
+  `kubectl apply` never deletes — so without the guard a switch to a smaller
+  scenario strands the difference and it keeps answering discovery.
+  `rm -rf generated/` while a lab is up therefore drops the guard: tear the lab
+  down first.
+
+  The two down targets need the marker differently. `local-lab-down` **reads**
+  it, because containerlab has to be handed the topology of what is actually
+  deployed rather than what `SCENARIO` currently says. `kind-lab-down` does not
+  read it at all: deleting the namespace takes every device with it whichever
+  scenario was deployed, so there is nothing to look up. Both remove it
+  afterwards — `local-lab-down` only once the destroy has succeeded.
+- **The targets come in three families, and the boundary is tested.**
+  `local-env-*` and `worker-*` own the control plane and drive `docker compose`
+  alone; `local-lab-*` owns the containerlab devices and drives
+  `./containerlab` alone; `kind-lab-*` owns the KIND device pods and drives
+  `kubectl` alone. The operations that need both are un-prefixed — `discover`,
+  `kind-discover`, `apply-cms-config`, `kind-apply-cms-config`, `lab-grant`. A
+  device target must never reach for `docker compose`, the CMS, the engine or a
+  token; `tests/test_target_families.py` enforces that for every `local-lab-*`
+  and `kind-lab-*` recipe including ones not written yet, so adding one is a
+  test failure, not a review comment. The test does **not** run the other way —
+  keep `./containerlab` out of `local-env-*` by hand.
+- **Race ordering in `local-env-up` is deliberate**: `scenario-resolve`
   (materialise the overlay the compose mounts point at) → `up -d --wait cms`
-  (`./lab_token` logs in against it) → `apply_cms_config` (grants before the
-  mint) → `MINT_ENGINE_TOKEN` (the token `lab_bootstrap` is handed at `up -d`)
-  → `docker compose wait lab_bootstrap` (workflow registration) →
-  `./containerlab deploy --reconfigure`
-  (SR Linux boots slowly, so start it early; `--reconfigure` makes the target
-  re-runnable) → `wait_ready` (the worker registers its function blocks
-  asynchronously) → `wait_devices` **from inside the worker container**
-  (on macOS/Docker Desktop the host has no route to the `172.30.0.0/24` bridge,
-  so a host-side poll always times out). Each wait exists because of a real,
-  reproduced failure; do not replace one with a `sleep`.
+  (`./lab_token` logs in against it) → `apply_cms_config` (a token carries the
+  grants its account held at login, so they must exist first) →
+  `MINT_ENGINE_TOKEN` (the token `lab_bootstrap` is handed at `up -d`) →
+  `docker compose up -d` → `docker compose wait lab_bootstrap` (workflow
+  registration) → `wait_ready`, only when the worker profile is on (the worker
+  registers its function blocks asynchronously). Each wait exists because of a
+  real, reproduced failure; do not replace one with a `sleep`.
+- **`local-lab-up` is devices and nothing else**: `lab-net` (created by
+  `containerlab` from the topology's `mgmt` block, or by `make lab-net`) →
+  `./containerlab deploy --reconfigure` (SR Linux boots slowly;
+  `--reconfigure` makes the target re-runnable) → `wait_devices` **in a
+  throwaway container on `lab-net`** (on macOS/Docker Desktop the host has no
+  route to the `172.30.0.0/24` bridge, so a host-side poll always times out) →
+  write the deployed-scenario marker. No `docker compose`, no
+  `apply_cms_config`, no token.
+- **`lab-net` is `external: true` to compose.** Compose attaches to it and never
+  creates or removes it, so `make local-env-down` cannot pull the network out
+  from under a running lab, and `make local-lab-down` passes `--keep-mgmt-net`
+  so containerlab cannot either. But compose *aborts* on a missing external
+  network rather than creating one, which is why `lab-net` is a prerequisite of
+  `local-env-init`, `local-env-up`, `local-lab-up` and `worker-up`.
+  `gen_clab_topology.LAB_SUBNET` is the only place the subnet is written; `make
+  lab-net` reads it back out of that module rather than restating it.
+- **The worker is behind the `worker` compose profile**, set through
+  `COMPOSE_PROFILES` in `.env` — which compose resolves itself, so the Makefile
+  reads it only to report which way it is set and to decide whether to
+  `wait_ready`. `lab_bootstrap` is not profiled: it publishes the workflow
+  definitions and is always part of the environment. `make lab-env` never
+  overwrites an existing `.env`, so an environment created before the profile
+  existed has no such line and its worker silently stops coming up.
+- **`local-env-prune` leaves `cms_api_key.env` on disk.** `docker compose down
+  -v` drops the database the key was minted against, so a following
+  `local-env-up` boots the engine on a key the new CMS never issued. Always
+  `local-env-init` after a prune; `apply_cms_config` probes the key up front and
+  says so rather than failing after every role grant has been written.
+- **A failed `local-lab-down` fails the target and keeps the marker.** The
+  marker is the only record of what is deployed, so dropping it after a real
+  failure would let the next `local-lab-up SCENARIO=other` past its guard and
+  leave two scenarios running side by side. That is also why the reset
+  one-liner is `make local-lab-down local-env-prune`: make stops before the
+  prune if the devices did not go down.
 - **containerlab is only ever invoked as `./containerlab`** — in the Makefile
   (`$(CONTAINERLAB)`) and in every doc. It runs `ghcr.io/srl-labs/clab`
   privileged through the docker socket on both hosts; `CLAB_NATIVE` selects a
@@ -297,10 +360,12 @@ depends on:
 
 - Read `README.md` before changing any make target — it documents the operator
   contract those targets implement.
-- Do **not** run `make local-lab-up` casually: it builds two images, pulls the
-  whole NeOps stack and deploys the scenario's containers (`wan-and-fabric`'s
-  five SR Linux nodes alone want a few GB of RAM — `SCENARIO=frr-only` is the
-  cheap one).
+- Do **not** run `make local-env-init`/`local-env-up` or `make local-lab-up`
+  casually. `local-env-*` pulls the whole NeOps stack and runs nine or ten
+  containers; `local-lab-up` builds the FRR image and deploys the scenario's
+  devices (`wan-and-fabric`'s five SR Linux nodes alone want a few GB of RAM —
+  `SCENARIO=frr-only` is the cheap one). `make -n`, `make scenario`,
+  `make scenarios` and `make local-lab-status` are read-only.
 - `make scenarios` before assuming which lab is in play; `make generate` after
   editing any `scenarios/*/topology.json`.
 - `make test` is fast, hermetic and the meaningful gate for generator changes.
