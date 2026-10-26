@@ -156,7 +156,7 @@ The KIND release deployed against this lab runs a worker built from that checkou
 | `KIND_DISCOVER_PARAMS` | `generated/$(SCENARIO)/kind/discover-params.json` | The generated parameter file |
 | `KIND_DISCOVER_TIMEOUT` | `600` | Seconds `run_workflow` polls for a terminal state |
 | `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.1.0` | The block `wait_ready` blocks on — shared with the containerlab flavour |
-| `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.2.0` | The definition that is published and executed — shared with the containerlab flavour |
+| `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.3.0` | The definition that is published and executed — shared with the containerlab flavour |
 | `DOCKER_RUN_FLAGS` | *(empty)* | Extra flags for the `docker run`, e.g. `--network=host` |
 
 ### Why one URL, and where it comes from

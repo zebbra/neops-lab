@@ -286,7 +286,7 @@ MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$(./lab_token)}; 
 # published versions are immutable: editing that file means bumping its
 # majorVersion/minorVersion/patchVersion and this variable together.
 DISCOVER_FB := fb.base.neops.io/global_discover_network:0.1.0
-DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.2.0
+DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.3.0
 
 # Execution parameters for the discovery workflow. Override to discover with a
 # different target form, e.g.

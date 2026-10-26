@@ -61,4 +61,4 @@ Worker
 :   The process that polls the blackboard and executes function blocks. Here it is the published `quay.io/zebbra/neops-worker-sdk` image, with this repo mounted read-only at `/app/lab`.
 
 Workflow
-:   A declarative YAML/JSON definition of steps executed by the engine, identified as `<package>/<name>:<version>`. `scenarios/_base/` ships one, `wf.lab.neops.io/simple_lab_discovery:1.2.0`, which every scenario inherits unless it overrides or adds to it.
+:   A declarative YAML/JSON definition of steps executed by the engine, identified as `<package>/<name>:<version>`. `scenarios/_base/` ships one, `wf.lab.neops.io/simple_lab_discovery:1.3.0`, which every scenario inherits unless it overrides or adds to it.
