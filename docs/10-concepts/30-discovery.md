@@ -88,6 +88,8 @@ So credential resolution is: **subnet credentials → global credentials**, and 
 
 Optional, default `false`. When `true`, the run fails if any host given as its own `/32` (or `/128`) yields no device; hosts reached only through a wider prefix never fail it. With the default, undiscovered hosts are reported in the result's `failed_hosts`/`skipped_hosts` and the run still succeeds.
 
+The flag needs a worker image that includes [neops-worker-sdk-py `2b21f99`](https://github.com/zebbra/neops-worker-sdk-py/commit/2b21f99), which no released tag carries yet; an older worker ignores it, logging only a warning. On an engine older than `v0.43.0-beta.5` an omitted flag resolves to `null` and the step fails, so pin the engine at `v0.43.0-beta.5` or later.
+
 ### The four parameter files
 
 They live in `scenarios/<scenario>/workflow-execution-parameters/`; the counts below are for `wan-and-fabric`.
