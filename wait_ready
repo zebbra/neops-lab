@@ -14,7 +14,7 @@ handled by `docker compose wait lab_bootstrap`.)
 
 This polls the engine's per-function-block worker registry until at least one
 `online` worker is registered for every requested function block, so callers
-like `make local-lab-discover` can run deterministically instead of racing.
+like `make discover` can run deterministically instead of racing.
 
 Usage
 -----
@@ -83,7 +83,7 @@ def online_worker_count(engine_url: str, fb_id: str) -> int | None:
 TIMEOUT_HINT = """\
 Likely causes, most common first:
   * the worker container is stopped or crash-looping: check
-    `docker compose ps worker` and `make local-lab-logs`;
+    `docker compose ps worker` and `make worker-logs`;
   * the worker image lacks the block: `docker compose exec worker ls /app/neops/fb`;
   * the worker is still starting: re-run, or raise WAIT_READY_TIMEOUT.\
 """

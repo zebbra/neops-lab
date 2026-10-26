@@ -10,11 +10,49 @@ include .make_scripts/release-management/release-management-makefile
 # the same on Linux and macOS (see the header of ./containerlab).
 CONTAINERLAB ?= ./containerlab
 
+# `$(call dotenv,NAME)` — the value `.env` gives NAME, or empty. make does not
+# read `.env`, docker compose does, so every setting the two have to agree on is
+# read by this one rule. Later definitions win, matching compose.
+#
+# Each call forks a `sed`, so every caller assigns it to a `DOTENV_*` with `:=`
+# and reads THAT: a recursive (`=`) variable re-expands on every reference, which
+# would re-read `.env` once per mention and could answer differently twice in one
+# recipe if the file changed underneath.
+dotenv = $(strip $(shell test -f .env && sed -n 's/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}$(1)[[:space:]]*=[[:space:]]*//p' .env | tail -n 1))
+
 # Which lab this checkout runs. `make scenarios` lists them; everything a
 # scenario can own lives under scenarios/<name>/, overlaid on scenarios/_base/.
-# This is the ONLY default: every script, compose file and bash entry point
-# reads SCENARIO and fails when it is unset, so a scenario is never half-applied.
-SCENARIO ?= wan-and-fabric
+#
+# Resolution order, highest first:
+#   1. the command line or the environment — `make local-lab-up SCENARIO=frr-only`
+#   2. `.env`                              — for a checkout that always runs one
+#   3. the default below
+#
+# make does not read `.env`; docker compose does. So make reads it HERE, in the
+# one place SCENARIO is resolved, and `export`s the result — which then wins over
+# `.env` for compose too, so the two can never disagree. Left to compose alone,
+# `SCENARIO=frr-only` in `.env` would hand the containers frr-only's assets while
+# the generators, resolve_scenario and apply_cms_config still worked on the
+# default: a scenario applied half from each of two labs, invisible until
+# discovery returns something confusing.
+#
+# The forms `$(dotenv)` reads are the ones compose reads: `SCENARIO=name`,
+# optionally prefixed with `export`, unquoted and with no inline comment. A
+# quoted or commented value still reaches resolve_scenario, which refuses it and
+# prints the offending value — unsupported, but loudly so. `export` is matched
+# because it is the one form compose honours that make could not see: make would
+# have fallen back to its default and generated THAT scenario's tree while the
+# containers mounted this one's, and no consumer could object, because both
+# names are perfectly valid.
+#
+# The name below is still the ONLY default, written down exactly once: every
+# script, compose file and bash entry point reads SCENARIO and fails when it is
+# unset.
+#
+# `$(if)` and not the shorter `$(or)`: stock macOS ships GNU make 3.81, the very
+# release `$(or)` was added in, and nothing in CI runs that version.
+DOTENV_SCENARIO := $(call dotenv,SCENARIO)
+SCENARIO ?= $(if $(DOTENV_SCENARIO),$(DOTENV_SCENARIO),wan-and-fabric)
 export SCENARIO
 # The scenario's source assets, its resolved overlay, and the artifacts the
 # generators write beside it.
@@ -34,6 +72,17 @@ CLAB_DEPLOYED_MARKER := generated/.deployed-scenario-clab
 KIND_DEPLOYED_MARKER := generated/.deployed-scenario-kind
 SCENARIO_DIR := generated/$(SCENARIO)/scenario
 GEN_DIR := generated/$(SCENARIO)
+
+# Which optional compose services run; `worker` is the only profile the lab
+# defines. Unlike SCENARIO, compose resolves this itself — from the environment,
+# else `.env` — so it is deliberately NOT exported: make only needs to SAY which
+# way it is set and decide whether to wait for the worker, and a value read
+# wrongly here must not be able to turn a worker off that compose would have
+# started. `?=` reproduces compose's own precedence, since make already imports
+# the environment; the `:=` above it keeps that from re-reading `.env` per
+# reference, which `?=` alone would do.
+DOTENV_COMPOSE_PROFILES := $(call dotenv,COMPOSE_PROFILES)
+COMPOSE_PROFILES ?= $(DOTENV_COMPOSE_PROFILES)
 
 # Wait budgets (seconds). Defaults suit a native Linux host; a Mac booting the
 # SR Linux nodes against a shared VM raises these rather than removing a wait.
@@ -55,7 +104,7 @@ KIND_DISCOVER_PARAMS := $(GEN_DIR)/kind/discover-params.json
 # the 5 slower Nokia nodes, which this flavour does not render.
 KIND_DISCOVER_TIMEOUT ?= 600
 # How the workflow engine is reached. The CMS goes through a port-forward (see
-# kind-lab-cms-config); the engine cannot, because the definition is published
+# kind-apply-cms-config); the engine cannot, because the definition is published
 # by the bootstrap container, which has no route to a port-forward bound on the
 # host. One address therefore has to serve the container and the host scripts.
 # The default is the umbrella's offline ingress name: every service is published
@@ -74,7 +123,7 @@ KIND_ENGINE_AUTHORITY := $(firstword $(subst /, ,$(patsubst http://%,%,$(patsubs
 KIND_ENGINE_HOST := $(firstword $(subst :, ,$(KIND_ENGINE_AUTHORITY)))
 KIND_ENGINE_ADD_HOST := $(if $(filter %.local,$(KIND_ENGINE_HOST)),--add-host $(KIND_ENGINE_HOST):host-gateway)
 
-# The NeOps product stack `make kind-lab-cms-config` configures. It is a
+# The NeOps product stack `make kind-apply-cms-config` configures. It is a
 # separate deployment in its own namespace; nothing here installs, changes or
 # deletes it beyond the `neops` user's role and the Global scope.
 NEOPS_NAMESPACE ?= neops
@@ -163,16 +212,48 @@ lab-jwt:
 		echo "generated cms/jwt/{private,public}.pem"; \
 	fi
 
-# A fresh clone has no .env; copy the example so there is one to edit. Its only
-# active line pins the worker image; every other value is commented out.
+# A fresh clone has no .env; copy the example so there is one to edit. Not a
+# pure no-op: the example sets COMPOSE_PROFILES=worker, so without this a fresh
+# clone runs the worker off while the file documenting the default says it is on.
+#
+# make reads .env at PARSE time and compose reads it at RUN time, so a .env
+# created here reaches compose on this very invocation but reaches make only on
+# the next one — the worker starts while make's report says "disabled" and skips
+# the wait_ready guard. Saying so is the fix: the skew is then visible and it
+# self-corrects. Re-reading .env mid-recipe would give make and compose two
+# different read points, which is the divergence the single read point removed.
 lab-env:
 	@if [ -f .env ]; then \
 		echo ".env already present — skipping"; \
 	else \
-		cp .env.example .env && echo "created .env from .env.example"; \
+		cp .env.example .env && \
+		echo "created .env from .env.example — compose reads it on this run, make only on the next," && \
+		echo "  so a 'worker: disabled' line below this one is stale"; \
 	fi
 
-local-env-init: lab-jwt scenario-resolve
+# Block until lab_bootstrap — the one-shot that publishes the workflow
+# definitions — has finished, and fail if it failed.
+#
+# NOT `docker compose wait lab_bootstrap`: that blocks until the service's
+# containers STOP, so a one-shot which has ALREADY exited leaves it nothing to
+# attach to and it fails with "no containers for project" rather than reporting
+# the exit code compose recorded. The faster registration finishes the more
+# reliably it loses that race, and local-env-init waits for a healthy engine
+# before the `up -d`, so registration is often over before the wait begins.
+#
+# `docker wait` has the semantics this needs — it blocks on a running container
+# and returns a finished one's recorded code at once — but it PRINTS that code
+# and exits 0 either way, so the code is read from its output, not its status.
+# Addressed by container id so nothing here depends on the compose project name.
+#
+# Must stay a `=` variable, never a `define`: see WAIT_DEVICES for why.
+WAIT_BOOTSTRAP = echo "Waiting for workflow registration (lab_bootstrap) to finish..."; \
+	cid=$$(docker compose ps -aq lab_bootstrap); \
+	test -n "$$cid" || { echo "error: lab_bootstrap never started; no workflows are registered"; exit 1; }; \
+	code=$$(docker wait "$$cid"); \
+	test "$$code" = 0 || { echo "error: workflow registration failed (lab_bootstrap exited $$code)"; docker compose logs --no-log-prefix lab_bootstrap; exit 1; }
+
+local-env-init: lab-env lab-jwt lab-net scenario-resolve
 	touch cms_api_key.env
 	# Refresh the published images. `--ignore-pull-failures` is load-bearing: if
 	# you override a service with a locally-built tag
@@ -215,13 +296,57 @@ local-env-init: lab-jwt scenario-resolve
 	# env_file changes don't trigger recreate on their own, so a re-init over an
 	# engine left from a previous run needs the force to pick up the new token.
 	docker compose up -d --force-recreate workflow_engine
-	docker compose up -d
+	# lab_bootstrap publishes the workflow definitions and needs a token
+	# interpolated into its environment at `up -d`; mint one in the same shell.
+	@set -e; \
+	$(MINT_ENGINE_TOKEN); \
+	docker compose up -d; \
+	$(WAIT_BOOTSTRAP)
 
-local-env-up: lab-jwt scenario-resolve
+local-env-up: lab-env lab-jwt lab-net scenario-resolve
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make local-env-init' first."; exit 1; fi
 	# See the note in local-env-init about --policy always / --ignore-pull-failures.
 	docker compose pull --policy always --ignore-pull-failures
-	docker compose up -d
+	# The worker is optional and lives behind a compose profile, so say which way
+	# it is set: a worker that is off must never look like one that failed.
+	@case ",$(COMPOSE_PROFILES)," in \
+		*,worker,*) echo "worker: enabled (COMPOSE_PROFILES)";; \
+		*) echo "worker: disabled — set COMPOSE_PROFILES=worker in .env, or run 'make worker-up'";; \
+	esac
+	# The next steps run in ONE shell so the minted token reaches every caller
+	# after it; `set -e` aborts that shell on the first failing command.
+	#
+	# `./apply_cms_config` runs before the mint: a token carries the permissions
+	# its account holds at login and keeps them for its whole 15-minute life, so
+	# the grants in the scenario's cms/permissions.json have to be in the CMS
+	# first. The token then has to exist before `up -d` interpolates it into
+	# lab_bootstrap's environment.
+	#
+	# `up -d` returns once containers are *Started*, not *Completed*; the one-shot
+	# lab_bootstrap container registers the workflow definitions and then exits.
+	# Without the wait, `make discover` races ahead and the engine 404s with
+	# "Workflow with ID null not found". WAIT_BOOTSTRAP checks its exit code, so
+	# a failed registration fails this target.
+	@set -e; \
+	docker compose up -d --wait cms; \
+	./apply_cms_config; \
+	$(MINT_ENGINE_TOKEN); \
+	docker compose up -d; \
+	$(WAIT_BOOTSTRAP); \
+	case ",$(COMPOSE_PROFILES)," in \
+		*,worker,*) echo "Waiting for the worker to register its function blocks..."; \
+			./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; };; \
+	esac
+	@echo ""
+	@echo "Environment is up."
+	@echo "  Web client:   http://localhost:8080/"
+	@echo "  Engine UI:    http://localhost:3031"
+	@echo "  Engine API:   http://localhost:3030/"
+	@echo "  CMS admin:    http://localhost:8001/admin/ (neops / neops)"
+	@echo "  CMS GraphQL:  http://localhost:8001/graphql"
+	@echo ""
+	@echo "  Devices are separate: 'make local-lab-up' deploys them,"
+	@echo "  'make discover' then populates the CMS from them."
 
 local-env-down:
 	# Stops the base stack but KEEPS the volumes, so CMS data survives.
@@ -233,12 +358,58 @@ local-env-prune:
 	# and stale CMS data to confuse re-inits.
 	docker compose down -v
 
+# Every service compose has enabled, not a named subset: which one failed is the
+# question this target is reached for, so naming any of them answers it first,
+# and a hardcoded list goes stale the next time a service is added.
+#
+# The cost is that `logs` with no service named covers the ENABLED services, so
+# a worker left outside COMPOSE_PROFILES is missing from the output even while
+# its container runs — which `make worker-up` is exactly the way to arrive at.
+# The replaced local-lab-logs named `worker` and so always showed it; the note
+# is what keeps that from being a silent loss. Not an error: running with the
+# profile off is supported.
+local-env-logs:
+	@case ",$(COMPOSE_PROFILES)," in \
+		*,worker,*) ;; \
+		*) echo "note: the worker is outside the active profiles, so its logs are not included here"; \
+			echo "      even if its container is running — 'make worker-logs' shows them";; \
+	esac
+	docker compose logs -f
+
+# Start the worker by hand — for debugging, or when COMPOSE_PROFILES leaves it
+# off. Naming a profiled service on the command line enables its profile, so
+# these work whatever .env says.
+#
+# The pull is not redundant with local-env-up's: that one is project-wide and so
+# reaches the worker only when its profile is already on. With the profile off
+# this is the only place the moving `:develop` tag is ever refreshed, and
+# `pull_policy: missing` would otherwise reuse whatever is on disk forever.
+worker-up: lab-net
+	docker compose pull --policy always --ignore-pull-failures worker
+	docker compose up -d worker
+
+worker-down:
+	docker compose rm -sf worker
+
+worker-logs:
+	docker compose logs -f worker
+
 # -----------------------------------------------------------------------------
 # Scenarios — see docs/30-scenarios/
 # -----------------------------------------------------------------------------
 
 scenarios:
 	@./resolve_scenario --list
+
+# Which scenario the next target will act on, and why. `make scenarios` lists
+# what is available; this answers "what am I on right now".
+scenario:
+	@echo "$(SCENARIO)"
+	@if [ -n "$(DOTENV_SCENARIO)" ] && [ "$(SCENARIO)" != "$(DOTENV_SCENARIO)" ]; then \
+		echo "  (overriding SCENARIO=$(DOTENV_SCENARIO) from .env)" >&2; \
+	elif [ -n "$(DOTENV_SCENARIO)" ]; then \
+		echo "  (from .env)" >&2; \
+	fi
 
 # Materialise scenarios/_base + scenarios/$(SCENARIO) into $(SCENARIO_DIR), the
 # one flat directory the containers mount and the scripts read. docker compose
@@ -258,22 +429,13 @@ generate: scenario-resolve
 # Simple Lab — see README.md
 # -----------------------------------------------------------------------------
 
-# Lab targets run the base stack plus the per-vendor device files and the worker
-# overlay, selected via docker compose's COMPOSE_FILE env variable (colon-
-# separated). The export is scoped to the lab targets so `local-env-*` keep
-# using the base docker-compose.yml only.
-LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml
-local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_FILE := $(LAB_COMPOSE_FILES)
-local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_PATH_SEPARATOR := :
-
 # Whatever NEOPS_AUTHZ_MODE the engine runs in, run_workflow, wait_ready and the
 # lab_bootstrap container each send `Authorization: Bearer`. This snippet mints a
 # token unless NEOPS_ENGINE_TOKEN is already set, and exports it to every caller
 # after it in the recipe, so a step that needs a fresh one unsets the variable
-# first (`local-lab-up` does, after the containerlab deploy). The CMS rate-limits
-# logins per IP (NEOPS_LOCAL_LOGIN_RATE_LIMIT, default 5/m) and every lab call
-# leaves this host from the same address. make echoes recipe text, so the value
-# stays out of the terminal.
+# first. The CMS rate-limits logins per IP (NEOPS_LOCAL_LOGIN_RATE_LIMIT,
+# default 5/m) and every lab call leaves this host from the same address. make
+# echoes recipe text, so the value stays out of the terminal.
 MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$(./lab_token)}; \
 	export NEOPS_ENGINE_TOKEN; \
 	test -n "$$NEOPS_ENGINE_TOKEN" || { echo "error: minted an empty engine token; run ./lab_token to see why"; exit 1; }
@@ -290,9 +452,9 @@ DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.2.0
 
 # Execution parameters for the discovery workflow. Override to discover with a
 # different target form, e.g.
-#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-autodetect.json
-#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-subnet.json
-#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-mixed.json
+#   make discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-autodetect.json
+#   make discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-subnet.json
+#   make discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-mixed.json
 DISCOVER_PARAMS ?= $(SCENARIO_SRC)/workflow-execution-parameters/discover-params.json
 
 # Grant profile `make lab-grant` applies: author | operator | admin.
@@ -300,6 +462,60 @@ PROFILE ?= operator
 
 # containerlab topology (generated from the scenario's topology.json).
 CLAB_TOPO := $(GEN_DIR)/clab/neops-lab.clab.json
+
+# Sets `$deployed` and `$topo` for the recipe it opens: the scenario that is
+# actually deployed and its topology, which is not necessarily $(SCENARIO).
+# containerlab acts on the nodes the handed topology names, so a teardown or a
+# status run against the requested scenario answers about the wrong lab — it
+# strands the difference, or reports nothing deployed while fifteen devices run.
+# The marker wins when it exists; $(SCENARIO) is the fallback for a lab deployed
+# before it. Shared so the layout of that path is written down once.
+DEPLOYED_CLAB_TOPO = deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || echo "$(SCENARIO)"); \
+	topo="generated/$$deployed/clab/neops-lab.clab.json"
+
+# Must equal gen_clab_topology.LAB_NET_NAME; the topology's mgmt block names it.
+LAB_NET_NAME := lab-net
+
+# Image the throwaway device probes run in. Pinned, and the same base
+# bootstrap/Dockerfile uses, so most hosts already have the layers.
+PROBE_IMAGE ?= python:3.12-slim
+
+# `wait_devices` is a stdlib TCP-22 poll over the scenario's mgmt IPs. It runs in
+# a container ON lab-net rather than on the host because on macOS/Docker Desktop
+# the host has no route to 172.30.0.0/24, so a host-side poll hangs until timeout
+# even though the devices are healthy. Container-to-container reachability — the
+# same path discovery actually uses — works on every platform.
+#
+# It used to run as `docker compose exec worker`, which made a device wait
+# require a running control plane. The worker does no part of this check; it was
+# borrowed for its network attachment alone.
+#
+# Must stay a `=` variable, never a `define`: make collapses these
+# backslash-newlines into single spaces, which is what lets `$(WAIT_DEVICES)`
+# sit inside discover's `set -e; … ; \` chain as one command. A
+# `define` would keep the newlines and silently cut that chain in three.
+WAIT_DEVICES = docker run --rm --network $(LAB_NET_NAME) \
+	-v "$(CURDIR):/lab:ro" -w /lab -e SCENARIO=$(SCENARIO) $(PROBE_IMAGE) \
+	python3 wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+
+# lab-net is `external` to docker compose: containerlab creates it from the
+# generated topology's `mgmt` block during `deploy`. But compose ABORTS on a
+# missing external network rather than creating one, and the control-plane
+# targets never deploy devices — so without this nothing would ever create it on
+# a fresh clone. Idempotent: an existing network is left exactly as it is.
+#
+# The subnet comes from gen_clab_topology.LAB_SUBNET, the single place it is
+# written, read the same way tools/check_subnets.py reads it. Deliberately NOT
+# from the generated topology: that would drag scenario resolution and topology
+# generation into the control-plane targets to learn one constant.
+lab-net:
+	@if docker network inspect $(LAB_NET_NAME) >/dev/null 2>&1; then \
+		echo "network $(LAB_NET_NAME) already exists — skipping"; \
+	else \
+		subnet=$$(python3 -c 'import labscripts; print(labscripts.load("gen_clab_topology").LAB_SUBNET)'); \
+		echo "docker network create --subnet $$subnet $(LAB_NET_NAME)"; \
+		docker network create --subnet "$$subnet" $(LAB_NET_NAME); \
+	fi
 
 # containerlab needs root to create netns/veths. Rather than sudo-ing every lab
 # target (which would prompt for a password in the middle of `local-lab-up`),
@@ -328,8 +544,9 @@ clab-suid:
 		echo "         then re-login for the group to apply."; \
 	fi
 
-local-lab-up: build-docker lab-jwt lab-env scenario-resolve
-	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
+# Devices only. No compose project, no CMS, no engine, no token — bring the
+# control plane up with `make local-env-up`, in either order.
+local-lab-up: build-docker-frr lab-net scenario-resolve
 	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || true); \
 	if [ -n "$$deployed" ] && [ "$$deployed" != "$(SCENARIO)" ]; then \
 		echo "Error: scenario '$$deployed' is still deployed."; \
@@ -340,103 +557,65 @@ local-lab-up: build-docker lab-jwt lab-env scenario-resolve
 	fi
 	# Generate the containerlab topology + per-device configs from the scenario.
 	@./gen_clab_topology
-	# Refresh the worker image: the local-env-* pulls run with the base compose
-	# file, which does not include the worker service.
-	docker compose pull --policy always --ignore-pull-failures worker
-	# The next steps run in ONE shell so a minted engine token reaches every
-	# caller after it; `set -e` aborts that shell on the first failing command.
-	#
-	# `./lab_token` logs in against the CMS on :8001, so the CMS comes up and
-	# reaches healthy first. After `local-lab-down` nothing is running, and the
-	# token has to exist before the `up -d` below interpolates it into
-	# lab_bootstrap's environment.
-	#
-	# `./apply_cms_config` runs before the mint: a token carries the permissions
-	# its account holds at login and keeps them for its whole 15-minute life, so
-	# the grants in the scenario's cms/permissions.json have to be in the CMS first.
-	#
-	# Base stack + worker + bootstrap. This creates the `lab-net` network that
-	# containerlab attaches the devices to, and registers the workflow definitions.
-	# `up -d` returns once containers are *Started*, not *Completed*; the one-shot
-	# `lab_bootstrap` container registers the workflow definitions (e.g.
-	# simple_lab_discovery) with the engine and then exits.
-	#
-	# Without the bootstrap wait, `local-lab-discover` races ahead and the engine
-	# 404s with "Workflow with ID null not found". `wait` blocks until it exits and
-	# propagates its exit code, so a failed registration fails this target.
-	#
-	# Deploy the 15 devices with REAL point-to-point wiring onto lab-net. SR Linux
-	# boots slowly, so deploy early — before waiting on device SSH below.
-	#
-	# That deploy runs for minutes on a slow host and a token lasts 15 minutes, so
-	# the wait below runs on a freshly minted one; `wait_ready` stops on a 401.
-	# The `unset` precedes the snippet because the snippet reuses an already-set
-	# NEOPS_ENGINE_TOKEN. Two logins for this target, inside the CMS's local limit
-	# of 5 a minute per address. The second one sits after the deploy, so a CMS
-	# that is unreachable or rate-limited by then fails the target with the
-	# devices already up; `--reconfigure` lets a re-run pick up from there.
-	#
-	# The worker registers its function blocks with the engine asynchronously
-	# after its container starts. Block until an online worker exists so the
-	# "Lab is up" banner is honest and `local-lab-discover` won't race the
-	# worker with "Function block ... not found".
-	@set -e; \
-	docker compose up -d --wait cms; \
-	./apply_cms_config; \
-	$(MINT_ENGINE_TOKEN); \
-	docker compose up -d; \
-	echo "Waiting for workflow registration (lab_bootstrap) to finish..."; \
-	docker compose wait lab_bootstrap; \
-	echo "Deploying containerlab devices (real links)..."; \
-	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO); \
-	unset NEOPS_ENGINE_TOKEN; \
-	$(MINT_ENGINE_TOKEN); \
-	echo "Waiting for the worker to register its function blocks..."; \
-	./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
-	# Devices (esp. Nokia SR Linux) boot slower than `containerlab deploy` returns.
-	# Poll from *inside* the lab network (the worker is on lab-net), not the host.
-	# On macOS/Docker Desktop the host has no route to the lab-net bridge IPs
-	# (172.30.0.0/24), so a host-side poll hangs until timeout even though the
-	# devices are healthy. Container-to-container reachability — the same path
-	# discovery actually uses — works on every platform.
-	# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix here.
+	# SR Linux boots slowly; `--reconfigure` makes this target re-runnable.
+	@echo "Deploying containerlab devices (real links)..."
+	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO)
+	# `containerlab deploy` returns once containers are started, not once SSH is
+	# listening — Nokia SR Linux takes tens of seconds longer. See WAIT_DEVICES
+	# for why this runs in a container rather than on the host.
 	@echo "Waiting for all devices to accept SSH..."
-	@docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@$(WAIT_DEVICES)
 	@echo "$(SCENARIO)" > $(CLAB_DEPLOYED_MARKER)
 	@echo ""
-	@echo "Lab is up (scenario: $(SCENARIO), real links)."
-	@echo "  Web client:   http://localhost:8080/"
-	@echo "  Engine UI:    http://localhost:3031"
-	@echo "  Engine API:   http://localhost:3030/"
-	@echo "  CMS admin:    http://localhost:8001/admin/ (neops / neops)"
-	@echo "  CMS GraphQL:  http://localhost:8001/graphql"
-	@echo "  Run 'make local-lab-discover' to populate the CMS (15 devices with interfaces)."
+	@echo "Devices are up (scenario: $(SCENARIO), real links)."
+	@echo "  SSH:   docker exec -it <node> vtysh      (FRR, login frr / frr)"
+	@echo "  List:  make local-lab-status"
+	@echo ""
+	@echo "  The control plane is separate: 'make local-env-up' starts it,"
+	@echo "  'make discover' then populates the CMS from these devices."
 
+# --cleanup removes the per-lab runtime dir
+# (generated/<scenario>/clab/clab-neops-lab).
+#
+# --keep-mgmt-net because lab-net is not containerlab's to remove, however it
+# came to exist: `make lab-net` creates it, docker-compose.yml declares it
+# `external`, and the worker attaches to it — the one compose service that does.
+# Left to its default containerlab either fails on that live endpoint — an error
+# on every teardown, teaching operators to ignore them — or, with the worker
+# down (its profile off, or the control plane stopped), succeeds, and the next
+# `docker compose up -d` aborts with "network lab-net declared as external, but
+# could not be found".
+#
+# The marker is removed only once the destroy has SUCCEEDED, and a failed
+# destroy fails this target: the marker is the only record of what is deployed,
+# so dropping it after a real failure lets the next `local-lab-up
+# SCENARIO=other` past its guard and leaves two scenarios running side by side.
+# Nothing to destroy is not a failure.
+#
+# The control plane is NOT touched: `make local-env-down` is its own target.
 local-lab-down:
-	# Destroy the scenario that is actually deployed, which is not necessarily
-	# $(SCENARIO): containerlab acts on the nodes the handed topology names, so
-	# tearing down with the wrong one strands the difference. The marker wins
-	# when it exists; $(SCENARIO) is the fallback for a lab deployed before it.
-	# --cleanup removes the per-lab runtime dir
-	# (generated/<scenario>/clab/clab-neops-lab); the leading `-` lets `make`
-	# continue if no lab is deployed.
-	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || echo "$(SCENARIO)"); \
-	echo "$(CONTAINERLAB) destroy -t generated/$$deployed/clab/neops-lab.clab.json --cleanup"; \
-	$(CONTAINERLAB) destroy -t "generated/$$deployed/clab/neops-lab.clab.json" --cleanup || true
-	@rm -f $(CLAB_DEPLOYED_MARKER)
-	docker compose down
+	@$(DEPLOYED_CLAB_TOPO); \
+	if [ ! -f "$$topo" ]; then \
+		echo "no containerlab topology at $$topo — nothing to destroy"; \
+		rm -f $(CLAB_DEPLOYED_MARKER); \
+		exit 0; \
+	fi; \
+	echo "$(CONTAINERLAB) destroy -t $$topo --cleanup --keep-mgmt-net"; \
+	$(CONTAINERLAB) destroy -t "$$topo" --cleanup --keep-mgmt-net && \
+	rm -f $(CLAB_DEPLOYED_MARKER)
 
-full-e2e-test:
-	# Teardown precedes the prune: the prune's base-only compose file cannot
-	# remove the network while the worker and the devices are still on it.
-	# Sequential sub-makes rather than prerequisites, which `-j` would run in parallel.
-	$(MAKE) local-lab-down
-	$(MAKE) local-env-prune
-	$(MAKE) local-env-init
-	$(MAKE) local-lab-up
-	$(MAKE) local-lab-discover
+# `|| true` only after the topology is known to exist: "nothing is running" is
+# an answer, not a make failure, but a missing topology must say so in its own
+# words rather than surface as a swallowed containerlab error.
+local-lab-status:
+	@$(DEPLOYED_CLAB_TOPO); \
+	if [ ! -f "$$topo" ]; then \
+		echo "no containerlab topology at $$topo — nothing deployed"; \
+		exit 0; \
+	fi; \
+	$(CONTAINERLAB) inspect -t "$$topo" || true
 
-local-lab-discover: scenario-resolve
+discover: scenario-resolve
 	# Always wait for the known lab devices, not the requested discovery input:
 	# a subnet target also contains unused addresses which must not block readiness.
 	#
@@ -455,7 +634,7 @@ local-lab-discover: scenario-resolve
 	./apply_cms_config; \
 	$(MINT_ENGINE_TOKEN); \
 	./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB); \
-	docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT); \
+	$(WAIT_DEVICES); \
 	./run_workflow --timeout 900 $(DISCOVER_WORKFLOW) @$(DISCOVER_PARAMS)
 
 apply-cms-config: scenario-resolve
@@ -466,9 +645,6 @@ apply-cms-config: scenario-resolve
 lab-grant:
 	@test -n "$(ROLE)" || { echo "usage: make lab-grant ROLE=<role> [PROFILE=operator]"; exit 1; }
 	docker compose exec -T cms ./manage.py grant_workflow_permissions --role "$(ROLE)" --profile "$(PROFILE)" --yes
-
-local-lab-logs:
-	docker compose logs -f worker lab_bootstrap
 
 # -----------------------------------------------------------------------------
 # Kubernetes Lab — the FRR devices as pods in a local KIND cluster.
@@ -517,14 +693,14 @@ kind-lab-down:
 kind-lab-status:
 	@kubectl -n $(KIND_LAB_NAMESPACE) get pods,svc
 
-# Discovery against the pods — the same four steps as local-lab-discover, run
-# through the same four scripts. Only the addresses differ; nothing about
-# publishing, waiting or executing is reimplemented here.
+# Discovery against the pods — the same four steps as `discover`, run through
+# the same four scripts. Only the addresses differ; nothing about publishing,
+# waiting or executing is reimplemented here.
 #
-# Unlike local-lab-discover this also publishes the workflow definition, because
-# no lab_bootstrap container ran: the compose flavour registers it during
-# local-lab-up, and there is no equivalent step in kind-lab-up.
-kind-lab-discover: build-docker-bootstrap scenario-resolve
+# Unlike `discover` this also publishes the workflow definition, because no
+# lab_bootstrap container ran: the compose flavour registers it during
+# local-env-up, and there is no equivalent step in kind-lab-up.
+kind-discover: build-docker-bootstrap scenario-resolve
 	# Publishing is idempotent for unchanged content (200) and 409s if this
 	# version was already published with different content — bump the versions in
 	# the YAML and in DISCOVER_WORKFLOW rather than editing a published one.
@@ -543,7 +719,7 @@ kind-lab-discover: build-docker-bootstrap scenario-resolve
 
 # Applying the CMS config is deliberately a SEPARATE target: bringing the pods up
 # must not require a running product stack, the same way local-lab-up and
-# local-lab-discover are separate today.
+# discover are separate.
 #
 # `apply_cms_config` is the compose lab's own script, reused through CMS_EXEC
 # rather than forked: it grants the `neops` user the `lab-admin` role and seeds
@@ -553,7 +729,7 @@ kind-lab-discover: build-docker-bootstrap scenario-resolve
 #
 # The API key is read out of the cluster Secret per invocation, so it is never
 # stale, and the recipe is `@`-prefixed so it is never echoed.
-kind-lab-cms-config: scenario-resolve
+kind-apply-cms-config: scenario-resolve
 	@kubectl -n $(NEOPS_NAMESPACE) port-forward svc/$(NEOPS_CMS_SERVICE) $(CMS_PORT):$(NEOPS_CMS_PORT) >/dev/null & \
 	pf=$$!; trap 'kill $$pf 2>/dev/null || true' EXIT; \
 	i=0; until curl -s -o /dev/null --max-time 2 $(CMS_URL)/; do \
@@ -565,8 +741,10 @@ kind-lab-cms-config: scenario-resolve
 	./apply_cms_config
 
 .PHONY: build-docker build-docker-frr build-docker-bootstrap doctor lint format typeCheck test py39-check \
-	shell-syntax check lab-jwt lab-env clab-suid \
-	scenarios scenario-resolve generate \
-	local-env-init local-env-up local-env-down local-env-prune \
-	local-lab-up local-lab-down local-lab-discover local-lab-logs full-e2e-test apply-cms-config lab-grant \
-	kind-lab-up kind-lab-down kind-lab-status kind-lab-cms-config kind-lab-discover
+	shell-syntax check lab-jwt lab-env clab-suid lab-net \
+	scenarios scenario scenario-resolve generate \
+	local-env-init local-env-up local-env-down local-env-prune local-env-logs \
+	worker-up worker-down worker-logs \
+	local-lab-up local-lab-down local-lab-status \
+	kind-lab-up kind-lab-down kind-lab-status \
+	discover kind-discover apply-cms-config kind-apply-cms-config lab-grant

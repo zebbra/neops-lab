@@ -95,4 +95,4 @@ if [ "$fails" -gt 0 ]; then
     echo "$fails check(s) FAILED — fix the items above, then re-run 'make doctor'."
     exit 1
 fi
-echo "All checks passed. Next: make local-env-init local-lab-up local-lab-discover"
+echo "All checks passed. Next: make local-env-init local-lab-up discover"
