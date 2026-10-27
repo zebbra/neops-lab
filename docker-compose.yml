@@ -198,13 +198,17 @@ services:
       retries: 5
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.2
+    # Same pin as neops-docker-compose. neops-core's ES|QL LOOKUP JOIN needs >= 8.18.
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.23
     environment:
       - bootstrap.memory_lock=true
       - ES_JAVA_OPTS=-Xms2g -Xmx2g
       - discovery.type=single-node
       - cluster.routing.allocation.disk.threshold_enabled=false
       - xpack.security.enabled=false
+      # A write in a rebuild's delete->create gap would auto-create a Neops index with a dynamic
+      # mapping that breaks search. Explicit creation is unaffected. devices/interfaces: older cores.
+      - action.auto_create_index=-network,-devices,-interfaces,-groups,-clients,-executions,-*_lookup,+*
     ulimits:
       memlock:
         soft: -1

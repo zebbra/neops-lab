@@ -307,6 +307,21 @@ make local-env-init && make local-lab-up && make local-lab-discover
 
 ---
 
+## Device search is empty or `groups.*` searches fail after the Elasticsearch upgrade
+
+The lab runs Elasticsearch 8.19, which neops-core's ES|QL lookup search requires. An `elasticsearch`
+volume written by the earlier 8.9 image is upgraded in place on the first start and cannot be
+opened by 8.9 again. It still holds the indices the previous CMS image created, which a newer CMS
+does not fill. Rebuild them from the database:
+
+```bash
+docker compose exec -T cms python manage.py elastic_index --rebuild --force
+```
+
+or start from empty volumes with `make local-env-prune` (below).
+
+---
+
 ## Nothing works and you want to start over
 
 ```bash
