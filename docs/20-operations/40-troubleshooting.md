@@ -76,7 +76,7 @@ docker compose logs lab_bootstrap
     docker compose exec worker ls /app/neops/fb/base/global/discover_network.py
     ```
 
-    ⚠️ The published `quay.io/zebbra/neops-worker-sdk:develop` tag **does not carry it** — see the next entry.
+    ⚠️ An old prerelease tag or an old local build may not carry it — see the next entry.
 
 See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10-concepts/40-container-paths.md).
 
@@ -91,14 +91,14 @@ timeout: no online worker for fb.base.neops.io/global_discover_network:0.1.0 wit
 ```
 
 **Cause:** the worker image you pinned does not carry
-`global_discover_network` — the published `develop` tag is one such image. The
+`global_discover_network`, e.g. an old prerelease tag or an old local build. The
 block ships *inside* the image rather than being bind-mounted from here, so the
 worker starts, registers the blocks it has, and never announces this one;
 `wait_ready` waits for it until the budget runs out.
 
-**Fix:** check what the image actually holds, and fall back to a prerelease
-`0.2.0-beta.*` tag (the published `develop` lacks the block) or a fresh build of
-an SDK checkout that has it:
+**Fix:** check what the image actually holds, and fall back to the published
+`develop` tag, a current prerelease `0.2.0-beta.*` tag, or a fresh build of an
+SDK checkout that has it:
 
 ```bash
 docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global/discover_network.py'
@@ -114,8 +114,8 @@ check against it before `make local-lab-up`.
 
 ## Worker exits ~2 min after start; discovery hangs after `wait_ready`
 
-**Known issue until [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402) is in the engine's
-published `develop` image.**
+**Affects engines older than `v0.43.0-beta.6`**, which lack
+[engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402). The default `develop` image has it.
 
 **Where:** `make local-lab-up` succeeds and `wait_ready` reports an online
 worker, but `make local-lab-discover` sits in `running` and never finishes. The
@@ -124,15 +124,15 @@ worker log shows `Registration failed: (500)` for one function block (e.g.
 container exits with code 1. The engine log shows `value too long for type
 character varying(255)`.
 
-**Cause:** the engine stores a function block's description and help text in
-`varchar(255)` columns, and the `0.2.0-beta.*` worker ships a block whose help
+**Cause:** an engine older than `v0.43.0-beta.6` stores a function block's
+description and help text in `varchar(255)` columns, and the `0.2.0-beta.*` worker ships a block whose help
 text is longer. That insert fails, the worker gives up and exits. The discovery
 block registers before the failing one, so `wait_ready` passes — and the engine
 keeps listing the dead worker as online.
 
-**Fix:** once #402 is merged and the engine's `develop` image is republished,
-re-pull the engine and restart the stack. The worker pin does **not** need to
-move.
+**Fix:** run an engine at `v0.43.0-beta.6` or later: drop an older
+`NEOPS_ENGINE_TAG`, re-pull the engine and restart the stack. The worker pin
+does **not** need to move.
 
 ```bash
 make local-env-up          # pulls with --policy always
