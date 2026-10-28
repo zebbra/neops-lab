@@ -114,8 +114,8 @@ check against it before `make local-lab-up`.
 
 ## Worker exits ~2 min after start; discovery hangs after `wait_ready`
 
-**Known issue until [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402) is in the engine's
-published `develop` image.**
+**Affects engines older than `v0.43.0-beta.6`**, which lack
+[engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402). The default `develop` image has it.
 
 **Where:** `make local-lab-up` succeeds and `wait_ready` reports an online
 worker, but `make local-lab-discover` sits in `running` and never finishes. The
@@ -130,9 +130,9 @@ text is longer. That insert fails, the worker gives up and exits. The discovery
 block registers before the failing one, so `wait_ready` passes — and the engine
 keeps listing the dead worker as online.
 
-**Fix:** once #402 is merged and the engine's `develop` image is republished,
-re-pull the engine and restart the stack. The worker pin does **not** need to
-move.
+**Fix:** run an engine at `v0.43.0-beta.6` or later: drop an older
+`NEOPS_ENGINE_TAG`, re-pull the engine and restart the stack. The worker pin
+does **not** need to move.
 
 ```bash
 make local-env-up          # pulls with --policy always

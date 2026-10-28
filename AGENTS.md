@@ -140,12 +140,13 @@ Load-bearing and usually not obvious from the code:
 - **`neops/fb` ships inside the worker image**, it is not mounted from here. If
   discovery fails with "Function block … not found", check that the
   `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `neops/fb`.
-  The published `quay.io/zebbra/neops-worker-sdk:develop` carries `neops/fb`
-  but **not** `global_discover_network`; only prerelease `0.2.0-beta.*` builds
-  do, which is why `.env.example` pins one (and why that pin needs moving when
-  the 20-day prerelease expiry removes it — re-check the new tag with `ls
-  neops/fb/base/global/discover_network.py`). Against an engine without
-  https://github.com/zebbra/neops-workflow-engine/pull/402 that worker exits
+  The published `quay.io/zebbra/neops-worker-sdk:develop` carries it, including
+  `global_discover_network`. `.env.example` pins a prerelease `0.2.0-beta.*` to
+  hold the lab on a tested release; that pin needs moving when the 20-day
+  prerelease expiry removes it (re-check the new tag with `ls
+  neops/fb/base/global/discover_network.py`). Against an engine older than
+  `v0.43.0-beta.6`, which lacks
+  https://github.com/zebbra/neops-workflow-engine/pull/402, that worker exits
   ~2 min after start (HTTP 500 registering a long help text). `make -C
   ../neops-worker-sdk-py build-docker` is for exercising a block you are editing.
 - **`gen_clab_topology` emits `"../scenario/devices/frr/set-aliases.sh:…"`** as
