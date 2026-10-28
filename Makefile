@@ -287,6 +287,9 @@ MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$(./lab_token)}; 
 # majorVersion/minorVersion/patchVersion and this variable together.
 DISCOVER_FB := fb.base.neops.io/global_discover_network:0.1.0
 DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.3.0
+# lab_bootstrap publishes this definition before the scenario's others, so the
+# engine's cap on definitions refuses an extra workflow rather than discovery.
+export DISCOVER_WORKFLOW
 
 # Execution parameters for the discovery workflow. Override to discover with a
 # different target form, e.g.
@@ -529,6 +532,7 @@ kind-lab-discover: build-docker-bootstrap scenario-resolve
 	# version was already published with different content — bump the versions in
 	# the YAML and in DISCOVER_WORKFLOW rather than editing a published one.
 	docker run --rm $(KIND_ENGINE_ADD_HOST) $(DOCKER_RUN_FLAGS) -e ENGINE_URL=$(KIND_ENGINE_URL) \
+		-e DISCOVER_WORKFLOW=$(DISCOVER_WORKFLOW) \
 		-v "$(CURDIR)/$(SCENARIO_DIR)/workflows:/workflows:ro" neops-lab-bootstrap:latest
 	# One /32 per device, read live from the Services — see gen_kind_discover_params
 	# for why a summarising CIDR and an in-cluster DNS name are both unusable.

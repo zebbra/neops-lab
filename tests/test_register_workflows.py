@@ -94,8 +94,76 @@ def test_one_unpublishable_document_does_not_hide_the_rest(workflows, monkeypatc
         return path.suffix != ".json"
 
     monkeypatch.setattr(register, "WORKFLOWS_DIR", workflows)
+    # `make test` exports the Makefile's DISCOVER_WORKFLOW; ordering is tested below.
+    monkeypatch.setattr(register, "DISCOVER_WORKFLOW", "")
     monkeypatch.setattr(register, "register_one", register_one)
     monkeypatch.setattr(register, "wait_for_engine", lambda: None)
 
     assert register.main() == 1, "a refused document must fail the bootstrap container"
     assert len(seen) == 3, f"registration stopped after {seen}"
+
+
+DISCOVERY = "wf.lab.neops.io/simple_lab_discovery:1.3.0"
+
+
+@pytest.fixture
+def documents(workflows, monkeypatch):
+    """Stand in for `yaml.safe_load`: each file parses to a document named after it,
+    and the discovery file to the id the Makefile's DISCOVER_WORKFLOW names."""
+
+    def load_document(path):
+        if path.name == "simple-lab-discovery.workflow.yaml":
+            return {
+                "package": "wf.lab.neops.io",
+                "name": "simple_lab_discovery",
+                "majorVersion": 1,
+                "minorVersion": 3,
+                "patchVersion": 0,
+            }
+        return {
+            "package": "wf.lab.neops.io",
+            "name": path.stem,
+            "majorVersion": 1,
+            "minorVersion": 0,
+            "patchVersion": 0,
+        }
+
+    monkeypatch.setattr(register, "load_document", load_document)
+    return register.workflow_files(workflows)
+
+
+def test_discovery_is_published_before_the_rest(documents):
+    """The engine caps how many definitions it holds. When a scenario's
+    workflows exceed the cap, the one refused must not be discovery, which
+    `local-lab-up` waits on and `local-lab-discover` runs."""
+    ordered = register.publish_order(documents, DISCOVERY)
+    assert ordered[0].name == "simple-lab-discovery.workflow.yaml"
+    assert sorted(ordered) == documents, "reordering must neither drop nor duplicate a document"
+
+
+def test_the_rest_keep_their_file_order(documents):
+    ordered = register.publish_order(documents, DISCOVERY)
+    rest = [p for p in documents if p.name != "simple-lab-discovery.workflow.yaml"]
+    assert ordered[1:] == rest
+
+
+@pytest.mark.parametrize("first", ["", "wf.lab.neops.io/simple_lab_discovery:9.9.9"])
+def test_an_unset_or_unmatched_discovery_id_keeps_file_order(documents, first):
+    """Unset outside make; unmatched when the Makefile and the YAML disagree on
+    a version. Neither may stop the documents from being published."""
+    assert register.publish_order(documents, first) == documents
+
+
+def test_the_makefile_names_the_discovery_workflow_the_base_scenario_ships():
+    """The id is matched exactly, version included, so the two must move together."""
+    makefile = (LAB_DIR / "Makefile").read_text()
+    assert f"DISCOVER_WORKFLOW := {DISCOVERY}\n" in makefile
+    text = (LAB_DIR / "scenarios" / "_base" / "workflows" / "simple-lab-discovery.workflow.yaml").read_text()
+    for line in (
+        "package: wf.lab.neops.io",
+        "name: simple_lab_discovery",
+        "majorVersion: 1",
+        "minorVersion: 3",
+        "patchVersion: 0",
+    ):
+        assert f"\n{line}\n" in text, line

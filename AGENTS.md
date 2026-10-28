@@ -63,6 +63,10 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
   them is skipped, and it registers **every** document before failing rather
   than short-circuiting on the first refusal — one unpublishable file must not
   keep the discovery workflow `local-lab-up` waits for off the engine.
+  For the same reason it publishes `DISCOVER_WORKFLOW` (exported by the
+  Makefile) **first**: the engine's license caps its definitions, and the cap
+  must refuse an extra workflow, not discovery. That id is matched with its
+  version, so bumping the discovery YAML means bumping the Makefile with it.
 - Everything generated goes under `generated/` and is git-ignored. Never commit
   it — containerlab mints TLS private keys in there.
 - **Docs live in `docs/`** (shared Zebbra MkDocs tooling, vendored under

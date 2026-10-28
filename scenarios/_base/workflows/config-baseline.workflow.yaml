@@ -1,0 +1,29 @@
+# Config baseline: store each device's current running configuration as the
+# baseline fact that config-drift-check compares against. Re-running it
+# overwrites the baseline. The drift block does the storing (update_baseline)
+# because it normalizes secrets first, so baseline and check see the same text.
+label: config_baseline
+name: config_baseline
+package: wf.lab.neops.io
+majorVersion: 1
+minorVersion: 0
+patchVersion: 0
+seedEntity: device
+type: workflow
+description: "Store the device's running configuration as its baseline config fact."
+
+parameterSchema:
+  type: object
+  properties:
+    baseline_fact_key:
+      type: string
+      description: "Device fact the baseline configuration is stored under."
+      default: config_baseline
+steps:
+  - type: functionBlock
+    label: store_baseline
+    functionBlock: "fb.base.neops.io/network_device_detect_config_drift:0.1.0"
+    runOn: device
+    parameters:
+      baseline_fact_key: "{{ parameters.baseline_fact_key }}"
+      update_baseline: true
