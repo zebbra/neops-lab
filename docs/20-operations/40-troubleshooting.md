@@ -97,7 +97,7 @@ worker starts, registers the blocks it has, and never announces this one;
 `wait_ready` waits for it until the budget runs out.
 
 **Fix:** check what the image actually holds, and fall back to the published
-`develop` tag, a current prerelease `0.3.0-beta.*` tag, or a fresh build of an
+`develop` tag, a `0.3.x` release, or a fresh build of an
 SDK checkout that has it:
 
 ```bash
@@ -107,7 +107,7 @@ echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
 make local-lab-up
 ```
 
-Re-pinning a newer `0.3.0-beta.*` the same way? Run the `discover_network.py`
+Re-pinning another `0.3.x` the same way? Run the `discover_network.py`
 check against it before `make local-lab-up`.
 
 ---
