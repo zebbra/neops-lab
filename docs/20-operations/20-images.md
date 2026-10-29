@@ -77,7 +77,7 @@ The make targets pull the published tags with `--policy always`; the services' `
 !!! warning "Do not pin the preview's `latest`"
     The preview's `latest` is 0.42.1 — below the oldest engine the lab supports — because `latest` only advances on non-prerelease releases. Prerelease tags carry a `quay.expires-after=20d` label and vanish — `0.42.2-beta.3` did, on 2026-09-07 — so a pinned beta stops resolving without warning; `develop` carries no such label.
 
-Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:7-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
+Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:7-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.19.23`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
 
 ## Running a locally-built image
 

@@ -307,6 +307,33 @@ make local-env-init && make local-lab-up && make local-lab-discover
 
 ---
 
+## Search is empty after the CMS image changed its index layout
+
+**Symptom:** device or interface search returns nothing, or `groups.*` searches and acquires fail,
+after pulling a newer CMS image onto an existing `elasticsearch` volume.
+
+**Cause:** a newer neops-core keeps devices and interfaces in one `network` index and joins
+groups and clients through ES|QL lookup indices (which is why the lab runs Elasticsearch 8.19).
+`elastic_index --create` at CMS start creates the new indices empty and leaves the old ones alone,
+so nothing is in them until the rows are written again. The old `devices` and `interfaces` indices
+stay on the volume, unused, until it is pruned.
+
+**Fix:** with no workflow executing (its searches and acquires fail while the indices are
+rebuilt), refill every index from the database:
+
+```bash
+docker compose exec -T cms python manage.py elastic_index --rebuild --force
+```
+
+or start from empty volumes with `make local-env-prune` (below), which also drops the old indices.
+
+**The reverse case:** the first start of 8.19 upgrades the volume in place, and 8.9 cannot read
+it afterwards. Checking out an older revision of this repo, which pins 8.9.2, makes
+`elasticsearch` exit with status 1 on that volume. The index is derived data: run
+`make local-env-prune` and bring the lab up again.
+
+---
+
 ## Nothing works and you want to start over
 
 ```bash
