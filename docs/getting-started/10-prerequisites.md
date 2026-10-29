@@ -34,7 +34,7 @@ Every make target and every command in these docs calls **`./containerlab`**, a 
 Three things follow from the container mode:
 
 - The repo is mounted at the **same absolute path** inside the clab container, because containerlab hands the topology's bind paths to the docker daemon as absolute host paths. On Docker Desktop the checkout must therefore live under a shared path (`/Users`, `/Volumes`, `/private`, `/tmp` by default) and must not contain spaces — `make doctor` checks the mount round-trips.
-- containerlab's convenience entries (`/etc/hosts`, `ssh_config.d`) land inside the ephemeral container, on both hosts. Reach devices with `docker exec <node>` / `docker logs <node>` — the topology sets `prefix: ""`, so node names are container names.
+- containerlab's convenience entries (`/etc/hosts`, `ssh_config.d`) land inside the ephemeral container, on both hosts. Reach devices with `docker exec <LAB_NAME>-<node>` / `docker logs <LAB_NAME>-<node>` (`neops-lab-core-rtr-01` by default) — the topology prefixes node names with the lab name, so two labs never share a container name.
 - On plain Linux the lab runtime dir (`generated/<scenario>/clab/clab-neops-lab/`) is written as root; the launcher chowns it back to you after each run.
 
 Verify with the two-node probe — it confirms the whole chain (docker socket, privileged mode, veth wiring) without pulling the NeOps stack:

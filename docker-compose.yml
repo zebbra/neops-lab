@@ -73,7 +73,7 @@ services:
         python manage.py runserver 0.0.0.0:8000
       "
     ports:
-      - "8001:8000"
+      - "${LAB_CMS_PORT:?set it or drive compose through make}:8000"
     healthcheck:
       # Using -L to follow redirects just in case /admin/ forwards to a login URL
       test: [ "CMD-SHELL", "curl -f -L http://localhost:8000/admin/ || exit 1" ]
@@ -104,15 +104,15 @@ services:
       # SPKI PEM the engine verifies Neops RS256 tokens against — the public half
       # of the keypair `make lab-jwt` mints for the CMS, mounted below.
       - NEOPS_JWT_PUBLIC_KEY_PATH=/etc/neops/jwt/public.pem
-      # Exact browser origins allowed to call this engine: the web client on
-      # :8080 and the monitor app on :3031.
-      - NEOPS_CORS_ORIGINS=http://localhost:8080,http://localhost:3031
+      # Exact browser origins allowed to call this engine: the web client and
+      # the monitor app, on the host ports they are published on.
+      - NEOPS_CORS_ORIGINS=http://localhost:${LAB_WEB_PORT:?set it or drive compose through make},http://localhost:${LAB_MONITOR_PORT:?set it or drive compose through make}
     env_file:
       - cms_api_key.env
     volumes:
       - ./cms/jwt/public.pem:/etc/neops/jwt/public.pem:ro
     ports:
-      - "3030:3030"
+      - "${LAB_ENGINE_PORT:?set it or drive compose through make}:3030"
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,15 +134,16 @@ services:
       # devDependencies under NODE_ENV=production.
       - NODE_ENV=development
     ports:
-      - "3031:5173"
+      - "${LAB_MONITOR_PORT:?set it or drive compose through make}:5173"
     depends_on:
       workflow_engine:
         condition: service_healthy
     working_dir: /app/rest/monitor-app
     volumes:
-      # The monitor reads window.__NEOPS_CONFIG__ from this file; see invariant
+      # The monitor reads window.__NEOPS_CONFIG__ from this file, which
+      # `make monitor-config` writes from the published ports; see invariant
       # 21 in docs/60-development/20-invariants.md.
-      - ./monitor/config.js:/app/rest/monitor-app/static/config.js:ro
+      - ./generated/monitor/config.js:/app/rest/monitor-app/static/config.js:ro
     command: >
       sh -c "npm install && npm run dev"
 
@@ -156,14 +157,14 @@ services:
     environment:
       # Read by the entrypoint's `FRONTEND_*` env-injection. Browser-relative,
       # so the values point at host-published ports, not in-network names.
-      FRONTEND_GRAPHQL_ENDPOINT: "http://localhost:8001/graphql"
-      FRONTEND_FILEAPI_ENDPOINT: "http://localhost:8001/"
+      FRONTEND_GRAPHQL_ENDPOINT: "http://localhost:${LAB_CMS_PORT:?set it or drive compose through make}/graphql"
+      FRONTEND_FILEAPI_ENDPOINT: "http://localhost:${LAB_CMS_PORT:?set it or drive compose through make}/"
       FRONTEND_DEVMODE: "true"
       # Workflow manager (monitor app) served by the workflow-engine-client
-      # service above, published on host port 3031.
-      FRONTEND_WORKFLOW_MANAGER_URL: "http://localhost:3031"
+      # service above, published on host port LAB_MONITOR_PORT.
+      FRONTEND_WORKFLOW_MANAGER_URL: "http://localhost:${LAB_MONITOR_PORT:?set it or drive compose through make}"
     ports:
-      - "8080:8080"
+      - "${LAB_WEB_PORT:?set it or drive compose through make}:8080"
     depends_on:
       cms:
         condition: service_healthy
@@ -241,10 +242,10 @@ volumes:
 networks:
   # Fixed subnet so no network in this project is auto-allocated: docker hands
   # auto-allocated networks the next free /16 from its 172.16/12 pool, and on a
-  # host with many projects that can be 172.30.0.0/16 — which blocks lab-net's
-  # fixed 172.30.0.0/24 with "Pool overlaps". With every subnet pinned, the
+  # host with many projects that can be the /16 holding LAB_SUBNET — which
+  # blocks lab-net with "Pool overlaps". With every subnet pinned, the
   # allocator never competes with the lab.
   default:
     ipam:
       config:
-        - subnet: 172.30.1.0/24
+        - subnet: ${LAB_COMPOSE_SUBNET:?set it or drive compose through make}

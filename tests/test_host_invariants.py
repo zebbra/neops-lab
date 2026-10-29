@@ -16,18 +16,23 @@ def _generator_constant(name):
     raise AssertionError(f"{name} not found in gen_clab_topology")
 
 
-def test_compose_subnets_match_generator():
-    """Every project network carries a fixed subnet agreeing with the generator.
+def test_compose_subnets_come_from_the_makefile():
+    """Every project network carries a fixed subnet, set by the Makefile.
 
     docker auto-allocates subnet-less networks from its 172.16/12 pool, which
     can collide with lab-net's fixed /24 on a busy host; pinning every subnet
-    removes the allocator from the picture.
+    removes the allocator from the picture. The default device subnet is the
+    one the topologies are written in, so a default lab moves no address.
     """
-    lab_subnet = _generator_constant("LAB_SUBNET")
     worker = (LAB_DIR / "docker-compose.worker.yml").read_text()
-    assert f"subnet: {lab_subnet}" in worker
+    assert "subnet: ${LAB_SUBNET:?" in worker
+    assert "name: ${LAB_NET:?" in worker
     base = (LAB_DIR / "docker-compose.yml").read_text()
-    assert "subnet: 172.30.1.0/24" in base
+    assert "subnet: ${LAB_COMPOSE_SUBNET:?" in base
+    makefile = (LAB_DIR / "Makefile").read_text()
+    assert f"LAB_SUBNET ?= {_generator_constant('TOPOLOGY_SUBNET')}" in makefile
+    for name in ("LAB_NAME", "LAB_NET", "LAB_SUBNET", "LAB_COMPOSE_SUBNET"):
+        assert re.search(rf"^export .*\b{name}\b", makefile, re.MULTILINE), f"the Makefile does not export {name}"
 
 
 def test_compose_mounts_the_resolved_scenario_tree():

@@ -34,6 +34,33 @@ CLAB_DEPLOYED_MARKER := generated/.deployed-scenario-clab
 KIND_DEPLOYED_MARKER := generated/.deployed-scenario-kind
 SCENARIO_DIR := generated/$(SCENARIO)/scenario
 GEN_DIR := generated/$(SCENARIO)
+# The discovery parameters in the deployed LAB_SUBNET, written by gen_clab_topology.
+DEPLOYED_PARAMS_DIR := $(GEN_DIR)/workflow-execution-parameters
+
+# Where this lab runs. These are the only defaults: the compose files and
+# gen_clab_topology fail when one is unset. Override them to run a second lab
+# beside one that already holds the ports or the subnets, e.g.
+#   make full-e2e-test LAB_NAME=lab-b LAB_NET=lab-b-net LAB_SUBNET=10.131.0.0/24 \
+#     LAB_COMPOSE_SUBNET=10.131.1.0/24 LAB_CMS_PORT=28001 LAB_ENGINE_PORT=23030 \
+#     LAB_MONITOR_PORT=23031 LAB_WEB_PORT=28080
+# with COMPOSE_PROJECT_NAME set in that checkout's .env. LAB_SUBNET must be at
+# least as large as the /24 the topologies are written in; each device keeps
+# its host offset in it.
+LAB_NAME ?= neops-lab
+LAB_NET ?= lab-net
+LAB_SUBNET ?= 172.30.0.0/24
+LAB_COMPOSE_SUBNET ?= 172.30.1.0/24
+LAB_CMS_PORT ?= 8001
+LAB_ENGINE_PORT ?= 3030
+LAB_MONITOR_PORT ?= 3031
+LAB_WEB_PORT ?= 8080
+export LAB_NAME LAB_NET LAB_SUBNET LAB_COMPOSE_SUBNET LAB_CMS_PORT LAB_ENGINE_PORT LAB_MONITOR_PORT LAB_WEB_PORT
+LAB_CMS_URL := http://localhost:$(LAB_CMS_PORT)
+LAB_ENGINE_URL := http://localhost:$(LAB_ENGINE_PORT)
+# The host scripts reach this lab's CMS and engine, not whatever answers on
+# their built-in default ports.
+LAB_CMS_ENV := CMS_URL=$(LAB_CMS_URL)
+LAB_ENGINE_ARG := --engine-url $(LAB_ENGINE_URL)
 
 # Wait budgets (seconds). Defaults suit a native Linux host; a Mac booting the
 # SR Linux nodes against a shared VM raises these rather than removing a wait.
@@ -172,7 +199,13 @@ lab-env:
 		cp .env.example .env && echo "created .env from .env.example"; \
 	fi
 
-local-env-init: lab-jwt scenario-resolve
+# The monitor app's runtime config, written from the published ports so the
+# monitor calls this lab's engine and trusts this lab's web client.
+monitor-config:
+	@mkdir -p generated/monitor
+	@printf "%s\n" "window.__NEOPS_CONFIG__ = { webclientOrigin: 'http://localhost:$(LAB_WEB_PORT)', apiBaseUrl: '$(LAB_ENGINE_URL)' }" > generated/monitor/config.js
+
+local-env-init: lab-jwt scenario-resolve monitor-config
 	touch cms_api_key.env
 	# Refresh the published images. `--ignore-pull-failures` is load-bearing: if
 	# you override a service with a locally-built tag
@@ -210,14 +243,14 @@ local-env-init: lab-jwt scenario-resolve
 	# grant, that stale (empty) cache hides the Global scope from the web client
 	# for up to 10 min ("scope not available when first used"). Granting first
 	# means the first neops query caches the grant.
-	./apply_cms_config
+	$(LAB_CMS_ENV) ./apply_cms_config
 	# Now that cms_api_key.env holds a real key, bring up the rest of the stack.
 	# env_file changes don't trigger recreate on their own, so a re-init over an
 	# engine left from a previous run needs the force to pick up the new token.
 	docker compose up -d --force-recreate workflow_engine
 	docker compose up -d
 
-local-env-up: lab-jwt scenario-resolve
+local-env-up: lab-jwt scenario-resolve monitor-config
 	@if [ ! -f cms_api_key.env ]; then echo "Error: cms_api_key.env file not found. Please run 'make local-env-init' first."; exit 1; fi
 	# See the note in local-env-init about --policy always / --ignore-pull-failures.
 	docker compose pull --policy always --ignore-pull-failures
@@ -274,7 +307,7 @@ local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_PA
 # logins per IP (NEOPS_LOCAL_LOGIN_RATE_LIMIT, default 5/m) and every lab call
 # leaves this host from the same address. make echoes recipe text, so the value
 # stays out of the terminal.
-MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$(./lab_token)}; \
+MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$($(LAB_CMS_ENV) ./lab_token)}; \
 	export NEOPS_ENGINE_TOKEN; \
 	test -n "$$NEOPS_ENGINE_TOKEN" || { echo "error: minted an empty engine token; run ./lab_token to see why"; exit 1; }
 
@@ -290,10 +323,12 @@ DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.3.0
 
 # Execution parameters for the discovery workflow. Override to discover with a
 # different target form, e.g.
-#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-autodetect.json
-#   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-subnet.json
+#   make local-lab-discover DISCOVER_PARAMS=$(DEPLOYED_PARAMS_DIR)/discover-params-autodetect.json
+#   make local-lab-discover DISCOVER_PARAMS=$(DEPLOYED_PARAMS_DIR)/discover-params-subnet.json
 #   make local-lab-discover DISCOVER_PARAMS=$(SCENARIO_SRC)/workflow-execution-parameters/discover-params-mixed.json
-DISCOVER_PARAMS ?= $(SCENARIO_SRC)/workflow-execution-parameters/discover-params.json
+# The mixed file is hand-written in the topology's subnet, so it only fits the
+# default LAB_SUBNET.
+DISCOVER_PARAMS ?= $(DEPLOYED_PARAMS_DIR)/discover-params.json
 
 # Grant profile `make lab-grant` applies: author | operator | admin.
 PROFILE ?= operator
@@ -328,7 +363,7 @@ clab-suid:
 		echo "         then re-login for the group to apply."; \
 	fi
 
-local-lab-up: build-docker lab-jwt lab-env scenario-resolve
+local-lab-up: build-docker lab-jwt lab-env scenario-resolve monitor-config
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
 	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || true); \
 	if [ -n "$$deployed" ] && [ "$$deployed" != "$(SCENARIO)" ]; then \
@@ -382,7 +417,7 @@ local-lab-up: build-docker lab-jwt lab-env scenario-resolve
 	# worker with "Function block ... not found".
 	@set -e; \
 	docker compose up -d --wait cms; \
-	./apply_cms_config; \
+	$(LAB_CMS_ENV) ./apply_cms_config; \
 	$(MINT_ENGINE_TOKEN); \
 	docker compose up -d; \
 	echo "Waiting for workflow registration (lab_bootstrap) to finish..."; \
@@ -392,7 +427,7 @@ local-lab-up: build-docker lab-jwt lab-env scenario-resolve
 	unset NEOPS_ENGINE_TOKEN; \
 	$(MINT_ENGINE_TOKEN); \
 	echo "Waiting for the worker to register its function blocks..."; \
-	./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
+	./wait_ready $(LAB_ENGINE_ARG) --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
 	# Devices (esp. Nokia SR Linux) boot slower than `containerlab deploy` returns.
 	# Poll from *inside* the lab network (the worker is on lab-net), not the host.
 	# On macOS/Docker Desktop the host has no route to the lab-net bridge IPs
@@ -401,15 +436,15 @@ local-lab-up: build-docker lab-jwt lab-env scenario-resolve
 	# discovery actually uses — works on every platform.
 	# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix here.
 	@echo "Waiting for all devices to accept SSH..."
-	@docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT)
+	@docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT) --params lab/$(DEPLOYED_PARAMS_DIR)/discover-params.json
 	@echo "$(SCENARIO)" > $(CLAB_DEPLOYED_MARKER)
 	@echo ""
 	@echo "Lab is up (scenario: $(SCENARIO), real links)."
-	@echo "  Web client:   http://localhost:8080/"
-	@echo "  Engine UI:    http://localhost:3031"
-	@echo "  Engine API:   http://localhost:3030/"
-	@echo "  CMS admin:    http://localhost:8001/admin/ (neops / neops)"
-	@echo "  CMS GraphQL:  http://localhost:8001/graphql"
+	@echo "  Web client:   http://localhost:$(LAB_WEB_PORT)/"
+	@echo "  Engine UI:    http://localhost:$(LAB_MONITOR_PORT)"
+	@echo "  Engine API:   $(LAB_ENGINE_URL)/"
+	@echo "  CMS admin:    $(LAB_CMS_URL)/admin/ (neops / neops)"
+	@echo "  CMS GraphQL:  $(LAB_CMS_URL)/graphql"
 	@echo "  Run 'make local-lab-discover' to populate the CMS (15 devices with interfaces)."
 
 local-lab-down:
@@ -418,7 +453,7 @@ local-lab-down:
 	# tearing down with the wrong one strands the difference. The marker wins
 	# when it exists; $(SCENARIO) is the fallback for a lab deployed before it.
 	# --cleanup removes the per-lab runtime dir
-	# (generated/<scenario>/clab/clab-neops-lab); the leading `-` lets `make`
+	# (generated/<scenario>/clab/clab-$(LAB_NAME)); the leading `-` lets `make`
 	# continue if no lab is deployed.
 	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || echo "$(SCENARIO)"); \
 	echo "$(CONTAINERLAB) destroy -t generated/$$deployed/clab/neops-lab.clab.json --cleanup"; \
@@ -436,7 +471,7 @@ full-e2e-test:
 	$(MAKE) local-lab-up
 	$(MAKE) local-lab-discover
 
-local-lab-discover: scenario-resolve
+local-lab-discover: generate
 	# Always wait for the known lab devices, not the requested discovery input:
 	# a subnet target also contains unused addresses which must not block readiness.
 	#
@@ -452,14 +487,14 @@ local-lab-discover: scenario-resolve
 	# an edit to the scenario's cms/permissions.json reaches the engine on the next
 	# target rather than on the next `make apply-cms-config`.
 	@set -e; \
-	./apply_cms_config; \
+	$(LAB_CMS_ENV) ./apply_cms_config; \
 	$(MINT_ENGINE_TOKEN); \
-	./wait_ready --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB); \
-	docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT); \
-	./run_workflow --timeout 900 $(DISCOVER_WORKFLOW) @$(DISCOVER_PARAMS)
+	./wait_ready $(LAB_ENGINE_ARG) --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB); \
+	docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT) --params lab/$(DEPLOYED_PARAMS_DIR)/discover-params.json; \
+	./run_workflow $(LAB_ENGINE_ARG) --timeout 900 $(DISCOVER_WORKFLOW) @$(DISCOVER_PARAMS)
 
 apply-cms-config: scenario-resolve
-	./apply_cms_config
+	$(LAB_CMS_ENV) ./apply_cms_config
 
 # Ad-hoc workflow grant for one role, the same command apply_cms_config runs for
 # every role in the scenario's cms/permissions.json. PROFILE is author | operator | admin.
@@ -565,7 +600,7 @@ kind-lab-cms-config: scenario-resolve
 	./apply_cms_config
 
 .PHONY: build-docker build-docker-frr build-docker-bootstrap doctor lint format typeCheck test py39-check \
-	shell-syntax check lab-jwt lab-env clab-suid \
+	shell-syntax check lab-jwt lab-env clab-suid monitor-config \
 	scenarios scenario-resolve generate \
 	local-env-init local-env-up local-env-down local-env-prune \
 	local-lab-up local-lab-down local-lab-discover local-lab-logs full-e2e-test apply-cms-config lab-grant \

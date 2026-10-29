@@ -52,8 +52,9 @@ services:
 
 networks:
   lab-net:
-    name: lab-net
+    # LAB_NET is the network containerlab attaches the devices to.
+    name: ${LAB_NET:?set it or drive compose through make}
     driver: bridge
     ipam:
       config:
-        - subnet: 172.30.0.0/24
+        - subnet: ${LAB_SUBNET:?set it or drive compose through make}

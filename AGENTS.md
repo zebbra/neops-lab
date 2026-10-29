@@ -208,11 +208,19 @@ Load-bearing and usually not obvious from the code:
   because that deploy can outlast the first. The CMS rate-limits logins to 5/m
   per IP — pass one token to many callers rather than minting per call.
 - **The monitor app's runtime config reaches it only through
-  `monitor/config.js`**, bind-mounted over
+  `generated/monitor/config.js`**, which `make monitor-config` writes from
+  `LAB_WEB_PORT` and `LAB_ENGINE_PORT` and compose bind-mounts over
   `/app/rest/monitor-app/static/config.js`. `WEBCLIENT_ORIGIN` on the service
   does nothing here: the image's entrypoint that reads it runs under nginx, and
-  this service runs the engine image with `npm run dev`. `monitor/` is not
-  scenario data and is deliberately in `docs/.symlinkignore`.
+  this service runs the engine image with `npm run dev`.
+- **Ports, networks and the lab name have one default each, in the Makefile**
+  (`LAB_*`, exported), like `SCENARIO`; the compose files interpolate them with
+  `:?` and `gen_clab_topology` refuses to run without them. Topologies stay
+  written in `TOPOLOGY_SUBNET` (172.30.0.0/24): the generator moves each device
+  into `LAB_SUBNET` at its host offset, and the committed parameter files stay in
+  the topology's subnet while the deployed ones go to
+  `generated/<scenario>/workflow-execution-parameters/`. Node containers are
+  prefixed with `LAB_NAME`, so two labs never share a container name.
 - **Registering devices in the CMS is discovery's job** — the
   `fb.base.neops.io/global_discover_network` block, driven from here by
   `bootstrap/register.py`, `scenarios/_base/workflows/simple-lab-discovery.workflow.yaml`
@@ -276,7 +284,7 @@ Load-bearing and usually not obvious from the code:
   host paths for the daemon, so the path inside must equal the daemon's —
   mounting the repo at `/work` would give every FRR node an empty bind.
   Side effects (`/etc/hosts`, `ssh_config.d`) stay inside the ephemeral clab
-  container; reach devices with `docker exec <node>`.
+  container; reach devices with `docker exec <LAB_NAME>-<node>`.
 
 ## Neops Ecosystem
 

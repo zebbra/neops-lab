@@ -2,16 +2,24 @@
 """Render the containerlab lab from a scenario's topology (stdlib-only, run on the host).
 
 Writes the containerlab topology + device configs under
-`generated/<scenario>/clab/` (git-ignored) and the committed
-`scenarios/<scenario>/workflow-execution-parameters/*.json`. Reuses the
-per-device renderers from the sibling `gen_device_configs`.
+`generated/<scenario>/clab/` (git-ignored), the committed
+`scenarios/<scenario>/workflow-execution-parameters/*.json` in the topology's
+own subnet, and the same parameter files moved into the deployed subnet under
+`generated/<scenario>/workflow-execution-parameters/`. Reuses the per-device
+renderers from the sibling `gen_device_configs`.
+
+The deployment (lab name, mgmt network and its subnet) comes from LAB_NAME,
+LAB_NET and LAB_SUBNET, which the Makefile defaults and exports.
 """
 
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
+import os
 import sys
+from typing import NamedTuple
 
 import labscripts
 
@@ -19,11 +27,39 @@ import labscripts
 # live in is per-scenario.
 PARAM_FILES = ("discover-params.json", "discover-params-autodetect.json", "discover-params-subnet.json")
 
-# The lab management network: containerlab's mgmt block, the /24 discovery
-# target and docker-compose.worker.yml must agree; tests/test_host_invariants.py
-# cross-checks the compose files against these values.
-LAB_NET_NAME = "lab-net"
-LAB_SUBNET = "172.30.0.0/24"
+# The subnet every scenario's topology.json writes its mgmt_ip values in. A
+# deployment in another subnet keeps each device's host offset.
+TOPOLOGY_SUBNET = "172.30.0.0/24"
+
+
+class Deployment(NamedTuple):
+    """Where one lab runs: its containerlab name and its mgmt network."""
+
+    name: str
+    network: str
+    subnet: str
+
+
+def deployment_from_env() -> Deployment:
+    """Read the deployment the Makefile exports; an unset value is an error, not a guess."""
+    missing = [key for key in ("LAB_NAME", "LAB_NET", "LAB_SUBNET") if not os.environ.get(key)]
+    if missing:
+        raise SystemExit(f"set {', '.join(missing)} or drive this through make")
+    return Deployment(os.environ["LAB_NAME"], os.environ["LAB_NET"], os.environ["LAB_SUBNET"])
+
+
+def relocate(devices: dict, subnet: str) -> dict:
+    """Return the devices with each mgmt_ip moved from TOPOLOGY_SUBNET into `subnet`."""
+    source = ipaddress.ip_network(TOPOLOGY_SUBNET)
+    target = ipaddress.ip_network(subnet)
+    if target.prefixlen > source.prefixlen:
+        raise ValueError(f"LAB_SUBNET {subnet} is smaller than the topology's {TOPOLOGY_SUBNET}")
+    moved = {}
+    for host, dev in devices.items():
+        offset = int(ipaddress.ip_address(dev["mgmt_ip"])) - int(source.network_address)
+        moved[host] = {**dev, "mgmt_ip": str(target.network_address + offset)}
+    return moved
+
 
 # Reuse the per-device render helpers from the extension-less sibling module.
 gen_device_configs = labscripts.load("gen_device_configs")
@@ -45,6 +81,10 @@ def scenario_paths(scenario: str) -> dict:
         "clab_file": gen_device_configs.resolve_scenario.output_dir(scenario) / "clab" / "neops-lab.clab.json",
         "params": {
             name: gen_device_configs.resolve_scenario.source_dir(scenario) / "workflow-execution-parameters" / name
+            for name in PARAM_FILES
+        },
+        "deployed_params": {
+            name: gen_device_configs.resolve_scenario.output_dir(scenario) / "workflow-execution-parameters" / name
             for name in PARAM_FILES
         },
     }
@@ -141,8 +181,12 @@ def build_links(devices: dict) -> tuple[list, list]:
     return veth_links, dummy_links
 
 
-def render_clab(devices: dict) -> dict:
-    """Render the full containerlab topology document."""
+def render_clab(devices: dict, deployment: Deployment) -> dict:
+    """Render the full containerlab topology document.
+
+    Nodes are prefixed with the lab name, so two labs on one host never share a
+    container name.
+    """
     nodes: dict = {}
     for host, dev in devices.items():
         vendor = dev["vendor"]
@@ -172,9 +216,9 @@ def render_clab(devices: dict) -> dict:
     veth_links, dummy_links = build_links(devices)
 
     return {
-        "name": "neops-lab",
-        "prefix": "",
-        "mgmt": {"network": LAB_NET_NAME, "ipv4-subnet": LAB_SUBNET},
+        "name": deployment.name,
+        "prefix": "__lab-name",
+        "mgmt": {"network": deployment.network, "ipv4-subnet": deployment.subnet},
         "topology": {
             "kinds": {
                 "linux": {"image": "neops-lab-frr:latest"},
@@ -208,13 +252,13 @@ def render_autodetect_params(devices: dict) -> dict:
     return {"subnets": subnets, "credentials": _credentials(devices)}
 
 
-def render_subnet_params(devices: dict) -> dict:
+def render_subnet_params(devices: dict, subnet: str = TOPOLOGY_SUBNET) -> dict:
     """One subnet target for the complete lab management network.
 
     The credentials sit on the subnet here rather than on the document, because
     a wide prefix carries no platform to scope them against.
     """
-    return {"subnets": [{"cidr": LAB_SUBNET, "credentials": _credentials(devices)}]}
+    return {"subnets": [{"cidr": subnet, "credentials": _credentials(devices)}]}
 
 
 def _credentials(devices: dict, scoped: bool = False) -> list:
@@ -261,6 +305,12 @@ def _dump_subnet_params(data: dict) -> str:
     return json.dumps(data, indent=2) + "\n"
 
 
+def _write_params(targets: dict, devices: dict, subnet: str) -> None:
+    _write(targets["discover-params.json"], _dump_discover_params(render_discover_params(devices)))
+    _write(targets["discover-params-autodetect.json"], _dump_discover_params(render_autodetect_params(devices)))
+    _write(targets["discover-params-subnet.json"], _dump_subnet_params(render_subnet_params(devices, subnet)))
+
+
 def parse_args(argv: list) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render the containerlab lab for a scenario.")
     parser.add_argument("--scenario", help="scenario to render; defaults to $SCENARIO")
@@ -292,12 +342,13 @@ def main(argv: list | None = None) -> int:
     _prune_stale(frr_dir, ".iface", frr_hosts)
     _prune_stale(srl_dir, ".cli", srl_hosts)
 
-    clab = render_clab(devices)
+    deployment = deployment_from_env()
+    deployed = relocate(devices, deployment.subnet)
+    clab = render_clab(deployed, deployment)
     _write(paths["clab_file"], json.dumps(clab, indent=2) + "\n")
 
-    _write(paths["params"]["discover-params.json"], _dump_discover_params(render_discover_params(devices)))
-    _write(paths["params"]["discover-params-autodetect.json"], _dump_discover_params(render_autodetect_params(devices)))
-    _write(paths["params"]["discover-params-subnet.json"], _dump_subnet_params(render_subnet_params(devices)))
+    _write_params(paths["params"], devices, TOPOLOGY_SUBNET)
+    _write_params(paths["deployed_params"], deployed, deployment.subnet)
 
     veth_count = sum(1 for link in clab["topology"]["links"] if link.get("type") != "dummy")
     dummy_count = sum(1 for link in clab["topology"]["links"] if link.get("type") == "dummy")
