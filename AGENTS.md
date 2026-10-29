@@ -141,8 +141,8 @@ Load-bearing and usually not obvious from the code:
   discovery fails with "Function block … not found", check that the
   `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `neops/fb`.
   The published `quay.io/zebbra/neops-worker-sdk:develop` carries it, including
-  `global_discover_network`. `.env.example` pins a prerelease `0.2.0-beta.*` to
-  hold the lab on a fixed release; that pin needs moving when the 20-day
+  `global_discover_network`. `.env.example` pins a prerelease `0.3.0-beta.*` to
+  hold the lab on a fixed release, which needs engine `v0.44.0-beta.8` or later, the first with the job leases and rollback forward results that worker relies on; that pin needs moving when the 20-day
   prerelease expiry removes it (re-check the new tag with `ls
   neops/fb/base/global/discover_network.py`). Against an engine older than
   `v0.43.0-beta.6`, which lacks

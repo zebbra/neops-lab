@@ -83,9 +83,10 @@ make doctor
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
 - **A worker image that carries `fb.base.neops.io/global_discover_network:0.1.0`.**
   `quay.io/zebbra/neops-worker-sdk:develop` does, and `.env.example` pins a
-  prerelease `0.2.0-beta.*` to hold the lab on a fixed release. Prerelease
+  prerelease `0.3.0-beta.*` to hold the lab on a fixed release; it needs
+  engine `v0.44.0-beta.8` or later, the first with the job leases and rollback forward results that worker relies on. Prerelease
   tags expire 20 days after they are pushed, so when the pin stops pulling,
-  move it to the newest `0.2.0-beta.*` and run the `discover_network.py` check
+  move it to the newest `0.3.0-beta.*` and run the `discover_network.py` check
   below against it. An engine older than `v0.43.0-beta.6` lacks
   [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402), and
   that worker cannot discover against it — see
