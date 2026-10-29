@@ -108,7 +108,7 @@ Every published image can be swapped for a local tag through an environment vari
 
 | Variable | Default |
 |---|---|
-| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` |
+| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` (`.env.example` pins `NEOPS_ENGINE_TAG=0.44.0`) |
 | `NEOPS_WEB_CLIENT_IMAGE` | `quay.io/zebbra/neops-web-client:develop` |
 | `NEOPS_WORKER_SDK_IMAGE` | `quay.io/zebbra/neops-worker-sdk:develop` (`.env.example` pins `0.3.0`) |
 
