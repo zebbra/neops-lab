@@ -1,0 +1,84 @@
+{
+  "zones": {
+    "zone-a": {
+      "subnet": "172.30.10.0/24",
+      "description": "Site A: reachable only from its own worker"
+    },
+    "zone-b": {
+      "subnet": "172.30.20.0/24",
+      "description": "Site B: reachable only from its own worker"
+    }
+  },
+  "devices": {
+    "core-rtr-01": {
+      "mgmt_ip": "172.30.0.11",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        {
+          "name": "swp1",
+          "to": "core-rtr-02:swp1"
+        }
+      ]
+    },
+    "core-rtr-02": {
+      "mgmt_ip": "172.30.0.12",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        {
+          "name": "swp1",
+          "to": "core-rtr-01:swp1"
+        }
+      ]
+    },
+    "site-a-rtr-01": {
+      "mgmt_ip": "172.30.10.11",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        {
+          "name": "swp1",
+          "to": "site-a-rtr-02:swp1"
+        }
+      ],
+      "zone": "zone-a"
+    },
+    "site-a-rtr-02": {
+      "mgmt_ip": "172.30.10.12",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        {
+          "name": "swp1",
+          "to": "site-a-rtr-01:swp1"
+        }
+      ],
+      "zone": "zone-a"
+    },
+    "site-b-rtr-01": {
+      "mgmt_ip": "172.30.20.11",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        {
+          "name": "swp1",
+          "to": "site-b-rtr-02:swp1"
+        }
+      ],
+      "zone": "zone-b"
+    },
+    "site-b-rtr-02": {
+      "mgmt_ip": "172.30.20.12",
+      "vendor": "frr",
+      "loopback": "lo",
+      "interfaces": [
+        {
+          "name": "swp1",
+          "to": "site-b-rtr-01:swp1"
+        }
+      ],
+      "zone": "zone-b"
+    }
+  }
+}

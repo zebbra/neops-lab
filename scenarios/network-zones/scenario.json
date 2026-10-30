@@ -1,0 +1,12 @@
+{
+  "name": "network-zones",
+  "title": "Network zones",
+  "summary": "Six FRR routers: two on the lab network in default, two in zone-a and two in zone-b, each zone on its own subnet with a worker of its own.",
+  "flavours": ["clab"],
+  "demonstrates": [
+    "routing by network zone: each zone's discovery runs on the worker inside that zone, the only one that can reach its devices",
+    "stamping: discovered devices are recorded in the zone their job ran in",
+    "a central worker serving default beside workers serving one zone each",
+    "zones created in the CMS before any zone worker starts"
+  ]
+}

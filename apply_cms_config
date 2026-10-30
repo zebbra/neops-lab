@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Bootstraps the `neops` user with full CMS permissions and configures the
-# `Global` scope (visibility, table columns, drill-down, dashboard).
+# `Global` scope (visibility, table columns, drill-down, dashboard). A scenario
+# whose topology declares network zones gets them created here too.
 #
 # Why the scope is named `Global` (capital G):
 #   The neops-cms-free image seeds a default scope named `Global` on every CMS
@@ -222,8 +223,9 @@ import os
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command, get_commands
+from neops.core.auth.models import PermissionElement
 from neops.core.models import Scope
-from neops.enterprise.permissions.permissions_simple.models import RolePermission, RoleScope
+from neops.enterprise.permissions.permissions_simple.models import RolePermission, RolePermissionElement, RoleScope
 
 config = json.loads(base64.b64decode(os.environ["PERMISSIONS"]).decode("utf-8"))
 
@@ -255,6 +257,22 @@ for username, role_names in config["users"].items():
         user.roles.add(roles[role_name])
     print(f"  user: {username!r} roles={sorted(role_names)} created={created}")
 
+# A role's default_permission does not reach a permission element, which falls
+# back to its own default, so a write on one is granted explicitly. An element
+# this CMS image does not register yet is skipped. Additive, like the workflow
+# grants below.
+FLAG_BITS = {"read": 1, "execute": 2, "write": 4}
+for role_name, elements in config.get("element_grants", {}).items():
+    for element_name, flag in elements.items():
+        element = PermissionElement.objects.filter(name=element_name).first()
+        if element is None:
+            print(f"  element {element_name!r} is absent from this CMS image; {role_name}'s grant skipped")
+            continue
+        grant, _ = RolePermissionElement.objects.get_or_create(role=roles[role_name], permission_element=element)
+        grant.permission = int(grant.permission) | FLAG_BITS[flag]
+        grant.save()
+        print(f"  role->element: {role_name} -> {element_name} {flag} (stored {int(grant.permission)})")
+
 print("")
 # grant_workflow_permissions ships with CMS images carrying neops-core's
 # workflow permission elements. Earlier images raise CommandError from
@@ -266,6 +284,40 @@ if "grant_workflow_permissions" in get_commands():
 else:
     print("  grant_workflow_permissions is absent from this CMS image; workflow grants skipped")
 PYSCRIPT
+
+# The scenario's network zones, read from the RESOLVED topology; most scenarios
+# declare none. A zone's worker is refused while its zone is missing from the
+# CMS, and the targets run this script before `docker compose up -d` starts any
+# worker, so the zones exist first. Host python3 extracts them, as it runs the
+# GraphQL step below.
+ZONES=$(python3 -c '
+import base64, json, sys
+zones = json.load(sys.stdin).get("zones") or {}
+print(base64.b64encode(json.dumps(zones).encode()).decode() if zones else "")
+' < "${SCENARIO_DIR}/topology.json")
+if [ -n "$ZONES" ]; then
+    echo
+    echo "==> Seeding network zones from ${SCENARIO_DIR}/topology.json via manage.py shell"
+    $CMS_EXEC env ZONES="$ZONES" ./manage.py shell <<'PYSCRIPT'
+import base64
+import json
+import os
+
+try:
+    from neops.core.models import NetworkZone
+except ImportError:
+    raise SystemExit(
+        "This CMS image has no network zones; a scenario declaring zones needs neops-core 2.4.0 "
+        "or later (set NEOPS_CMS_IMAGE)."
+    )
+
+for name, spec in json.loads(base64.b64decode(os.environ["ZONES"]).decode("utf-8")).items():
+    zone, created = NetworkZone.objects.get_or_create(name=name, defaults={"description": spec.get("description", "")})
+    zone.description = spec.get("description", "")
+    zone.save()
+    print(f"  zone: {zone.name!r} (id={zone.id}) created={created}")
+PYSCRIPT
+fi
 
 # Resolve the scope id via the ORM (direct DB, no permission filter). We must
 # NOT discover it through the permission-filtered GraphQL `{ scopes }` query:

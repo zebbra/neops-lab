@@ -36,6 +36,19 @@ SCENARIO_DIR := generated/$(SCENARIO)/scenario
 GEN_DIR := generated/$(SCENARIO)
 # The discovery parameters in the deployed LAB_SUBNET, written by gen_clab_topology.
 DEPLOYED_PARAMS_DIR := $(GEN_DIR)/workflow-execution-parameters
+# A scenario with network zones also gets one parameter file per zone, named
+# after it, and one containerlab topology per zone beside the default one.
+ZONE_PARAMS_DIR := $(DEPLOYED_PARAMS_DIR)/zones
+CLAB_DIR := $(GEN_DIR)/clab
+# What a lab target reads of the zones, at the moment its recipe starts, so
+# after its `generate` prerequisite wrote them: the zone names, the compose
+# service of each zone's worker (gen_clab_topology's zone_worker names it the
+# same way), and the zones wait_ready checks. Once zones exist, default needs
+# an online worker of its own too.
+ZONE_NAMES = $(shell ls $(ZONE_PARAMS_DIR) 2>/dev/null | sed -n 's/\.json$$//p')
+zone_worker = worker-$(1)
+ZONE_WORKERS = $(foreach zone,$(ZONE_NAMES),$(call zone_worker,$(zone)))
+ZONE_READY_ARGS = $(if $(ZONE_NAMES),$(foreach zone,default $(ZONE_NAMES),--zone $(zone)))
 
 # Where this lab runs. These are the only defaults: the compose files and
 # gen_clab_topology fail when one is unset. Override them to run a second lab
@@ -296,7 +309,12 @@ generate: scenario-resolve
 # separated). The export is scoped to the lab targets so `local-env-*` keep
 # using the base docker-compose.yml only.
 LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml
-local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_FILE := $(LAB_COMPOSE_FILES)
+# A scenario with network zones adds the overlay gen_clab_topology writes: one
+# worker and one network per zone. local-lab-down takes the deployed scenario's.
+zone_compose = $(shell test -f generated/$(1)/compose/zones.yml && echo :generated/$(1)/compose/zones.yml)
+CLAB_DEPLOYED_SCENARIO = $(or $(shell cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null),$(SCENARIO))
+local-lab-up local-lab-discover local-lab-logs: export COMPOSE_FILE = $(LAB_COMPOSE_FILES)$(call zone_compose,$(SCENARIO))
+local-lab-down: export COMPOSE_FILE = $(LAB_COMPOSE_FILES)$(call zone_compose,$(CLAB_DEPLOYED_SCENARIO))
 local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_PATH_SEPARATOR := :
 
 # Whatever NEOPS_AUTHZ_MODE the engine runs in, run_workflow, wait_ready and the
@@ -318,8 +336,18 @@ MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$($(LAB_CMS_ENV) 
 # The version must match scenarios/_base/workflows/simple-lab-discovery.workflow.yaml, and
 # published versions are immutable: editing that file means bumping its
 # majorVersion/minorVersion/patchVersion and this variable together.
-DISCOVER_FB := fb.base.neops.io/global_discover_network:0.1.0
-DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.3.0
+DISCOVER_FB := fb.base.neops.io/global_discover_network:0.2.0
+DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.4.0
+# The discovery a scenario with network zones runs once per zone, in that zone.
+# It ships with such a scenario (scenarios/network-zones/workflows/), under the
+# same immutability rule.
+ZONE_DISCOVER_WORKFLOW := wf.lab.neops.io/zone_discovery:1.0.0
+
+# wait_devices polls from inside a worker on the devices' network, never from
+# the host: on macOS/Docker Desktop the host has no route to the lab bridges.
+# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix.
+WAIT_DEVICES = docker compose exec -T -e SCENARIO=$(SCENARIO) $(1) python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT) --params lab/$(2)
+WAIT_ZONE_DEVICES = $(foreach zone,$(ZONE_NAMES),$(call WAIT_DEVICES,$(call zone_worker,$(zone)),$(ZONE_PARAMS_DIR)/$(zone).json);)
 
 # Execution parameters for the discovery workflow. Override to discover with a
 # different target form, e.g.
@@ -332,9 +360,6 @@ DISCOVER_PARAMS ?= $(DEPLOYED_PARAMS_DIR)/discover-params.json
 
 # Grant profile `make lab-grant` applies: author | operator | admin.
 PROFILE ?= operator
-
-# containerlab topology (generated from the scenario's topology.json).
-CLAB_TOPO := $(GEN_DIR)/clab/neops-lab.clab.json
 
 # containerlab needs root to create netns/veths. Rather than sudo-ing every lab
 # target (which would prompt for a password in the middle of `local-lab-up`),
@@ -363,7 +388,7 @@ clab-suid:
 		echo "         then re-login for the group to apply."; \
 	fi
 
-local-lab-up: build-docker lab-jwt lab-env scenario-resolve monitor-config
+local-lab-up: build-docker lab-jwt lab-env generate monitor-config
 	@if [ ! -f cms_api_key.env ]; then echo "Error: run 'make local-env-init' first."; exit 1; fi
 	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || true); \
 	if [ -n "$$deployed" ] && [ "$$deployed" != "$(SCENARIO)" ]; then \
@@ -373,8 +398,6 @@ local-lab-up: build-docker lab-jwt lab-env scenario-resolve monitor-config
 		echo "       '$$deployed' devices absent from '$(SCENARIO)' would keep running."; \
 		exit 1; \
 	fi
-	# Generate the containerlab topology + per-device configs from the scenario.
-	@./gen_clab_topology
 	# Refresh the worker image: the local-env-* pulls run with the base compose
 	# file, which does not include the worker service.
 	docker compose pull --policy always --ignore-pull-failures worker
@@ -391,7 +414,8 @@ local-lab-up: build-docker lab-jwt lab-env scenario-resolve monitor-config
 	# the grants in the scenario's cms/permissions.json have to be in the CMS first.
 	#
 	# Base stack + worker + bootstrap. This creates the `lab-net` network that
-	# containerlab attaches the devices to, and registers the workflow definitions.
+	# containerlab attaches the devices to (and each zone's network and worker,
+	# for a scenario with zones), and registers the workflow definitions.
 	# `up -d` returns once containers are *Started*, not *Completed*; the one-shot
 	# `lab_bootstrap` container registers the workflow definitions (e.g.
 	# simple_lab_discovery) with the engine and then exits.
@@ -400,8 +424,9 @@ local-lab-up: build-docker lab-jwt lab-env scenario-resolve monitor-config
 	# 404s with "Workflow with ID null not found". `wait` blocks until it exits and
 	# propagates its exit code, so a failed registration fails this target.
 	#
-	# Deploy the 15 devices with REAL point-to-point wiring onto lab-net. SR Linux
-	# boots slowly, so deploy early — before waiting on device SSH below.
+	# Deploy the devices with REAL point-to-point wiring onto lab-net, one
+	# topology per zone onto that zone's network. SR Linux boots slowly, so
+	# deploy early — before waiting on device SSH below.
 	#
 	# That deploy runs for minutes on a slow host and a token lasts 15 minutes, so
 	# the wait below runs on a freshly minted one; `wait_ready` stops on a 401.
@@ -414,7 +439,8 @@ local-lab-up: build-docker lab-jwt lab-env scenario-resolve monitor-config
 	# The worker registers its function blocks with the engine asynchronously
 	# after its container starts. Block until an online worker exists so the
 	# "Lab is up" banner is honest and `local-lab-discover` won't race the
-	# worker with "Function block ... not found".
+	# worker with "Function block ... not found". With zones it waits for a
+	# worker in default and in each zone.
 	@set -e; \
 	docker compose up -d --wait cms; \
 	$(LAB_CMS_ENV) ./apply_cms_config; \
@@ -423,20 +449,20 @@ local-lab-up: build-docker lab-jwt lab-env scenario-resolve monitor-config
 	echo "Waiting for workflow registration (lab_bootstrap) to finish..."; \
 	docker compose wait lab_bootstrap; \
 	echo "Deploying containerlab devices (real links)..."; \
-	$(CONTAINERLAB) deploy --reconfigure -t $(CLAB_TOPO); \
+	for topo in $(CLAB_DIR)/*.clab.json; do $(CONTAINERLAB) deploy --reconfigure -t "$$topo"; done; \
 	unset NEOPS_ENGINE_TOKEN; \
 	$(MINT_ENGINE_TOKEN); \
 	echo "Waiting for the worker to register its function blocks..."; \
-	./wait_ready $(LAB_ENGINE_ARG) --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB) || { echo; docker compose ps worker; echo "(worker log tail:)"; docker compose logs --no-log-prefix --tail 15 worker; exit 1; }
+	./wait_ready $(LAB_ENGINE_ARG) --timeout $(WAIT_READY_TIMEOUT) $(ZONE_READY_ARGS) $(DISCOVER_FB) || { echo; docker compose ps -a worker $(ZONE_WORKERS); echo "(worker log tail:)"; docker compose logs --tail 15 worker $(ZONE_WORKERS); exit 1; }
 	# Devices (esp. Nokia SR Linux) boot slower than `containerlab deploy` returns.
-	# Poll from *inside* the lab network (the worker is on lab-net), not the host.
-	# On macOS/Docker Desktop the host has no route to the lab-net bridge IPs
-	# (172.30.0.0/24), so a host-side poll hangs until timeout even though the
-	# devices are healthy. Container-to-container reachability — the same path
-	# discovery actually uses — works on every platform.
-	# The repo is mounted at /app/lab in the worker, hence the `lab/` prefix here.
+	# Poll from *inside* the lab network (the worker is on lab-net; each zone's
+	# worker on its zone's network), not the host. On macOS/Docker Desktop the
+	# host has no route to the lab-net bridge IPs (172.30.0.0/24), so a host-side
+	# poll hangs until timeout even though the devices are healthy.
+	# Container-to-container reachability — the same path discovery actually
+	# uses — works on every platform.
 	@echo "Waiting for all devices to accept SSH..."
-	@docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT) --params lab/$(DEPLOYED_PARAMS_DIR)/discover-params.json
+	@set -e; $(call WAIT_DEVICES,worker,$(DEPLOYED_PARAMS_DIR)/discover-params.json); $(WAIT_ZONE_DEVICES)
 	@echo "$(SCENARIO)" > $(CLAB_DEPLOYED_MARKER)
 	@echo ""
 	@echo "Lab is up (scenario: $(SCENARIO), real links)."
@@ -452,12 +478,15 @@ local-lab-down:
 	# $(SCENARIO): containerlab acts on the nodes the handed topology names, so
 	# tearing down with the wrong one strands the difference. The marker wins
 	# when it exists; $(SCENARIO) is the fallback for a lab deployed before it.
+	# Every topology goes: default's and one per zone.
 	# --cleanup removes the per-lab runtime dir
-	# (generated/<scenario>/clab/clab-$(LAB_NAME)); the leading `-` lets `make`
+	# (generated/<scenario>/clab/clab-$(LAB_NAME)); `|| true` lets `make`
 	# continue if no lab is deployed.
-	@deployed=$$(cat $(CLAB_DEPLOYED_MARKER) 2>/dev/null || echo "$(SCENARIO)"); \
-	echo "$(CONTAINERLAB) destroy -t generated/$$deployed/clab/neops-lab.clab.json --cleanup"; \
-	$(CONTAINERLAB) destroy -t "generated/$$deployed/clab/neops-lab.clab.json" --cleanup || true
+	@for topo in generated/$(CLAB_DEPLOYED_SCENARIO)/clab/*.clab.json; do \
+		test -f "$$topo" || continue; \
+		echo "$(CONTAINERLAB) destroy -t $$topo --cleanup"; \
+		$(CONTAINERLAB) destroy -t "$$topo" --cleanup || true; \
+	done
 	@rm -f $(CLAB_DEPLOYED_MARKER)
 	docker compose down
 
@@ -486,12 +515,18 @@ local-lab-discover: generate
 	# its account holds at login and keeps them for its whole 15-minute life, so
 	# an edit to the scenario's cms/permissions.json reaches the engine on the next
 	# target rather than on the next `make apply-cms-config`.
+	#
+	# A scenario with zones then discovers each zone with its own parameters,
+	# through ZONE_DISCOVER_WORKFLOW, so the job runs on that zone's worker.
 	@set -e; \
 	$(LAB_CMS_ENV) ./apply_cms_config; \
 	$(MINT_ENGINE_TOKEN); \
-	./wait_ready $(LAB_ENGINE_ARG) --timeout $(WAIT_READY_TIMEOUT) $(DISCOVER_FB); \
-	docker compose exec -T -e SCENARIO=$(SCENARIO) worker python3 lab/wait_devices --timeout $(WAIT_DEVICES_TIMEOUT) --params lab/$(DEPLOYED_PARAMS_DIR)/discover-params.json; \
-	./run_workflow $(LAB_ENGINE_ARG) --timeout 900 $(DISCOVER_WORKFLOW) @$(DISCOVER_PARAMS)
+	./wait_ready $(LAB_ENGINE_ARG) --timeout $(WAIT_READY_TIMEOUT) $(ZONE_READY_ARGS) $(DISCOVER_FB); \
+	$(call WAIT_DEVICES,worker,$(DEPLOYED_PARAMS_DIR)/discover-params.json); \
+	$(WAIT_ZONE_DEVICES) \
+	./run_workflow $(LAB_ENGINE_ARG) --timeout 900 $(DISCOVER_WORKFLOW) @$(DISCOVER_PARAMS); \
+	$(foreach zone,$(ZONE_NAMES),./run_workflow $(LAB_ENGINE_ARG) --timeout 900 $(ZONE_DISCOVER_WORKFLOW) @$(ZONE_PARAMS_DIR)/$(zone).json;) \
+	true
 
 apply-cms-config: scenario-resolve
 	$(LAB_CMS_ENV) ./apply_cms_config
@@ -503,7 +538,7 @@ lab-grant:
 	docker compose exec -T cms ./manage.py grant_workflow_permissions --role "$(ROLE)" --profile "$(PROFILE)" --yes
 
 local-lab-logs:
-	docker compose logs -f worker lab_bootstrap
+	docker compose logs -f worker $(ZONE_WORKERS) lab_bootstrap
 
 # -----------------------------------------------------------------------------
 # Kubernetes Lab — the FRR devices as pods in a local KIND cluster.

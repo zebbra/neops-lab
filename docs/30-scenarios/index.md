@@ -30,9 +30,9 @@ five; a scenario that adds a workflow keeps the base's discovery workflow too.
 
 | Path | Inherited from `_base`? |
 | --- | --- |
-| `topology.json` | No — required in every scenario |
+| `topology.json` | No — required in every scenario. Its optional `zones` declare network zones |
 | `scenario.json`, `README.md` | No — required in every scenario |
-| `workflow-execution-parameters/*.json` | No — generated from the topology |
+| `workflow-execution-parameters/*.json`, `…/zones/*.json` | No — generated from the topology |
 | `workflows/*.{yaml,yml,json}` | Yes |
 | `scope/<name>/*.json` | Yes |
 | `devices/frr/frr.conf`, `daemons`, `set-aliases.sh` | Yes |
@@ -121,8 +121,45 @@ FRR baseline ships a `devices/frr/daemons` or `devices/frr/frr.conf` delta —
 there is no second image to build, because the FRR image no longer bakes either
 file.
 
+## Network zones in a scenario
+
+A topology may declare network zones. The lab gives each one what a file
+overlay cannot carry: a management network, a containerlab topology and a
+worker of its own.
+
+```json
+{
+  "zones": {
+    "zone-a": { "subnet": "172.30.10.0/24", "description": "Site A" }
+  },
+  "devices": {
+    "core-rtr-01":   { "mgmt_ip": "172.30.0.11",  "vendor": "frr", "...": "..." },
+    "site-a-rtr-01": { "mgmt_ip": "172.30.10.11", "vendor": "frr", "zone": "zone-a", "...": "..." }
+  }
+}
+```
+
+- A device without `zone` is in `default`, on `lab-net`, and is moved into
+  `LAB_SUBNET` like every other scenario's devices. A zone's devices keep the
+  addresses the topology gives them, inside that zone's `subnet`.
+- Zone names follow the CMS's rule: lowercase letters, digits and hyphens.
+  `default` cannot be declared; it is where a device without a zone already is.
+- No link may cross zones, and no zone subnet may overlap another or the lab's
+  own networks; `tests/test_network_zones.py` checks both. Zone subnets are
+  fixed in the topology, so a second lab beside one with zones needs other
+  zone subnets.
+- `apply_cms_config` creates the zones in the CMS from the resolved topology,
+  before any worker starts; it stops with a message on a CMS image older than
+  neops-core 2.4.0.
+- A scenario with zones runs on containerlab only (`"flavours": ["clab"]`).
+
+[Make targets](../20-operations/10-make-targets.md#network-zones) lists what
+each lab target does with them.
+
 ## The scenarios that ship
 
 --8<-- "../scenarios/wan-and-fabric/README.md"
 
 --8<-- "../scenarios/frr-only/README.md"
+
+--8<-- "../scenarios/network-zones/README.md"

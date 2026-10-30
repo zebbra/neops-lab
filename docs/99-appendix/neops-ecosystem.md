@@ -54,10 +54,10 @@ None of these are verified at build time. All three fail at runtime, in the lab,
 ### The function-block identifier
 
 ```text
-fb.base.neops.io/global_discover_network:0.1.0
+fb.base.neops.io/global_discover_network:0.2.0
 ```
 
-Named in `scenarios/_base/workflows/simple-lab-discovery.workflow.yaml` and in the `Makefile`'s `DISCOVER_FB`. Renaming it in `neops-worker-sdk-py` breaks both, **with no compile-time check**. Symptom: `Function block … not found`.
+Named in `scenarios/_base/workflows/simple-lab-discovery.workflow.yaml`, in `scenarios/network-zones/workflows/zone-discovery.workflow.yaml` and in the `Makefile`'s `DISCOVER_FB`. Renaming or re-versioning it in `neops-worker-sdk-py` breaks all three, **with no compile-time check**. Symptom: `wait_ready` times out, or `Function block … not found`. A published workflow cannot change, so a new block version also moves the workflow's own version and `DISCOVER_WORKFLOW`.
 
 ### The workflow-engine REST API
 
@@ -66,14 +66,14 @@ Used by three things in this repo:
 | Caller | Endpoints |
 |---|---|
 | `bootstrap/register.py` | `GET /health`, `POST /workflow-definition/publish` (legacy `POST /workflow-definition` fallback on 404) |
-| `wait_ready` | `GET /function-blocks/{pkg}/{name}/{version}/workers` |
+| `wait_ready` | `GET /function-blocks/{pkg}/{name}/{version}/workers`; with `--zone`, `GET /workers?populateFunctionBlocks=true` for each worker's `networkZones` |
 | `run_workflow` | `POST /workflow-execution`, `GET /workflow-execution/id/{uuid}` |
 
 `run_workflow` also encodes the engine's terminal-state vocabulary: `completed_ack`, `failed_safe_ack`, `failed_unsafe_ack`. A change to any of these in `neops-workflow-engine` breaks the lab's automation, not just its output.
 
 ### The CMS
 
-`apply_cms_config` depends on the GraphQL mutation `scopesUpsert` **and** on the `neops.core.models` ORM shape it manipulates through `manage.py shell`. It also depends on the image seeding a scope named `Global` and on `init_scopes` re-running on every `manage.py` invocation — which is why its step ordering is load-bearing.
+`apply_cms_config` depends on the GraphQL mutation `scopesUpsert` **and** on the `neops.core.models` ORM shape it manipulates through `manage.py shell`, `NetworkZone` included for a scenario with zones, and on the `network-zones` permission element it grants `lab-admin` write on. It also depends on the image seeding a scope named `Global` and on `init_scopes` re-running on every `manage.py` invocation — which is why its step ordering is load-bearing.
 
 ## Where the lab fits in a change
 

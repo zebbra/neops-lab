@@ -4,7 +4,7 @@ label: simple_lab_discovery
 name: simple_lab_discovery
 package: wf.lab.neops.io
 majorVersion: 1
-minorVersion: 3
+minorVersion: 4
 patchVersion: 0
 seedEntity: global
 type: workflow
@@ -50,7 +50,7 @@ parameterSchema:
 steps:
   - type: functionBlock
     label: discover
-    functionBlock: "fb.base.neops.io/global_discover_network:0.1.0"
+    functionBlock: "fb.base.neops.io/global_discover_network:0.2.0"
     runOn: global
     parameters:
       subnets: "{{ parameters.subnets }}"

@@ -20,7 +20,7 @@ Read-only apart from pulling two small images. It checks the docker daemon and t
 
 | Requirement | Why | Used by |
 |---|---|---|
-| **Docker** + `docker compose` ≥ 2.20 | The whole control plane, the devices, and containerlab itself | everything |
+| **Docker** + `docker compose` ≥ 2.20 (≥ 2.24.4 for the `network-zones` scenario, whose zone workers use `!override`) | The whole control plane, the devices, and containerlab itself | everything |
 | **`openssl`** | Mints the dev RSA keypair the CMS needs for RS256 JWTs (OpenSSL 3 or macOS LibreSSL) | `make lab-jwt` |
 | **`python3` ≥ 3.9** | The host scripts are stdlib-only and import under a stock macOS `/usr/bin/python3` | `resolve_scenario`, `gen_clab_topology`, `run_workflow`, `wait_ready` |
 | **`uv`** | ruff / pyrefly / pytest and the MkDocs tooling | `make check`, `make doc-*` |
