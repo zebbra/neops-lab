@@ -91,11 +91,17 @@ timeout: no online worker for fb.base.neops.io/global_discover_network:0.2.0 wit
 ```
 
 **Cause:** the worker image you pinned does not carry
-`global_discover_network` at `0.2.0`, e.g. the `0.3.0` release `.env.example`
-still pins (it carries `0.1.0`), an old prerelease tag or an old local build. The
+`global_discover_network` at `0.2.0`: a release before `0.4.0` (it carries
+`0.1.0`, and a `.env` written before this release still pins one), an old
+prerelease tag or an old local build. The
 block ships *inside* the image rather than being bind-mounted from here, so the
 worker starts, registers the blocks it has, and never announces this one;
 `wait_ready` waits for it until the budget runs out.
+
+Engine `0.45.0` refuses every worker until it has read the network zones from
+the CMS, so a CMS older than neops-core `2.4.0` gives the same timeout with the
+right worker image; `docker compose logs worker` then shows the refused
+registration. Pin the CMS from `.env.example` too.
 
 **Fix:** check what the image actually holds, and fall back to the published
 `develop` tag, a `0.4.x` release, or a fresh build of an
@@ -134,7 +140,8 @@ make apply-cms-config SCENARIO=network-zones   # creates the zones; stops on a C
 ```
 
 The scenario needs a CMS from neops-core 2.4.0, engine 0.45.0 and worker SDK
-0.4.0 or later; `.env.example` lists those pins, commented out.
+0.4.0 or later, the releases `.env.example` pins; a `.env` written before them
+keeps its older pins.
 
 ---
 

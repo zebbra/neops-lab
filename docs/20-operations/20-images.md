@@ -65,10 +65,10 @@ A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `re
 
 | Service | Default image | Override with |
 |---|---|---|
-| `cms` | `quay.io/zebbra/neops-cms-free:develop` | `NEOPS_CMS_IMAGE` |
-| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public; `.env.example` pins `NEOPS_ENGINE_TAG=0.44.1` to match the worker pin, and lists `0.45.0`, the first with network zones, commented out | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image — e.g. the full licensed `quay.io/zebbra/neops-workflow-engine:develop`) |
+| `cms` | `quay.io/zebbra/neops-cms-free:develop`; `.env.example` pins `2.4.0`, the first neops-core with network zones, which engine `0.45.0` needs | `NEOPS_CMS_IMAGE` |
+| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public; `.env.example` pins `NEOPS_ENGINE_TAG=0.45.0`, the first with network zones, to match the worker pin | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image — e.g. the full licensed `quay.io/zebbra/neops-workflow-engine:develop`) |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
-| `worker` | `quay.io/zebbra/neops-worker-sdk:develop`; `.env.example` pins `0.3.0` to hold a fixed release, and lists `0.4.0`, the first with `global_discover_network:0.2.0`, commented out | `NEOPS_WORKER_SDK_IMAGE` |
+| `worker` | `quay.io/zebbra/neops-worker-sdk:develop`; `.env.example` pins `0.4.0`, the first with `global_discover_network:0.2.0`, to hold a fixed release | `NEOPS_WORKER_SDK_IMAGE` |
 
 The CMS, the web client, the worker and the developer-preview engine are all public, so the default lab pulls with no `docker login`. The **full licensed engine** (`quay.io/zebbra/neops-workflow-engine`) is the one exception.
 

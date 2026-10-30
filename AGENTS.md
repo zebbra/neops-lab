@@ -143,9 +143,10 @@ Load-bearing and usually not obvious from the code:
   `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `neops/fb`.
   The published `quay.io/zebbra/neops-worker-sdk:develop` carries it, including
   `global_discover_network`. Discovery names that block at `0.2.0`, which
-  ships first in SDK `0.4.0` (engine `0.45.0`); `.env.example` still pins
-  `0.3.0`, which carries `0.1.0` only, and lists the new pins commented out
-  until those tags publish (re-check any tag you pin with `grep -n
+  ships first in SDK `0.4.0`, so `.env.example` pins worker `0.4.0` with
+  engine `0.45.0` and CMS `cms-free:2.4.0`, the releases that carry network
+  zones; they move together. An older worker carries `0.1.0` only and
+  `wait_ready` times out (re-check any tag you pin with `grep -n
   "version=(0, 2, 0)" neops/fb/base/global/discover_network.py`). Against an engine older than
   `v0.43.0-beta.6`, which lacks
   https://github.com/zebbra/neops-workflow-engine/pull/402, that worker exits

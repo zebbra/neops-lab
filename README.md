@@ -83,14 +83,14 @@ make doctor
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
 - **A worker image that carries `fb.base.neops.io/global_discover_network:0.2.0`.**
   That version ships first in neops-worker-sdk `0.4.0`, which needs engine
-  `0.45.0`; neither is published yet. `.env.example` still pins worker `0.3.0`
-  and `NEOPS_ENGINE_TAG=0.44.1`, which carry `0.1.0` only, and lists the new
-  pins commented out: until they land, point both at `develop` or at local
-  builds. When you pin another tag, run the `discover_network.py` check below
-  against it.
+  `0.45.0`, which in turn needs a CMS from neops-core `2.4.0`: the engine
+  refuses every worker until it has read the network zones from the CMS.
+  `.env.example` pins all three (`NEOPS_WORKER_SDK_IMAGE`, `NEOPS_ENGINE_TAG`,
+  `NEOPS_CMS_IMAGE`); move them together. When you pin another worker tag,
+  run the `discover_network.py` check below against it.
   `make lab-env` never rewrites an existing `.env`, so a lab set up before this
-  release still pins `0.3.0-beta.2`, which expires on 2026-11-18: set
-  `NEOPS_WORKER_SDK_IMAGE` and `NEOPS_ENGINE_TAG` in `.env` by hand. An engine
+  release keeps its older pins, and an older worker carries the block at
+  `0.1.0` only: copy the three lines from `.env.example` into `.env` by hand. An engine
   older than `v0.43.0-beta.6` lacks
   [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402), and
   that worker cannot discover against it — see
@@ -124,8 +124,8 @@ make doctor
   `export NEOPS_WORKFLOW_ENGINE_IMAGE=quay.io/zebbra/neops-workflow-engine:develop`)
   or run a local build (`neops-workflow-engine:latest`); `NEOPS_ENGINE_TAG=<tag>`
   in `.env` pins just the tag on the preview.
-  `NEOPS_WEB_CLIENT_IMAGE` and `NEOPS_WORKER_SDK_IMAGE` work the same way — see
-  `.env.example`.
+  `NEOPS_CMS_IMAGE`, `NEOPS_WEB_CLIENT_IMAGE` and `NEOPS_WORKER_SDK_IMAGE` work
+  the same way — see `.env.example`.
 - **Host resources**: for `wan-and-fabric` the 5 SR Linux nodes want ≈1.5–2 GB
   each; with Elasticsearch and the control plane that scenario needs roughly
   **14–16 GB** for containers. `SCENARIO=frr-only` drops the SR Linux nodes and

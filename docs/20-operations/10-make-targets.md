@@ -131,7 +131,7 @@ A separate flavour that runs the FRR devices as pods in a local KIND cluster. It
 |---|---|
 | `make doctor` | Host preflight (`./doctor`): docker + RAM, amd64 emulation on Apple Silicon, mount round-trip, subnet overlaps, the clab image, python3. Read-only apart from pulling two images; the fix is printed per failure. |
 | `make lab-jwt` | Mints `cms/jwt/{private,public}.pem` with `openssl genpkey` if absent. Idempotent. A prerequisite of `local-env-init`, `local-env-up` and `local-lab-up`. |
-| `make lab-env` | Copies `.env.example` to `.env` if there is no `.env` yet, so a fresh clone has one to edit. Never overwrites an existing file. The example pins the worker image (`NEOPS_WORKER_SDK_IMAGE`); every other value in it is commented out. A prerequisite of `local-lab-up`. |
+| `make lab-env` | Copies `.env.example` to `.env` if there is no `.env` yet, so a fresh clone has one to edit. Never overwrites an existing file. The example pins the CMS, engine and worker images (`NEOPS_CMS_IMAGE`, `NEOPS_ENGINE_TAG`, `NEOPS_WORKER_SDK_IMAGE`), which move together; every other value in it is commented out. A prerequisite of `local-lab-up`. |
 | `make local-env-init` | One-time per environment: pull (`--policy always`) + start the base stack, resolve the `neops` user and mint the CMS API key into `cms_api_key.env` (fails on an empty key), run `apply_cms_config`, then force-recreate the engine so it picks up the token. |
 | `make local-env-up` | Start the base stack again later. Fails with a clear message if `cms_api_key.env` is missing. |
 | `make local-env-down` | `docker compose down` — stops the base stack, keeps the volumes. |

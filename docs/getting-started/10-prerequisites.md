@@ -78,7 +78,7 @@ default path pulls anonymously:
 
 | Image | Service | |
 |---|---|---|
-| `quay.io/zebbra/neops-cms-free:develop` | `cms` | public |
+| `quay.io/zebbra/neops-cms-free:develop` (`.env.example` pins `2.4.0`) | `cms` | public |
 | `quay.io/zebbra/neops-web-client:develop` | `web_client` | public |
 | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` | `workflow_engine`, `workflow-engine-client` | public — the **developer preview** engine |
 
@@ -108,9 +108,10 @@ Every published image can be swapped for a local tag through an environment vari
 
 | Variable | Default |
 |---|---|
-| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` (`.env.example` pins `NEOPS_ENGINE_TAG=0.44.1`) |
+| `NEOPS_CMS_IMAGE` | `quay.io/zebbra/neops-cms-free:develop` (`.env.example` pins `2.4.0`) |
+| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` (`.env.example` pins `NEOPS_ENGINE_TAG=0.45.0`) |
 | `NEOPS_WEB_CLIENT_IMAGE` | `quay.io/zebbra/neops-web-client:develop` |
-| `NEOPS_WORKER_SDK_IMAGE` | `quay.io/zebbra/neops-worker-sdk:develop` (`.env.example` pins `0.3.0`) |
+| `NEOPS_WORKER_SDK_IMAGE` | `quay.io/zebbra/neops-worker-sdk:develop` (`.env.example` pins `0.4.0`) |
 
 Every overridable service sets `pull_policy: missing`, so a local image already present is used without a registry call; the make targets pull the published tags with `--policy always --ignore-pull-failures`, so a local override tag is a warning, not an error.
 

@@ -31,9 +31,8 @@ covered by the workflow engine's end-to-end playbook, not by this lab.
 
 ## What it needs
 
-The zones are recent on every side, so the published pins in `.env.example`
-predate them. Point the lab at images that carry network zones (`.env.example`
-lists the tags, commented out):
+Images that carry network zones. `.env.example` pins these releases; a `.env`
+written before them keeps its older pins, so copy the three lines over:
 
 - a CMS from neops-core 2.4.0 or later (`NEOPS_CMS_IMAGE`): `apply_cms_config`
   stops with a message naming it otherwise;
