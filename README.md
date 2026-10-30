@@ -82,12 +82,15 @@ make doctor
 - **`uv`** — only for `make test` / `make lint` / `make check` and the docs.
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
 - **A worker image that carries `fb.base.neops.io/global_discover_network:0.1.0`.**
-  `quay.io/zebbra/neops-worker-sdk:develop` does, and `.env.example` pins a
-  prerelease `0.3.0-beta.*` to hold the lab on a fixed release; it needs
-  engine `v0.44.0-beta.8` or later, the first with the job leases and rollback forward results that worker relies on. Prerelease
-  tags expire 20 days after they are pushed, so when the pin stops pulling,
-  move it to the newest `0.3.0-beta.*` and run the `discover_network.py` check
-  below against it. An engine older than `v0.43.0-beta.6` lacks
+  `quay.io/zebbra/neops-worker-sdk:develop` does, and `.env.example` pins
+  `0.3.0` to hold the lab on a fixed release; it needs engine `v0.44.0` or
+  later, the first with the job leases and rollback forward results that worker
+  relies on. `.env.example` pins `NEOPS_ENGINE_TAG=0.44.0` with it. When you
+  pin another tag, run the `discover_network.py` check below against it.
+  `make lab-env` never rewrites an existing `.env`, so a lab set up before this
+  release still pins `0.3.0-beta.2`, which expires on 2026-11-18: set
+  `NEOPS_WORKER_SDK_IMAGE` and `NEOPS_ENGINE_TAG` in `.env` by hand. An engine
+  older than `v0.43.0-beta.6` lacks
   [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402), and
   that worker cannot discover against it — see
   [Troubleshooting](docs/20-operations/40-troubleshooting.md).

@@ -108,9 +108,9 @@ Every published image can be swapped for a local tag through an environment vari
 
 | Variable | Default |
 |---|---|
-| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` |
+| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` (`.env.example` pins `NEOPS_ENGINE_TAG=0.44.0`) |
 | `NEOPS_WEB_CLIENT_IMAGE` | `quay.io/zebbra/neops-web-client:develop` |
-| `NEOPS_WORKER_SDK_IMAGE` | `quay.io/zebbra/neops-worker-sdk:develop` (`.env.example` pins a fixed prerelease) |
+| `NEOPS_WORKER_SDK_IMAGE` | `quay.io/zebbra/neops-worker-sdk:develop` (`.env.example` pins `0.3.0`) |
 
 Every overridable service sets `pull_policy: missing`, so a local image already present is used without a registry call; the make targets pull the published tags with `--policy always --ignore-pull-failures`, so a local override tag is a warning, not an error.
 
