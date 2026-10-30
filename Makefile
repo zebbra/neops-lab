@@ -398,6 +398,9 @@ local-lab-up: build-docker lab-jwt lab-env generate monitor-config
 		echo "       '$$deployed' devices absent from '$(SCENARIO)' would keep running."; \
 		exit 1; \
 	fi
+	# Recorded before anything starts, so `local-lab-down` after a failed run
+	# still tears down this scenario's zone workers, networks and topologies.
+	@echo "$(SCENARIO)" > $(CLAB_DEPLOYED_MARKER)
 	# Refresh the worker image: the local-env-* pulls run with the base compose
 	# file, which does not include the worker service.
 	docker compose pull --policy always --ignore-pull-failures worker
@@ -463,7 +466,6 @@ local-lab-up: build-docker lab-jwt lab-env generate monitor-config
 	# uses — works on every platform.
 	@echo "Waiting for all devices to accept SSH..."
 	@set -e; $(call WAIT_DEVICES,worker,$(DEPLOYED_PARAMS_DIR)/discover-params.json); $(WAIT_ZONE_DEVICES)
-	@echo "$(SCENARIO)" > $(CLAB_DEPLOYED_MARKER)
 	@echo ""
 	@echo "Lab is up (scenario: $(SCENARIO), real links)."
 	@echo "  Web client:   http://localhost:$(LAB_WEB_PORT)/"

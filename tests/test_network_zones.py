@@ -226,6 +226,18 @@ def test_zones_are_seeded_before_the_workers_start():
     assert body.index("./apply_cms_config") < body.index("docker compose up -d;")
 
 
+def test_the_deployed_scenario_is_recorded_before_anything_starts():
+    """A local-lab-up that fails half way has to be torn down with the zones it started."""
+    body = MAKEFILE[MAKEFILE.index("\nlocal-lab-up:") :]
+    assert body.index("> $(CLAB_DEPLOYED_MARKER)") < body.index("docker compose up -d --wait cms;")
+
+
+def test_the_makefile_names_zone_workers_as_the_overlay_does():
+    match = re.search(r"^zone_worker = (\S+)$", MAKEFILE, re.MULTILINE)
+    assert match, "the Makefile declares no zone_worker"
+    assert match.group(1).replace("$(1)", "zone-a") == gen.zone_worker("zone-a")
+
+
 def test_lab_admin_is_granted_write_on_network_zones():
     config = json.loads((SCENARIOS_DIR / "_base" / "cms" / "permissions.json").read_text())
     assert config["element_grants"]["lab-admin"] == {"network-zones": "write"}

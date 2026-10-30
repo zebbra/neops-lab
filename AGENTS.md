@@ -273,8 +273,10 @@ Load-bearing and usually not obvious from the code:
   name; Postgres name uniqueness is case-sensitive, so a lowercase `global` would
   create a silent duplicate.
 - **`generated/.deployed-scenario-{clab,kind}` is what makes switching safe.**
-  Each up target writes the scenario it deployed and refuses to run while a
-  different one is recorded; each down target reads the marker to tear down what
+  Each up target writes its scenario and refuses to run while a different one
+  is recorded. `local-lab-up` writes it before it starts anything, so a run that
+  fails at `wait_ready` is still torn down with its zone workers and networks;
+  each down target reads the marker to tear down what
   is actually deployed, not what `SCENARIO` currently says, and then removes it.
   Neither runtime removes devices the handed input does not name —
   `containerlab destroy` acts on the topology's node list, `kubectl apply` never
