@@ -106,7 +106,7 @@ make lab-grant ROLE=workflow-operator PROFILE=admin
 
 The monitor app at <http://localhost:3031> holds no session of its own. The web client embeds it in an iframe (`FRONTEND_WORKFLOW_MANAGER_URL`) and relays its access token over `postMessage`; the monitor keeps it in memory only.
 
-The relay's trust anchor is `window.__NEOPS_CONFIG__.webclientOrigin`, which the lab supplies through `monitor/config.js`, bind-mounted over `rest/monitor-app/static/config.js`. Setting `WEBCLIENT_ORIGIN` on the service has no effect here: that variable is read by an nginx entrypoint, and this service runs the engine image with `npm run dev`. See [invariant 21](../60-development/20-invariants.md).
+The relay's trust anchor is `window.__NEOPS_CONFIG__.webclientOrigin`, which the lab supplies through `generated/monitor/config.js` (written by `make monitor-config`), bind-mounted over `rest/monitor-app/static/config.js`. Setting `WEBCLIENT_ORIGIN` on the service has no effect here: that variable is read by an nginx entrypoint, and this service runs the engine image with `npm run dev`. See [invariant 21](../60-development/20-invariants.md).
 
 Opening `http://localhost:3031` directly gives an unauthenticated monitor, because no web client is there to relay from. Reach it through the web client's workflow-monitor page.
 

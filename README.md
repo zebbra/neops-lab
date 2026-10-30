@@ -284,11 +284,11 @@ gen_clab_topology       # renders the scenario topology -> generated/<name>/clab
 gen_device_configs      # per-device renderers + topology loading, reused by the others
 gen_kind_manifests      # renders the FRR devices -> generated/<name>/kind/lab.yaml
 gen_kind_discover_params # discovery targets for the pods: one /32 per Service ClusterIP
-generated/<name>/       # git-ignored: scenario/ (resolved), clab/, kind/, clab runtime
+generated/<name>/       # git-ignored: scenario/ (resolved), clab/, kind/, clab runtime, deployed params
+generated/monitor/      # git-ignored: the monitor app's config.js, written by make monitor-config
 clab/probe.clab.yml     # 2-node probe to re-check containerlab deploy works
 devices/frr/            # Dockerfile (adds sshd to frrouting/frr) + entrypoint; no FRR config
 cms/jwt/                # git-ignored dev RSA keypair (make lab-jwt)
-monitor/config.js       # runtime config for the monitor app (webclientOrigin), bind-mounted into it
 bootstrap/              # one-shot container that POSTs every workflow document
 containerlab            # containerlab launcher (runs ghcr.io/srl-labs/clab via the docker socket)
 doctor                  # host preflight (docker, RAM, mount round-trip, subnets, images)
@@ -374,6 +374,24 @@ Full reset from scratch, ending in a discovery run: `make full-e2e-test` (`local
 - Engine UI: <http://localhost:3031>
 - CMS admin: <http://localhost:8001/admin/> (login `neops` / `neops`)
 - Engine REST: <http://localhost:3030>
+
+These are the defaults of `LAB_WEB_PORT`, `LAB_MONITOR_PORT`, `LAB_CMS_PORT` and
+`LAB_ENGINE_PORT`. To run a second lab on a host where another one, or anything
+else, holds them, give it its own ports, networks and lab name on every make
+call, and its own compose project in that checkout's `.env`:
+
+```bash
+echo COMPOSE_PROJECT_NAME=lab-b >> .env
+make full-e2e-test LAB_NAME=lab-b LAB_NET=lab-b-net \
+  LAB_SUBNET=10.131.0.0/24 LAB_COMPOSE_SUBNET=10.131.1.0/24 \
+  LAB_CMS_PORT=28001 LAB_ENGINE_PORT=23030 LAB_MONITOR_PORT=23031 LAB_WEB_PORT=28080
+```
+
+The devices keep their host offsets in `LAB_SUBNET` (`172.30.0.11` becomes
+`10.131.0.11`), and discovery runs on the parameter files written for that subnet
+under `generated/<name>/workflow-execution-parameters/`. Device containers are
+named `<LAB_NAME>-<node>`. The hand-written `discover-params-mixed.json` only fits
+the default subnet.
 
 Every lab caller carries an engine token (`./lab_token` mints one); how much the
 engine gates is `NEOPS_AUTHZ_MODE` on the `workflow_engine` service. Besides
