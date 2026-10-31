@@ -32,15 +32,16 @@ covered by the workflow engine's end-to-end playbook, not by this lab.
 ## What it needs
 
 Images that carry network zones. `.env.example` pins these releases; a `.env`
-written before them keeps its older pins, so copy the three lines over:
+written before them keeps its older pins, so copy the three image pins over:
 
 - a CMS from neops-core 2.4.0 or later (`NEOPS_CMS_IMAGE`): `apply_cms_config`
   stops with a message naming it otherwise;
 - a workflow engine 0.45.0 or later (`NEOPS_ENGINE_TAG`);
 - a worker from neops-worker-sdk 0.4.0 or later (`NEOPS_WORKER_SDK_IMAGE`),
-  which carries `global_discover_network:0.2.0`;
-- `docker compose` 2.24.4 or later, for the `!override` that keeps each zone's
-  worker off the other networks.
+  which carries `global_discover_network:0.2.0`.
+
+It also needs `docker compose` 2.24.4 or later, for the `!override` that keeps
+each zone's worker off the other networks.
 
 It runs on containerlab only: the Kubernetes flavour puts every FRR device in
 one namespace and knows no zones.
