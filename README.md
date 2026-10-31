@@ -58,7 +58,8 @@ make doctor
 
 - **Docker** + `docker compose` ≥ 2.20. No registry login needed: the CMS, the
   web client and the default **developer preview** engine all pull anonymously.
-  `docker login quay.io` is only for swapping in the full licensed engine.
+  `docker login quay.io` is only for the full licensed engine, which the
+  `network-zones` scenario runs.
 - **containerlab** needs no install: every make target and documented command
   uses `./containerlab`, which runs the official `ghcr.io/srl-labs/clab` image
   through the docker socket — the same command and the same pinned containerlab
@@ -81,15 +82,16 @@ make doctor
   stdlib-only and import under the `/usr/bin/python3` a stock macOS ships.
 - **`uv`** — only for `make test` / `make lint` / `make check` and the docs.
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
-- **A worker image that carries `fb.base.neops.io/global_discover_network:0.1.0`.**
-  `quay.io/zebbra/neops-worker-sdk:develop` does, and `.env.example` pins
-  `0.3.0` to hold the lab on a fixed release; it needs engine `v0.44.0` or
-  later, the first with the job leases and rollback forward results that worker
-  relies on. `.env.example` pins `NEOPS_ENGINE_TAG=0.44.1` with it. When you
-  pin another tag, run the `discover_network.py` check below against it.
+- **A worker image that carries `fb.base.neops.io/global_discover_network:0.2.0`.**
+  That version ships first in neops-worker-sdk `0.4.0`, which needs engine
+  `0.45.0`, which in turn needs a CMS from neops-core `2.4.0`: the engine
+  refuses every worker until it has read the network zones from the CMS.
+  `.env.example` pins all three (`NEOPS_WORKER_SDK_IMAGE`, `NEOPS_ENGINE_TAG`,
+  `NEOPS_CMS_IMAGE`); move them together. When you pin another worker tag,
+  run the `discover_network.py` check below against it.
   `make lab-env` never rewrites an existing `.env`, so a lab set up before this
-  release still pins `0.3.0-beta.2`, which expires on 2026-11-18: set
-  `NEOPS_WORKER_SDK_IMAGE` and `NEOPS_ENGINE_TAG` in `.env` by hand. An engine
+  release keeps its older pins, and an older worker carries the block at
+  `0.1.0` only: copy the three lines from `.env.example` into `.env` by hand. An engine
   older than `v0.43.0-beta.6` lacks
   [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402), and
   that worker cannot discover against it — see
@@ -106,12 +108,12 @@ make doctor
   block, not just build:
 
   ```bash
-  docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'ls neops/fb/base/global/discover_network.py'
+  docker run --rm --entrypoint sh neops-worker-sdk:latest -c 'grep -n "version=(0, 2, 0)" neops/fb/base/global/discover_network.py'
   ```
 
   Without the block the worker runs but never announces it, so `local-lab-up`
   burns its full `wait_ready` budget and gives up with `timeout: no online
-  worker for fb.base.neops.io/global_discover_network:0.1.0`.
+  worker for fb.base.neops.io/global_discover_network:0.2.0`.
 - **A workflow-engine image with the publish route and the large-payload +
   reference-resolution fixes.** Discovery emits a few hundred `Interface` rows in
   one job result, and `bootstrap/register.py` writes definitions through
@@ -123,8 +125,8 @@ make doctor
   `export NEOPS_WORKFLOW_ENGINE_IMAGE=quay.io/zebbra/neops-workflow-engine:develop`)
   or run a local build (`neops-workflow-engine:latest`); `NEOPS_ENGINE_TAG=<tag>`
   in `.env` pins just the tag on the preview.
-  `NEOPS_WEB_CLIENT_IMAGE` and `NEOPS_WORKER_SDK_IMAGE` work the same way — see
-  `.env.example`.
+  `NEOPS_CMS_IMAGE`, `NEOPS_WEB_CLIENT_IMAGE` and `NEOPS_WORKER_SDK_IMAGE` work
+  the same way — see `.env.example`.
 - **Host resources**: for `wan-and-fabric` the 5 SR Linux nodes want ≈1.5–2 GB
   each; with Elasticsearch and the control plane that scenario needs roughly
   **14–16 GB** for containers. `SCENARIO=frr-only` drops the SR Linux nodes and
@@ -153,6 +155,7 @@ make local-lab-up SCENARIO=frr-only   # a different one
 |---|---|---|---|
 | `wan-and-fabric` (default) | 15 | clab, kind | FRR WAN/core/edge/PE + a Nokia SR Linux leaf-spine fabric — see [`scenarios/wan-and-fabric/README.md`](./scenarios/wan-and-fabric/README.md) |
 | `frr-only` | 10 | clab, kind | The FRR half alone; carries only a topology, everything else inherited — see [`scenarios/frr-only/README.md`](./scenarios/frr-only/README.md) |
+| `network-zones` | 6 | clab | Two FRR routers in `default` and two in each of `zone-a` and `zone-b`, each zone on its own subnet with a worker of its own; needs the zone-capable images and the licensed engine (`docker login quay.io`) — see [`scenarios/network-zones/README.md`](./scenarios/network-zones/README.md) |
 
 `SCENARIO` selects it. The [`Makefile`](./Makefile) holds the **only** default
 and exports it; every host script, both compose files and
@@ -351,8 +354,8 @@ without it they use the `Makefile`'s default, `wan-and-fabric`.
 | `make local-lab-up` | Resolves the scenario, generates the containerlab topology + configs from its `topology.json`, builds the lab images, brings up the base stack + worker + bootstrap (creating `lab-net`), then `containerlab deploy --reconfigure`s the scenario's devices with real links. Waits for workflow registration, the worker's function blocks, and every device's SSH. |
 | `make apply-cms-config` | Applies the scenario's `cms/permissions.json` (roles, users and their workflow grant profiles), grants the `neops` user the full-permission `lab-admin` role + creates the `Global` scope so the web client can see all entities. Idempotent. Chained into `local-env-init`. |
 | `make lab-grant` | `make lab-grant ROLE=<role> [PROFILE=operator]` — one ad-hoc workflow grant, the same command `apply_cms_config` runs per role. Additive. |
-| `make local-lab-discover` | POSTs an execution of the discovery workflow; every device in the scenario **and its interfaces** appears in the CMS. Override `DISCOVER_PARAMS` to exercise explicit hosts, autodetection, or subnet expansion. Devices are keyed by IP (re-running skips existing devices); interfaces are always recorded, so run discovery against a **fresh** CMS to avoid duplicate interface rows. |
-| `make local-lab-logs` | Tails worker + bootstrap logs. |
+| `make local-lab-discover` | POSTs an execution of the discovery workflow; every device in the scenario **and its interfaces** appears in the CMS. Override `DISCOVER_PARAMS` to exercise explicit hosts, autodetection, or subnet expansion; it covers the `default` zone, and a scenario with network zones then discovers each zone with `zone_discovery` and that zone's parameters. Devices are keyed by IP and network zone (re-running skips existing devices); interfaces are always recorded, so run discovery against a **fresh** CMS to avoid duplicate interface rows. |
+| `make local-lab-logs` | Tails worker + bootstrap logs, each zone's worker included. |
 | `make local-lab-down` | `containerlab destroy --cleanup` (removes the devices and `generated/$(SCENARIO)/clab/clab-neops-lab`) then `docker compose down` (preserves volumes). |
 | `make local-env-prune` | `docker compose down -v` — the true reset, drops the ES + postgres volumes. |
 | `make kind-lab-up` | The Kubernetes flavour: renders the scenario's **FRR** devices into `generated/$(SCENARIO)/kind/lab.yaml` and runs them as pods in a local KIND cluster, reachable over SSH at `<device>.neops-lab.svc.cluster.local`. Needs no containerlab, no compose stack and no control plane. `make kind-lab-status` / `make kind-lab-down` alongside it — the latter deletes the namespace, never the cluster. |

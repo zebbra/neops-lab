@@ -1,0 +1,63 @@
+# Lab discovery inside one network zone: the step runs on a worker serving the
+# zone it is given, and the devices it finds are recorded in that zone.
+label: zone_discovery
+name: zone_discovery
+package: wf.lab.neops.io
+majorVersion: 1
+minorVersion: 0
+patchVersion: 0
+seedEntity: global
+type: workflow
+description: "Discover the lab devices of one network zone and record them in that zone."
+
+parameterSchema:
+  type: object
+  properties:
+    zone:
+      type: string
+      description: "Network zone to discover in. Its worker must reach the subnets below."
+    subnets:
+      type: array
+      description: "CIDRs to expand; a single host is a /32. A subnet can scope credentials and a platform, and the most specific prefix wins for overlaps."
+      default: []
+      items:
+        type: object
+        properties:
+          cidr: { type: string }
+          platform: { type: string }
+          credentials:
+            type: array
+            items:
+              type: object
+              properties:
+                username: { type: string }
+                password: { type: string }
+                platform: { type: string }
+              required: [username, password]
+        required: [cidr]
+    credentials:
+      type: array
+      description: "Logins tried in order against hosts whose subnet carries none. An entry may be scoped to a platform."
+      items:
+        type: object
+        properties:
+          username: { type: string }
+          password: { type: string }
+          platform: { type: string }
+        required: [username, password]
+      default: []
+    fail_if_not_discovered:
+      type: boolean
+      description: "Fail the run when a host given as its own /32 or /128 is not discovered."
+      default: false
+  required: [zone]
+steps:
+  - type: functionBlock
+    label: discover
+    functionBlock: "fb.base.neops.io/global_discover_network:0.2.0"
+    runOn: global
+    networkZone: "{{ parameters.zone }}"
+    parameters:
+      subnets: "{{ parameters.subnets }}"
+      credentials: "{{ parameters.credentials }}"
+      fail_if_not_discovered: "{{ parameters.fail_if_not_discovered }}"

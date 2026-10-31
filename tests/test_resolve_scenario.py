@@ -144,3 +144,16 @@ def test_scenario_name_falls_back_to_the_environment(monkeypatch):
 @pytest.mark.usefixtures("lab")
 def test_base_is_never_listed_as_a_scenario():
     assert gen.available() == ["demo"]
+
+
+def test_engine_defaults_to_the_developer_preview(lab, capsys):
+    assert gen.main(["--scenario", "demo", "--engine"]) == 0
+    assert capsys.readouterr().out == "developer-preview\n"
+    assert not (lab / "generated").exists(), "--engine reads the manifest and resolves nothing"
+
+
+def test_engine_is_the_one_the_manifest_names(lab, capsys):
+    manifest = lab / "scenarios" / "demo" / "scenario.json"
+    manifest.write_text(json.dumps({**json.loads(manifest.read_text()), "engine": "enterprise"}))
+    gen.main(["--scenario", "demo", "--engine"])
+    assert capsys.readouterr().out == "enterprise\n"

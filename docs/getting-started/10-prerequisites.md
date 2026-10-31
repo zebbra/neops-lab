@@ -20,11 +20,11 @@ Read-only apart from pulling two small images. It checks the docker daemon and t
 
 | Requirement | Why | Used by |
 |---|---|---|
-| **Docker** + `docker compose` ≥ 2.20 | The whole control plane, the devices, and containerlab itself | everything |
+| **Docker** + `docker compose` ≥ 2.20 (≥ 2.24.4 for the `network-zones` scenario, whose zone workers use `!override`) | The whole control plane, the devices, and containerlab itself | everything |
 | **`openssl`** | Mints the dev RSA keypair the CMS needs for RS256 JWTs (OpenSSL 3 or macOS LibreSSL) | `make lab-jwt` |
 | **`python3` ≥ 3.9** | The host scripts are stdlib-only and import under a stock macOS `/usr/bin/python3` | `resolve_scenario`, `gen_clab_topology`, `run_workflow`, `wait_ready` |
 | **`uv`** | ruff / pyrefly / pytest and the MkDocs tooling | `make check`, `make doc-*` |
-| **Quay pull access** | Not needed for the defaults — the CMS, developer-preview engine, web client and worker images are all public. Only the full licensed engine requires `docker login quay.io` | `make local-env-init` |
+| **Quay pull access** | Not needed for the defaults — the CMS, developer-preview engine, web client and worker images are all public. Only the full licensed engine requires `docker login quay.io`, and the `network-zones` scenario runs it | `make local-env-init`, `make local-lab-up` |
 | **RAM** | Scenario-dependent. `wan-and-fabric`: 5 SR Linux nodes (≈1.5–2 GB each) + Elasticsearch + control plane ≈ **14–16 GB** for containers. `frr-only` needs far less — the FRR nodes are tiny | `make local-lab-up` |
 
 ## containerlab — one command, both hosts, no install
@@ -78,7 +78,7 @@ default path pulls anonymously:
 
 | Image | Service | |
 |---|---|---|
-| `quay.io/zebbra/neops-cms-free:develop` | `cms` | public |
+| `quay.io/zebbra/neops-cms-free:develop` (`.env.example` pins `2.4.0`) | `cms` | public |
 | `quay.io/zebbra/neops-web-client:develop` | `web_client` | public |
 | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` | `workflow_engine`, `workflow-engine-client` | public — the **developer preview** engine |
 
@@ -86,8 +86,11 @@ default path pulls anonymously:
 
 ### When `docker login` *is* needed
 
-Only to swap the developer preview for the **full licensed engine**, which is
-not public — an anonymous pull is rejected with `401`:
+Only for the **full licensed engine**, which is not public — an anonymous pull
+is rejected with `401`. A scenario whose `scenario.json` names
+`"engine": "enterprise"` runs it on its own (`network-zones` does: it starts
+three workers and the preview admits two), so log in before bringing it up.
+Any other scenario runs it once you point the image at it:
 
 ```bash
 docker login quay.io
@@ -108,9 +111,10 @@ Every published image can be swapped for a local tag through an environment vari
 
 | Variable | Default |
 |---|---|
-| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` (`.env.example` pins `NEOPS_ENGINE_TAG=0.44.1`) |
+| `NEOPS_CMS_IMAGE` | `quay.io/zebbra/neops-cms-free:develop` (`.env.example` pins `2.4.0`) |
+| `NEOPS_WORKFLOW_ENGINE_IMAGE` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` (`.env.example` pins `NEOPS_ENGINE_TAG=0.45.0`) |
 | `NEOPS_WEB_CLIENT_IMAGE` | `quay.io/zebbra/neops-web-client:develop` |
-| `NEOPS_WORKER_SDK_IMAGE` | `quay.io/zebbra/neops-worker-sdk:develop` (`.env.example` pins `0.3.0`) |
+| `NEOPS_WORKER_SDK_IMAGE` | `quay.io/zebbra/neops-worker-sdk:develop` (`.env.example` pins `0.4.0`) |
 
 Every overridable service sets `pull_policy: missing`, so a local image already present is used without a registry call; the make targets pull the published tags with `--policy always --ignore-pull-failures`, so a local override tag is a warning, not an error.
 

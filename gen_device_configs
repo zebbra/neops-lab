@@ -28,11 +28,20 @@ def topology_path(scenario: str) -> pathlib.Path:
     return resolve_scenario.source_dir(scenario) / "topology.json"
 
 
-def load_topology(scenario: str | None = None, path: pathlib.Path | None = None) -> dict:
-    """Return the device map for a scenario, or from an explicit topology file."""
+def _read_topology(scenario: str | None, path: pathlib.Path | None) -> dict:
     if path is None:
         path = topology_path(resolve_scenario.scenario_name(scenario))
-    return json.loads(path.read_text())["devices"]
+    return json.loads(path.read_text())
+
+
+def load_topology(scenario: str | None = None, path: pathlib.Path | None = None) -> dict:
+    """Return the device map for a scenario, or from an explicit topology file."""
+    return _read_topology(scenario, path)["devices"]
+
+
+def load_zones(scenario: str | None = None, path: pathlib.Path | None = None) -> dict:
+    """Return the topology's network zones, `{name: {"subnet": ..., "description": ...}}`, or `{}`."""
+    return _read_topology(scenario, path).get("zones", {})
 
 
 def device_dirs(scenario: str) -> tuple:

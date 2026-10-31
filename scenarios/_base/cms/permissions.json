@@ -5,6 +5,9 @@
     "workflow-operator": "operator",
     "workflow-admin": "admin"
   },
+  "element_grants": {
+    "lab-admin": { "network-zones": "write" }
+  },
   "users": {
     "neops": ["lab-admin"],
     "author": ["workflow-author"],

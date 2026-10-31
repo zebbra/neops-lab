@@ -69,6 +69,14 @@ def test_every_role_a_user_holds_is_declared(config):
             assert role in declared, f"user {username} holds undeclared role {role!r}"
 
 
+def test_every_element_grant_names_a_declared_role_and_a_flag(config):
+    """`apply_cms_config` grants these through the role it created from `roles`."""
+    for role, elements in config.get("element_grants", {}).items():
+        assert role in config["roles"], f"element grant for undeclared role {role!r}"
+        for element, flag in elements.items():
+            assert flag in ("read", "execute", "write"), f"{role} -> {element} asks for {flag!r}"
+
+
 def test_the_base_scenario_declares_the_file():
     """Nothing else guarantees the resolved tree has one to read."""
     assert (LAB_DIR / "scenarios" / "_base" / "cms" / CONFIG_NAME).is_file()

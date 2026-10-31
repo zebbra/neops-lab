@@ -64,11 +64,11 @@ docker compose logs lab_bootstrap
 
 ## `Function block … not found`
 
-**Where:** the execution's terminal state, as `failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.1.0 not found`.
+**Where:** the execution's terminal state, as `failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.2.0 not found`.
 
 **Two different causes, in order of likelihood:**
 
-1. **You raced the worker.** The worker registers its function blocks with the engine *asynchronously* after its container starts. `make local-lab-up` and `make local-lab-discover` both run `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` first, which polls the engine's per-function-block worker registry until an online worker exists. Run the make target rather than `run_workflow` directly.
+1. **You raced the worker.** The worker registers its function blocks with the engine *asynchronously* after its container starts. `make local-lab-up` and `make local-lab-discover` both run `./wait_ready fb.base.neops.io/global_discover_network:0.2.0` first, which polls the engine's per-function-block worker registry until an online worker exists. Run the make target rather than `run_workflow` directly.
 
 2. **The image does not carry the block.** `neops/fb` ships *inside* the `neops-worker-sdk` image; it is not mounted from this repo. Check what you are running:
 
@@ -87,28 +87,85 @@ See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10
 **Where:** `make local-lab-up` burns its full `wait_ready` budget and gives up with
 
 ```
-timeout: no online worker for fb.base.neops.io/global_discover_network:0.1.0 within 180s
+timeout: no online worker for fb.base.neops.io/global_discover_network:0.2.0 within 180s
 ```
 
 **Cause:** the worker image you pinned does not carry
-`global_discover_network`, e.g. an old prerelease tag or an old local build. The
+`global_discover_network` at `0.2.0`: a release before `0.4.0` (it carries
+`0.1.0`, and a `.env` written before this release still pins one), an old
+prerelease tag or an old local build. The
 block ships *inside* the image rather than being bind-mounted from here, so the
 worker starts, registers the blocks it has, and never announces this one;
 `wait_ready` waits for it until the budget runs out.
 
+Engine `0.45.0` refuses every worker until it has read the network zones from
+the CMS, so a CMS older than neops-core `2.4.0` gives the same timeout with the
+right worker image; `docker compose logs worker` then shows the refused
+registration. Pin the CMS from `.env.example` too.
+
 **Fix:** check what the image actually holds, and fall back to the published
-`develop` tag, a `0.3.x` release, or a fresh build of an
+`develop` tag, a `0.4.x` release, or a fresh build of an
 SDK checkout that has it:
 
 ```bash
-docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global/discover_network.py'
+docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'grep -n "version=(0, 2, 0)" neops/fb/base/global/discover_network.py'
 make -C ../neops-worker-sdk-py build-docker          # -> neops-worker-sdk:latest
 echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
 make local-lab-up
 ```
 
-Re-pinning another `0.3.x` the same way? Run the `discover_network.py`
+Re-pinning another `0.4.x` the same way? Run the `discover_network.py`
 check against it before `make local-lab-up`.
+
+### A network zone never becomes ready
+
+**Where:** the `network-zones` scenario, with `in zone <zone>` in the timeout:
+
+```
+timeout: no online worker for fb.base.neops.io/global_discover_network:0.2.0 in zone zone-a within 180s
+```
+
+**Cause:** `worker-<zone>` is not online in its zone. It exits when the engine
+refuses its registration: the zone is missing from the CMS, or the engine
+predates network zones. A worker image older than SDK 0.4.0 ignores
+`NEOPS_WORKER_NETWORK_ZONES` and registers in `default` only, so it never
+counts for a zone.
+
+**Fix:** read the worker's last words, then check the images:
+
+```bash
+SCENARIO=network-zones COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml:generated/network-zones/compose/zones.yml \
+  docker compose logs --tail 20 worker-zone-a
+make apply-cms-config SCENARIO=network-zones   # creates the zones; stops on a CMS without them
+```
+
+The scenario needs a CMS from neops-core 2.4.0, engine 0.45.0 and worker SDK
+0.4.0 or later, the releases `.env.example` pins; a `.env` written before them
+keeps its older pins.
+
+### The engine's license admits fewer workers than the lab starts
+
+**Where:** `wait_ready` in `make local-lab-up` or `make local-lab-discover`, at
+once rather than after a timeout:
+
+```
+this lab starts 3 workers, but the engine's Developer Preview license admits 2, so it refuses the rest.
+```
+
+**Cause:** the engine is the developer preview, which admits two workers, and
+the `network-zones` scenario starts one per zone beside the central one. The
+scenario asks for the licensed engine, so this usually means
+`NEOPS_WORKFLOW_ENGINE_IMAGE` in `.env` or the environment names the preview,
+or a local build of it, and wins over the scenario.
+
+**Fix:** log in to Quay with an account that can pull the licensed engine,
+unset `NEOPS_WORKFLOW_ENGINE_IMAGE` or point it at a licensed engine, and bring
+the lab up again:
+
+```bash
+docker login quay.io
+make local-lab-up SCENARIO=network-zones
+```
 
 ---
 
@@ -173,7 +230,7 @@ make local-lab-up
 
 ```bash
 export NEOPS_ENGINE_TOKEN=$(./lab_token)
-./wait_ready fb.base.neops.io/global_discover_network:0.1.0
+./wait_ready fb.base.neops.io/global_discover_network:0.2.0
 ```
 
 A token lasts 15 minutes, so a long session needs a fresh one. If the account is short of a permission, widen its role:

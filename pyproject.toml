@@ -121,6 +121,9 @@ convention = "google"
 "gen_kind_discover_params" = [
   "S603", "S607", # runs the local kubectl CLI with fixed arguments
 ]
+"tests/test_network_zones.py" = [
+  "S603", "S607", # runs the local make with fixed arguments
+]
 "tools/check_subnets.py" = [
   "S603", "S607", # runs the local docker CLI with fixed arguments
   "PLR2004",      # the IP version literal

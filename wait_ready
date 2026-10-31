@@ -16,9 +16,18 @@ This polls the engine's per-function-block worker registry until at least one
 `online` worker is registered for every requested function block, so callers
 like `make local-lab-discover` can run deterministically instead of racing.
 
+With `--zone`, a block is ready only once every named network zone has an
+online worker serving it. A worker that registered no zones serves `default`.
+
+With `--workers`, the number of workers the lab starts, it stops at once when
+the engine's license admits fewer: the engine refuses the rest, so waiting for
+them could only time out.
+
 Usage
 -----
-    ./wait_ready fb.base.neops.io/global_discover_network:0.1.0 [more fb ids ...]
+    ./wait_ready fb.base.neops.io/global_discover_network:0.2.0 [more fb ids ...]
+    ./wait_ready --zone default --zone zone-a fb.base.neops.io/global_discover_network:0.2.0
+    ./wait_ready --workers 3 --zone default --zone zone-a --zone zone-b fb.base.neops.io/global_discover_network:0.2.0
 
 Exit codes
 ----------
@@ -47,29 +56,69 @@ def parse_fb_id(fb_id: str) -> tuple[str, str, str]:
     return pkg, name, version
 
 
-def worker_states(engine_url: str, fb_id: str) -> list[str] | None:
-    """Return the state of every worker registered for a function block.
+# The zone a worker that registered none serves.
+DEFAULT_ZONE = "default"
 
-    Returns None while the engine is unreachable or no worker has registered
-    the block; both keep the caller polling. (The engine learns about a block
-    when a worker registers it, so a 404 also reads as "no worker yet".)
+
+def _get_json(url: str) -> object:
+    """GET a JSON body from the engine; None while it is unreachable or answers with an error.
+
     A 401 or 403 raises SystemExit, which ends the wait at once.
     """
-    pkg, name, version = parse_fb_id(fb_id)
-    url = f"{engine_url}/function-blocks/{pkg}/{name}/{version}/workers"
     req = request.Request(url, headers=engine_http.auth_headers())
     try:
         with request.urlopen(req, timeout=5) as resp:
-            workers = json.load(resp)
+            return json.load(resp)
     except error.HTTPError as exc:
         if exc.code in engine_http.UNAUTHORIZED:
             raise SystemExit(f"the engine refused the request {engine_http.refusal(exc)}") from exc
         return None
     except engine_http.REQUEST_ERRORS:
         return None
-    if not isinstance(workers, list):
+
+
+def _get_list(url: str) -> list | None:
+    body = _get_json(url)
+    return body if isinstance(body, list) else None
+
+
+def _get_dict(url: str) -> dict | None:
+    body = _get_json(url)
+    return body if isinstance(body, dict) else None
+
+
+def worker_states(engine_url: str, fb_id: str) -> list[str] | None:
+    """Return the state of every worker registered for a function block.
+
+    Returns None while the engine is unreachable or no worker has registered
+    the block; both keep the caller polling. (The engine learns about a block
+    when a worker registers it, so a 404 also reads as "no worker yet".)
+    """
+    pkg, name, version = parse_fb_id(fb_id)
+    workers = _get_list(f"{engine_url}/function-blocks/{pkg}/{name}/{version}/workers")
+    if workers is None:
         return None
     return [str(w.get("state", "?")) for w in workers]
+
+
+def workers_with_blocks(engine_url: str) -> list | None:
+    """Every registered worker with its function blocks and network zones (None while unknown).
+
+    The workers of one function block come without their zones, so a zone's
+    readiness reads the whole list.
+    """
+    return _get_list(f"{engine_url}/workers?populateFunctionBlocks=true")
+
+
+def serves(worker: dict, zone: str) -> bool:
+    """Whether a worker claims jobs in a zone."""
+    return zone in (worker.get("networkZones") or [DEFAULT_ZONE])
+
+
+def zones_ready(workers: list, fb_id: str, zones: list) -> set:
+    """The zones in which an online worker holds the function block."""
+    online = [w for w in workers if w.get("state") == "online" and fb_id in (w.get("functionBlockIds") or [])]
+    return {zone for zone in zones if any(serves(w, zone) for w in online)}
 
 
 def online_worker_count(engine_url: str, fb_id: str) -> int | None:
@@ -80,6 +129,35 @@ def online_worker_count(engine_url: str, fb_id: str) -> int | None:
     return sum(1 for s in states if s == "online")
 
 
+WORKER_CAP_REFUSAL = """\
+this lab starts {workers} workers, but the engine's {license} license admits {cap}, so it refuses the rest.
+Run the licensed engine. A scenario whose scenario.json names "engine": "enterprise"
+pulls quay.io/zebbra/neops-workflow-engine, which needs `docker login quay.io`,
+unless NEOPS_WORKFLOW_ENGINE_IMAGE (in .env or the environment) names another
+image: unset it, or point it at a licensed engine.\
+"""
+
+
+def worker_cap_refusal(engine_license: dict, workers: int) -> str | None:
+    """Why an engine with this license cannot serve `workers` workers; None when it can."""
+    cap = (engine_license.get("limits") or {}).get("maxWorkers")
+    if not isinstance(cap, int) or cap >= workers:
+        return None
+    name = engine_license.get("displayName") or engine_license.get("flavor") or "unnamed"
+    return WORKER_CAP_REFUSAL.format(workers=workers, license=name, cap=cap)
+
+
+def license_read(engine_url: str, workers: int) -> bool:
+    """Read the engine's license; False while it is unknown. Raises SystemExit when it admits too few workers."""
+    engine_license = _get_dict(f"{engine_url}/license")
+    if engine_license is None:
+        return False
+    refusal = worker_cap_refusal(engine_license, workers)
+    if refusal:
+        raise SystemExit(refusal)
+    return True
+
+
 TIMEOUT_HINT = """\
 Likely causes, most common first:
   * the worker container is stopped or crash-looping: check
@@ -87,6 +165,45 @@ Likely causes, most common first:
   * the worker image lacks the block: `docker compose exec worker ls /app/neops/fb`;
   * the worker is still starting: re-run, or raise WAIT_READY_TIMEOUT.\
 """
+
+ZONE_HINT = """\
+A zone that never becomes ready:
+  * its worker exited: `docker compose ps -a` and that worker's log. It is
+    refused while the CMS holds no such zone (apply_cms_config seeds them), and
+    a worker or engine image older than network zones never serves one.\
+"""
+
+
+def ready_now(engine_url: str, targets: list) -> dict:
+    """Map each `(fb_id, zone)` target that is ready now to how; a target without a zone needs any online worker."""
+    ready = {}
+    for fb_id, zone in targets:
+        if zone is None:
+            count = online_worker_count(engine_url, fb_id)
+            if count:
+                ready[(fb_id, None)] = f"{count} online worker(s)"
+    zoned = [target for target in targets if target[1] is not None]
+    workers = workers_with_blocks(engine_url) if zoned else None
+    for fb_id, zone in zoned:
+        if workers and zone in zones_ready(workers, fb_id, [zone]):
+            ready[(fb_id, zone)] = f"zone {zone}"
+    return ready
+
+
+def _label(target: tuple) -> str:
+    fb_id, zone = target
+    return fb_id if zone is None else f"{fb_id} in zone {zone}"
+
+
+def _report_timeout(engine_url: str, pending: list, timeout: int) -> None:
+    print(f"timeout: no online worker for {', '.join(_label(t) for t in pending)} within {timeout}s", file=sys.stderr)
+    for fb_id in dict.fromkeys(fb_id for fb_id, _ in pending):
+        states = worker_states(engine_url, fb_id)
+        if states:
+            print(f"  {fb_id}: registered worker states: {', '.join(states)}", file=sys.stderr)
+    print(TIMEOUT_HINT, file=sys.stderr)
+    if any(zone is not None for _, zone in pending):
+        print(ZONE_HINT, file=sys.stderr)
 
 
 def main() -> int:
@@ -96,37 +213,37 @@ def main() -> int:
     )
     p.add_argument("function_blocks", nargs="+", help="Function block ids: pkg/name:version")
     engine_http.add_engine_url_argument(p)
+    p.add_argument(
+        "--zone",
+        action="append",
+        dest="zones",
+        help="Network zone that needs an online worker for each block; repeat for several",
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        help="Number of workers the lab starts; stop at once when the engine's license admits fewer",
+    )
     p.add_argument("--timeout", type=int, default=180, help="Total wait budget in seconds (default: 180)")
     p.add_argument("--interval", type=float, default=2.0, help="Poll interval in seconds (default: 2.0)")
     args = p.parse_args()
 
-    pending = list(args.function_blocks)
+    zones = args.zones or [None]
+    pending = [(fb_id, zone) for fb_id in args.function_blocks for zone in zones]
     deadline = time.monotonic() + args.timeout
     started = time.monotonic()
+    license_checked = not args.workers
 
     while pending:
-        still_pending = []
-        for fb_id in pending:
-            count = online_worker_count(args.engine_url, fb_id)
-            if count:
-                elapsed = int(time.monotonic() - started)
-                print(f"  [{elapsed:3d}s] ready: {fb_id} ({count} online worker(s))")
-            else:
-                still_pending.append(fb_id)
-        pending = still_pending
-
+        license_checked = license_checked or license_read(args.engine_url, args.workers)
+        ready = ready_now(args.engine_url, pending)
+        for target, how in ready.items():
+            print(f"  [{int(time.monotonic() - started):3d}s] ready: {target[0]} ({how})")
+        pending = [target for target in pending if target not in ready]
         if not pending:
             return 0
         if time.monotonic() >= deadline:
-            print(
-                f"timeout: no online worker for {', '.join(pending)} within {args.timeout}s",
-                file=sys.stderr,
-            )
-            for fb_id in pending:
-                states = worker_states(args.engine_url, fb_id)
-                if states:
-                    print(f"  {fb_id}: registered worker states: {', '.join(states)}", file=sys.stderr)
-            print(TIMEOUT_HINT, file=sys.stderr)
+            _report_timeout(args.engine_url, pending, args.timeout)
             return 2
         time.sleep(args.interval)
 
