@@ -3,6 +3,7 @@
   "title": "Network zones",
   "summary": "Six FRR routers: two on the lab network in default, two in zone-a and two in zone-b, each zone on its own subnet with a worker of its own.",
   "flavours": ["clab"],
+  "engine": "enterprise",
   "demonstrates": [
     "routing by network zone: each zone's discovery runs on the worker inside that zone, the only one that can reach its devices",
     "stamping: discovered devices are recorded in the zone their job ran in",

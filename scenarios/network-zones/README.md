@@ -31,12 +31,24 @@ covered by the workflow engine's end-to-end playbook, not by this lab.
 
 ## What it needs
 
+The licensed workflow engine. The scenario starts three workers, the central
+one and one per zone, and the public developer preview admits two. Its
+`scenario.json` names `"engine": "enterprise"`, so the lab pulls
+`quay.io/zebbra/neops-workflow-engine` instead of the preview. That image is
+not public: run `docker login quay.io` with an account that can pull it before
+`make local-env-init` or `make local-lab-up`. A `NEOPS_WORKFLOW_ENGINE_IMAGE` in
+`.env` or the environment still wins over the scenario, so unset it or point it
+at a licensed engine. On an engine that admits fewer workers than the lab
+starts, `make local-lab-up` stops at `wait_ready` with a message saying so,
+rather than timing out.
+
 Images that carry network zones. `.env.example` pins these releases; a `.env`
 written before them keeps its older pins, so copy the three image pins over:
 
 - a CMS from neops-core 2.4.0 or later (`NEOPS_CMS_IMAGE`): `apply_cms_config`
   stops with a message naming it otherwise;
-- a workflow engine 0.45.0 or later (`NEOPS_ENGINE_TAG`);
+- a workflow engine 0.45.0 or later (`NEOPS_ENGINE_TAG`, the tag of the licensed
+  engine in this scenario);
 - a worker from neops-worker-sdk 0.4.0 or later (`NEOPS_WORKER_SDK_IMAGE`),
   which carries `global_discover_network:0.2.0`.
 

@@ -58,7 +58,8 @@ make doctor
 
 - **Docker** + `docker compose` ≥ 2.20. No registry login needed: the CMS, the
   web client and the default **developer preview** engine all pull anonymously.
-  `docker login quay.io` is only for swapping in the full licensed engine.
+  `docker login quay.io` is only for the full licensed engine, which the
+  `network-zones` scenario runs.
 - **containerlab** needs no install: every make target and documented command
   uses `./containerlab`, which runs the official `ghcr.io/srl-labs/clab` image
   through the docker socket — the same command and the same pinned containerlab
@@ -154,7 +155,7 @@ make local-lab-up SCENARIO=frr-only   # a different one
 |---|---|---|---|
 | `wan-and-fabric` (default) | 15 | clab, kind | FRR WAN/core/edge/PE + a Nokia SR Linux leaf-spine fabric — see [`scenarios/wan-and-fabric/README.md`](./scenarios/wan-and-fabric/README.md) |
 | `frr-only` | 10 | clab, kind | The FRR half alone; carries only a topology, everything else inherited — see [`scenarios/frr-only/README.md`](./scenarios/frr-only/README.md) |
-| `network-zones` | 6 | clab | Two FRR routers in `default` and two in each of `zone-a` and `zone-b`, each zone on its own subnet with a worker of its own; needs the zone-capable images — see [`scenarios/network-zones/README.md`](./scenarios/network-zones/README.md) |
+| `network-zones` | 6 | clab | Two FRR routers in `default` and two in each of `zone-a` and `zone-b`, each zone on its own subnet with a worker of its own; needs the zone-capable images and the licensed engine (`docker login quay.io`) — see [`scenarios/network-zones/README.md`](./scenarios/network-zones/README.md) |
 
 `SCENARIO` selects it. The [`Makefile`](./Makefile) holds the **only** default
 and exports it; every host script, both compose files and

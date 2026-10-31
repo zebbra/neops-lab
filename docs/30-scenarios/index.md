@@ -152,6 +152,12 @@ worker of its own.
   before any worker starts; it stops with a message on a CMS image older than
   neops-core 2.4.0.
 - A scenario with zones runs on containerlab only (`"flavours": ["clab"]`).
+- A scenario that starts more workers than the developer preview admits (two)
+  names `"engine": "enterprise"` in its `scenario.json`, so the lab pulls the
+  licensed engine, which needs `docker login quay.io`. `./resolve_scenario
+  --engine` prints what a scenario asks for; without the key it is
+  `developer-preview`. `wait_ready` stops at once, naming the license, when
+  the engine admits fewer workers than the lab starts.
 
 [Make targets](../20-operations/10-make-targets.md#network-zones) lists what
 each lab target does with them.

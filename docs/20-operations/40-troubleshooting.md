@@ -143,6 +143,30 @@ The scenario needs a CMS from neops-core 2.4.0, engine 0.45.0 and worker SDK
 0.4.0 or later, the releases `.env.example` pins; a `.env` written before them
 keeps its older pins.
 
+### The engine's license admits fewer workers than the lab starts
+
+**Where:** `wait_ready` in `make local-lab-up` or `make local-lab-discover`, at
+once rather than after a timeout:
+
+```
+this lab starts 3 workers, but the engine's Developer Preview license admits 2, so it refuses the rest.
+```
+
+**Cause:** the engine is the developer preview, which admits two workers, and
+the `network-zones` scenario starts one per zone beside the central one. The
+scenario asks for the licensed engine, so this usually means
+`NEOPS_WORKFLOW_ENGINE_IMAGE` in `.env` or the environment names the preview,
+or a local build of it, and wins over the scenario.
+
+**Fix:** log in to Quay with an account that can pull the licensed engine,
+unset `NEOPS_WORKFLOW_ENGINE_IMAGE` or point it at a licensed engine, and bring
+the lab up again:
+
+```bash
+docker login quay.io
+make local-lab-up SCENARIO=network-zones
+```
+
 ---
 
 ## Worker exits ~2 min after start; discovery hangs after `wait_ready`

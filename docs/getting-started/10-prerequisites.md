@@ -24,7 +24,7 @@ Read-only apart from pulling two small images. It checks the docker daemon and t
 | **`openssl`** | Mints the dev RSA keypair the CMS needs for RS256 JWTs (OpenSSL 3 or macOS LibreSSL) | `make lab-jwt` |
 | **`python3` ≥ 3.9** | The host scripts are stdlib-only and import under a stock macOS `/usr/bin/python3` | `resolve_scenario`, `gen_clab_topology`, `run_workflow`, `wait_ready` |
 | **`uv`** | ruff / pyrefly / pytest and the MkDocs tooling | `make check`, `make doc-*` |
-| **Quay pull access** | Not needed for the defaults — the CMS, developer-preview engine, web client and worker images are all public. Only the full licensed engine requires `docker login quay.io` | `make local-env-init` |
+| **Quay pull access** | Not needed for the defaults — the CMS, developer-preview engine, web client and worker images are all public. Only the full licensed engine requires `docker login quay.io`, and the `network-zones` scenario runs it | `make local-env-init`, `make local-lab-up` |
 | **RAM** | Scenario-dependent. `wan-and-fabric`: 5 SR Linux nodes (≈1.5–2 GB each) + Elasticsearch + control plane ≈ **14–16 GB** for containers. `frr-only` needs far less — the FRR nodes are tiny | `make local-lab-up` |
 
 ## containerlab — one command, both hosts, no install
@@ -86,8 +86,11 @@ default path pulls anonymously:
 
 ### When `docker login` *is* needed
 
-Only to swap the developer preview for the **full licensed engine**, which is
-not public — an anonymous pull is rejected with `401`:
+Only for the **full licensed engine**, which is not public — an anonymous pull
+is rejected with `401`. A scenario whose `scenario.json` names
+`"engine": "enterprise"` runs it on its own (`network-zones` does: it starts
+three workers and the preview admits two), so log in before bringing it up.
+Any other scenario runs it once you point the image at it:
 
 ```bash
 docker login quay.io

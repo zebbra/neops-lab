@@ -1,7 +1,9 @@
 # Engine and monitor app share one image: the public developer preview, whose
 # `develop` tag the engine's CI republishes on every merge to its develop branch.
+# A scenario that needs the licensed engine, which is not public, gets its
+# repository from the Makefile (NEOPS_ENGINE_REPOSITORY).
 x-workflow-engine-image: &workflow-engine-image
-  image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}}
+  image: ${NEOPS_WORKFLOW_ENGINE_IMAGE:-quay.io/zebbra/${NEOPS_ENGINE_REPOSITORY:-neops-workflow-engine-preview}:${NEOPS_ENGINE_TAG:-develop}}
   pull_policy: ${NEOPS_WORKFLOW_ENGINE_PULL_POLICY:-missing}
 
 services:

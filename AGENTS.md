@@ -172,7 +172,11 @@ Load-bearing and usually not obvious from the code:
   runs the lab; nothing is pushed to a registry. `docker-compose.worker.yml`
   pins `lab_bootstrap` to that exact tag so the compose build and `build-docker`
   cannot diverge. Everything else (CMS, engine, web client, worker) comes from
-  `quay.io/zebbra`.
+  `quay.io/zebbra`. The engine is the public developer preview unless the
+  scenario's `scenario.json` names `"engine": "enterprise"`: the Makefile then
+  exports `NEOPS_ENGINE_REPOSITORY` and compose pulls the licensed engine,
+  which needs `docker login quay.io`. `network-zones` does, because it starts
+  more workers than the preview admits.
 - **The FRR image bakes no config.** `devices/frr/Dockerfile` ships only sshd
   and `devices/frr/entrypoint.sh`; `frr.conf` and `daemons` are scenario data,
   mounted at `/lab` from the resolved tree and installed into `/etc/frr` by the
@@ -320,7 +324,8 @@ depends on:
 - the **workflow-engine REST API** used by `run_workflow`, `wait_ready` and
   `bootstrap/register.py` (`/workflow-execution`, `/workflow-definition/publish`,
   `/function-blocks/…/workers`, `/workers?populateFunctionBlocks=true` for
-  readiness per zone, `/health`),
+  readiness per zone, `/license` for the worker cap `wait_ready --workers`
+  checks, `/health`),
 - the **CMS GraphQL mutation `scopesUpsert`** and the `neops.core.models` ORM
   shape used by `apply_cms_config` (`NetworkZone` for a scenario with zones,
   and the `network-zones` permission element `lab-admin` is granted write on).

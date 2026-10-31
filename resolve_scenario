@@ -36,6 +36,9 @@ REQUIRED_FILES = ("scenario.json", "topology.json")
 LAB_FILE_KEYS = ("set-aliases.sh", "frr.conf", "daemons")
 LAB_DIR_PATH = "/lab"
 
+# The workflow engine a scenario runs unless its manifest names another.
+DEFAULT_ENGINE = "developer-preview"
+
 
 def scenario_name(explicit: str | None) -> str:
     """Return the scenario to act on: the explicit name, else `$SCENARIO`.
@@ -66,6 +69,15 @@ def source_dir(name: str) -> pathlib.Path:
         if not (path / required).is_file():
             raise SystemExit(f"scenario {name!r} is missing {required}")
     return path
+
+
+def manifest(name: str) -> dict:
+    return json.loads((source_dir(name) / "scenario.json").read_text())
+
+
+def engine(name: str) -> str:
+    """The workflow engine flavour a scenario needs: `developer-preview` or `enterprise`."""
+    return manifest(name).get("engine", DEFAULT_ENGINE)
 
 
 def resolved_dir(name: str) -> pathlib.Path:
@@ -139,11 +151,11 @@ def _print_resolution(resolved: dict) -> None:
 def _print_listing() -> int:
     """Print one entry per scenario from its manifest."""
     for name in available():
-        manifest = json.loads((SCENARIOS_DIR / name / "scenario.json").read_text())
+        described = manifest(name)
         devices = json.loads((SCENARIOS_DIR / name / "topology.json").read_text())["devices"]
-        flavours = ",".join(manifest["flavours"])
-        print(f"  {name:20} {len(devices):>3} devices  [{flavours}]  {manifest['title']}")
-        print(f"  {'':20} {manifest['summary']}")
+        flavours = ",".join(described["flavours"])
+        print(f"  {name:20} {len(devices):>3} devices  [{flavours}]  {described['title']}")
+        print(f"  {'':20} {described['summary']}")
     return 0
 
 
@@ -152,6 +164,9 @@ def parse_args(argv: list) -> argparse.Namespace:
     parser.add_argument("--scenario", help="scenario to resolve; defaults to $SCENARIO")
     parser.add_argument("--list", action="store_true", help="list the available scenarios and exit")
     parser.add_argument("--quiet", action="store_true", help="print only the summary line")
+    parser.add_argument(
+        "--engine", action="store_true", help="print the workflow engine flavour the scenario needs and exit"
+    )
     return parser.parse_args(argv)
 
 
@@ -161,6 +176,9 @@ def main(argv: list | None = None) -> int:
         return _print_listing()
 
     name = scenario_name(args.scenario)
+    if args.engine:
+        print(engine(name))
+        return 0
     resolved = resolve(name)
     if not args.quiet:
         _print_resolution(resolved)

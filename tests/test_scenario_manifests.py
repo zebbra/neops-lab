@@ -11,6 +11,7 @@ SCENARIOS = sorted(p.name for p in SCENARIOS_DIR.iterdir() if p.is_dir() and p.n
 
 REQUIRED_KEYS = {"name", "title", "summary", "flavours", "demonstrates"}
 FLAVOURS = {"clab", "kind"}
+ENGINES = {"developer-preview", "enterprise"}
 
 
 def _manifest(scenario):
@@ -34,6 +35,7 @@ def test_manifest_is_complete(scenario):
     assert manifest["flavours"], "a scenario that runs on neither flavour cannot be deployed"
     assert manifest["summary"].strip()
     assert manifest["demonstrates"], "say what the scenario is for"
+    assert manifest.get("engine", "developer-preview") in ENGINES
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)

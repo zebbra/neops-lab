@@ -19,10 +19,15 @@ like `make local-lab-discover` can run deterministically instead of racing.
 With `--zone`, a block is ready only once every named network zone has an
 online worker serving it. A worker that registered no zones serves `default`.
 
+With `--workers`, the number of workers the lab starts, it stops at once when
+the engine's license admits fewer: the engine refuses the rest, so waiting for
+them could only time out.
+
 Usage
 -----
     ./wait_ready fb.base.neops.io/global_discover_network:0.2.0 [more fb ids ...]
     ./wait_ready --zone default --zone zone-a fb.base.neops.io/global_discover_network:0.2.0
+    ./wait_ready --workers 3 --zone default --zone zone-a --zone zone-b fb.base.neops.io/global_discover_network:0.2.0
 
 Exit codes
 ----------
@@ -55,22 +60,31 @@ def parse_fb_id(fb_id: str) -> tuple[str, str, str]:
 DEFAULT_ZONE = "default"
 
 
-def _get_list(url: str) -> list | None:
-    """GET a JSON list from the engine; None while it is unreachable or answers anything else.
+def _get_json(url: str) -> object:
+    """GET a JSON body from the engine; None while it is unreachable or answers with an error.
 
     A 401 or 403 raises SystemExit, which ends the wait at once.
     """
     req = request.Request(url, headers=engine_http.auth_headers())
     try:
         with request.urlopen(req, timeout=5) as resp:
-            body = json.load(resp)
+            return json.load(resp)
     except error.HTTPError as exc:
         if exc.code in engine_http.UNAUTHORIZED:
             raise SystemExit(f"the engine refused the request {engine_http.refusal(exc)}") from exc
         return None
     except engine_http.REQUEST_ERRORS:
         return None
+
+
+def _get_list(url: str) -> list | None:
+    body = _get_json(url)
     return body if isinstance(body, list) else None
+
+
+def _get_dict(url: str) -> dict | None:
+    body = _get_json(url)
+    return body if isinstance(body, dict) else None
 
 
 def worker_states(engine_url: str, fb_id: str) -> list[str] | None:
@@ -113,6 +127,35 @@ def online_worker_count(engine_url: str, fb_id: str) -> int | None:
     if states is None:
         return None
     return sum(1 for s in states if s == "online")
+
+
+WORKER_CAP_REFUSAL = """\
+this lab starts {workers} workers, but the engine's {license} license admits {cap}, so it refuses the rest.
+Run the licensed engine. A scenario whose scenario.json names "engine": "enterprise"
+pulls quay.io/zebbra/neops-workflow-engine, which needs `docker login quay.io`,
+unless NEOPS_WORKFLOW_ENGINE_IMAGE (in .env or the environment) names another
+image: unset it, or point it at a licensed engine.\
+"""
+
+
+def worker_cap_refusal(engine_license: dict, workers: int) -> str | None:
+    """Why an engine with this license cannot serve `workers` workers; None when it can."""
+    cap = (engine_license.get("limits") or {}).get("maxWorkers")
+    if not isinstance(cap, int) or cap >= workers:
+        return None
+    name = engine_license.get("displayName") or engine_license.get("flavor") or "unnamed"
+    return WORKER_CAP_REFUSAL.format(workers=workers, license=name, cap=cap)
+
+
+def license_read(engine_url: str, workers: int) -> bool:
+    """Read the engine's license; False while it is unknown. Raises SystemExit when it admits too few workers."""
+    engine_license = _get_dict(f"{engine_url}/license")
+    if engine_license is None:
+        return False
+    refusal = worker_cap_refusal(engine_license, workers)
+    if refusal:
+        raise SystemExit(refusal)
+    return True
 
 
 TIMEOUT_HINT = """\
@@ -176,6 +219,11 @@ def main() -> int:
         dest="zones",
         help="Network zone that needs an online worker for each block; repeat for several",
     )
+    p.add_argument(
+        "--workers",
+        type=int,
+        help="Number of workers the lab starts; stop at once when the engine's license admits fewer",
+    )
     p.add_argument("--timeout", type=int, default=180, help="Total wait budget in seconds (default: 180)")
     p.add_argument("--interval", type=float, default=2.0, help="Poll interval in seconds (default: 2.0)")
     args = p.parse_args()
@@ -184,8 +232,10 @@ def main() -> int:
     pending = [(fb_id, zone) for fb_id in args.function_blocks for zone in zones]
     deadline = time.monotonic() + args.timeout
     started = time.monotonic()
+    license_checked = not args.workers
 
     while pending:
+        license_checked = license_checked or license_read(args.engine_url, args.workers)
         ready = ready_now(args.engine_url, pending)
         for target, how in ready.items():
             print(f"  [{int(time.monotonic() - started):3d}s] ready: {target[0]} ({how})")

@@ -16,6 +16,11 @@ CONTAINERLAB ?= ./containerlab
 # reads SCENARIO and fails when it is unset, so a scenario is never half-applied.
 SCENARIO ?= wan-and-fabric
 export SCENARIO
+# The engine the scenario's manifest asks for. `enterprise` swaps the public
+# developer preview for the licensed engine, which needs `docker login quay.io`;
+# NEOPS_WORKFLOW_ENGINE_IMAGE still wins over both (docker-compose.yml).
+SCENARIO_ENGINE := $(shell ./resolve_scenario --scenario $(SCENARIO) --engine 2>/dev/null)
+export NEOPS_ENGINE_REPOSITORY := $(if $(filter enterprise,$(SCENARIO_ENGINE)),neops-workflow-engine)
 # The scenario's source assets, its resolved overlay, and the artifacts the
 # generators write beside it.
 SCENARIO_SRC := scenarios/$(SCENARIO)
@@ -48,6 +53,8 @@ CLAB_DIR := $(GEN_DIR)/clab
 ZONE_NAMES = $(shell ls $(ZONE_PARAMS_DIR) 2>/dev/null | sed -n 's/\.json$$//p')
 zone_worker = worker-$(1)
 ZONE_WORKERS = $(foreach zone,$(ZONE_NAMES),$(call zone_worker,$(zone)))
+# Every worker a lab target starts: the central one and one per zone.
+LAB_WORKERS = worker $(ZONE_WORKERS)
 ZONE_READY_ARGS = $(if $(ZONE_NAMES),$(foreach zone,default $(ZONE_NAMES),--zone $(zone)))
 
 # Where this lab runs. These are the only defaults: the compose files and
@@ -456,7 +463,7 @@ local-lab-up: build-docker lab-jwt lab-env generate monitor-config
 	unset NEOPS_ENGINE_TOKEN; \
 	$(MINT_ENGINE_TOKEN); \
 	echo "Waiting for the worker to register its function blocks..."; \
-	./wait_ready $(LAB_ENGINE_ARG) --timeout $(WAIT_READY_TIMEOUT) $(ZONE_READY_ARGS) $(DISCOVER_FB) || { echo; docker compose ps -a worker $(ZONE_WORKERS); echo "(worker log tail:)"; docker compose logs --tail 15 worker $(ZONE_WORKERS); exit 1; }
+	./wait_ready $(LAB_ENGINE_ARG) --workers $(words $(LAB_WORKERS)) --timeout $(WAIT_READY_TIMEOUT) $(ZONE_READY_ARGS) $(DISCOVER_FB) || { echo; docker compose ps -a $(LAB_WORKERS); echo "(worker log tail:)"; docker compose logs --tail 15 $(LAB_WORKERS); exit 1; }
 	# Devices (esp. Nokia SR Linux) boot slower than `containerlab deploy` returns.
 	# Poll from *inside* the lab network (the worker is on lab-net; each zone's
 	# worker on its zone's network), not the host. On macOS/Docker Desktop the
@@ -523,7 +530,7 @@ local-lab-discover: generate
 	@set -e; \
 	$(LAB_CMS_ENV) ./apply_cms_config; \
 	$(MINT_ENGINE_TOKEN); \
-	./wait_ready $(LAB_ENGINE_ARG) --timeout $(WAIT_READY_TIMEOUT) $(ZONE_READY_ARGS) $(DISCOVER_FB); \
+	./wait_ready $(LAB_ENGINE_ARG) --workers $(words $(LAB_WORKERS)) --timeout $(WAIT_READY_TIMEOUT) $(ZONE_READY_ARGS) $(DISCOVER_FB); \
 	$(call WAIT_DEVICES,worker,$(DEPLOYED_PARAMS_DIR)/discover-params.json); \
 	$(WAIT_ZONE_DEVICES) \
 	./run_workflow $(LAB_ENGINE_ARG) --timeout 900 $(DISCOVER_WORKFLOW) @$(DISCOVER_PARAMS); \
@@ -540,7 +547,7 @@ lab-grant:
 	docker compose exec -T cms ./manage.py grant_workflow_permissions --role "$(ROLE)" --profile "$(PROFILE)" --yes
 
 local-lab-logs:
-	docker compose logs -f worker $(ZONE_WORKERS) lab_bootstrap
+	docker compose logs -f $(LAB_WORKERS) lab_bootstrap
 
 # -----------------------------------------------------------------------------
 # Kubernetes Lab — the FRR devices as pods in a local KIND cluster.

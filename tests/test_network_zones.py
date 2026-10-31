@@ -6,10 +6,12 @@ devices. Devices without a zone sit in `default` on `lab-net`, as in every
 other scenario.
 """
 
+import io
 import ipaddress
 import json
 import pathlib
 import re
+import subprocess
 
 import pytest
 
@@ -275,3 +277,82 @@ def test_the_discovery_pins_agree():
 def test_the_zone_discovery_step_runs_in_the_zone_it_is_given():
     zone = (SCENARIOS_DIR / "network-zones" / "workflows" / "zone-discovery.workflow.yaml").read_text()
     assert '    networkZone: "{{ parameters.zone }}"\n' in zone
+
+
+# --- the engine a scenario with zones needs -----------------------------------
+
+COMPOSE = (LAB_DIR / "docker-compose.yml").read_text()
+PREVIEW_LICENSE = {"flavor": "developer-preview", "displayName": "Developer Preview", "limits": {"maxWorkers": 2}}
+
+
+def _manifest(scenario):
+    return json.loads((SCENARIOS_DIR / scenario / "scenario.json").read_text())
+
+
+def _exported_engine_repository(scenario):
+    """What the Makefile exports to docker compose as NEOPS_ENGINE_REPOSITORY for a scenario."""
+    probe = "print-engine-repository: ; @printf '%s\\n' \"$$NEOPS_ENGINE_REPOSITORY\""
+    result = subprocess.run(
+        ["make", "-s", "--no-print-directory", "--eval", probe, "print-engine-repository", f"SCENARIO={scenario}"],
+        cwd=LAB_DIR,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def test_the_network_zones_scenario_asks_for_the_licensed_engine():
+    """It runs a worker per zone beside the central one, more than the developer preview admits."""
+    assert _manifest("network-zones")["engine"] == "enterprise"
+
+
+def test_the_compose_file_takes_the_engine_repository_from_the_makefile():
+    assert "quay.io/zebbra/${NEOPS_ENGINE_REPOSITORY:-neops-workflow-engine-preview}:" in COMPOSE
+
+
+def test_a_scenario_asking_for_the_licensed_engine_gets_its_repository():
+    assert _exported_engine_repository("network-zones") == "neops-workflow-engine"
+
+
+def test_any_other_scenario_keeps_the_developer_preview():
+    assert _exported_engine_repository("wan-and-fabric") == ""
+
+
+def test_an_engine_that_admits_fewer_workers_than_the_lab_starts_is_refused():
+    refusal = wait_ready.worker_cap_refusal(PREVIEW_LICENSE, 3)
+    assert refusal is not None
+    for named in (
+        "3 workers",
+        "Developer Preview license admits 2",
+        "NEOPS_WORKFLOW_ENGINE_IMAGE",
+        "docker login quay.io",
+    ):
+        assert named in refusal
+
+
+@pytest.mark.parametrize("cap", [3, "unlimited"])
+def test_an_engine_that_admits_every_worker_passes(cap):
+    assert wait_ready.worker_cap_refusal({**PREVIEW_LICENSE, "limits": {"maxWorkers": cap}}, 3) is None
+
+
+def test_wait_ready_stops_at_once_on_an_engine_short_of_workers(monkeypatch):
+    """Instead of timing out on the worker the engine refused."""
+
+    def urlopen(req, *_args, **_kwargs):
+        body = PREVIEW_LICENSE if req.full_url.endswith("/license") else []
+        return io.BytesIO(json.dumps(body).encode())
+
+    argv = ["wait_ready", "--workers", "3", "--zone", "default", "--timeout", "600", FB_ID]
+    monkeypatch.setattr(wait_ready.request, "urlopen", urlopen)
+    monkeypatch.setattr(wait_ready.sys, "argv", argv)
+    monkeypatch.setattr(wait_ready.time, "sleep", lambda _s: pytest.fail("polled instead of stopping"))
+    with pytest.raises(SystemExit, match="admits 2"):
+        wait_ready.main()
+
+
+def test_the_lab_tells_wait_ready_how_many_workers_it_starts():
+    for target in ("\nlocal-lab-up:", "\nlocal-lab-discover:"):
+        body = MAKEFILE[MAKEFILE.index(target) :]
+        assert "./wait_ready $(LAB_ENGINE_ARG) --workers $(words $(LAB_WORKERS))" in body[: body.index("\n\n")]
+    assert re.search(r"^LAB_WORKERS = worker \$\(ZONE_WORKERS\)$", MAKEFILE, re.MULTILINE)

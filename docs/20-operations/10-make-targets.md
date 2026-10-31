@@ -63,7 +63,11 @@ The lab targets then also:
   `NEOPS_WORKER_NETWORK_ZONES=<zone>`; the central `worker` serves `default` in
   every scenario;
 - pass `wait_ready` a `--zone` for `default` and for each zone, so it waits until
-  each has an online worker holding `DISCOVER_FB`;
+  each has an online worker holding `DISCOVER_FB`, and `--workers` with the
+  number of workers they start, so it stops at once on an engine whose license
+  admits fewer;
+- run the licensed engine when the scenario's `scenario.json` names
+  `"engine": "enterprise"`, as `network-zones` does;
 - run `wait_devices` for each zone inside that zone's worker, the only container on
   its network;
 - in `local-lab-discover`, discover `default` with `DISCOVER_WORKFLOW` as always,
