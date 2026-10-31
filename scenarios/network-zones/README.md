@@ -89,3 +89,27 @@ in its topology.
 The three generated files cover the `default` devices only. Each zone has one
 generated file, `zones/<zone>.json`, which carries the zone's name beside its
 `/32` targets and credentials.
+
+## Moving a device to another zone
+
+`workflows/move-device.workflow.yaml` is registered with the scenario's other
+workflows as `wf.lab.neops.io/move_device_to_zone:1.0.0`. It runs
+`fb.base.neops.io/device_update_device:0.2.0` on one device, with the block's
+`network_zone` parameter set to the zone you give it:
+
+```bash
+./run_workflow wf.lab.neops.io/move_device_to_zone:1.0.0 '{"zone": "zone-b"}' --ids <device id>
+```
+
+`--ids` takes the device's id in the CMS, which
+`devices(networkZone_Name: "zone-a") { results { id hostname } }` lists. The
+block records the move without connecting to the device, and its job runs in
+the device's current zone. The device's next jobs go to the new zone's
+workers. In this lab those workers cannot reach the device's own subnet, so
+move it back with `'{"zone": "zone-a"}'` before you run anything else on it.
+
+When the device's current zone has no worker left, as at a site that is
+already unreachable, copy the workflow and give its step
+`networkZone: { name: <target zone>, override: true }`: the job then runs on a
+worker of the target zone, and only the `network_zone` parameter moves the
+device.

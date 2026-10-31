@@ -356,3 +356,13 @@ def test_the_lab_tells_wait_ready_how_many_workers_it_starts():
         body = MAKEFILE[MAKEFILE.index(target) :]
         assert "./wait_ready $(LAB_ENGINE_ARG) --workers $(words $(LAB_WORKERS))" in body[: body.index("\n\n")]
     assert re.search(r"^LAB_WORKERS = worker \$\(ZONE_WORKERS\)$", MAKEFILE, re.MULTILINE)
+
+
+def test_the_move_example_moves_one_device_with_the_zone_it_is_given():
+    move = (SCENARIOS_DIR / "network-zones" / "workflows" / "move-device.workflow.yaml").read_text()
+    assert _workflow_identity(SCENARIOS_DIR / "network-zones" / "workflows" / "move-device.workflow.yaml") == (
+        "wf.lab.neops.io/move_device_to_zone:1.0.0"
+    )
+    assert _top_level_field(move, "seedEntity") == "device"
+    assert '    functionBlock: "fb.base.neops.io/device_update_device:0.2.0"\n' in move
+    assert '      network_zone: "{{ parameters.zone }}"\n' in move
