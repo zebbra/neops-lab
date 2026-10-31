@@ -43,7 +43,7 @@ Monitor app
 :   A **different repo**: a shared, *remote* FastAPI service giving automated tests exclusive, FIFO-queued access to real [Netlab](https://netlab.tools/) topologies. Published to PyPI and imported by `neops-worker-sdk-py` as `remote_lab_fixture`. **It shares nothing with this repo.** See [NeOps ecosystem](neops-ecosystem.md).
 
 Network zone
-:   A network a set of workers can reach. The workflow engine hands a job only to a worker serving the job's zone, and discovery records each device in the zone its job ran in. A device with no zone is in `default`, which the CMS keeps no row for. In this lab a zone is a subnet of its own with a worker of its own (`worker-<zone>`), declared under `zones` in a scenario's `topology.json`; the central `worker` serves `default`. See the `network-zones` scenario in [Scenarios](../30-scenarios/index.md).
+:   A network zone is a network that only its own workers reach; zones may reuse each other's addresses. The workflow engine hands a job only to a worker serving the job's zone, and discovery records each device in the zone its job ran in. A device with no zone is in `default`, which the CMS keeps no row for. In this lab a zone is a subnet of its own with a worker of its own (`worker-<zone>`), declared under `zones` in a scenario's `topology.json`; the central `worker` serves `default`. See the `network-zones` scenario in [Scenarios](../30-scenarios/index.md).
 
 Platform
 :   In discovery parameters, the short vendor name that selects the SDK connection plugin: `frr` → `FRRNetmikoPlugin`, `srl` → `SRLinuxNetmikoPlugin`. Matches the `vendor` field in the scenario's `topology.json`.

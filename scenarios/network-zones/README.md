@@ -1,5 +1,8 @@
 # Network zones
 
+A network zone is a network that only its own workers reach; zones may reuse
+each other's addresses.
+
 Six FRR routers in three network zones. Two sit on the lab network in
 `default`, as every other scenario's devices do; `zone-a` and `zone-b` each hold
 two on a subnet of their own, with a worker attached to that subnet alone.

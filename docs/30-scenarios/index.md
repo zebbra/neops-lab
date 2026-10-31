@@ -123,9 +123,10 @@ file.
 
 ## Network zones in a scenario
 
-A topology may declare network zones. The lab gives each one what a file
-overlay cannot carry: a management network, a containerlab topology and a
-worker of its own.
+A network zone is a network that only its own workers reach; zones may reuse
+each other's addresses. A topology may declare network zones. The lab gives
+each one what a file overlay cannot carry: a management network, a
+containerlab topology and a worker of its own.
 
 ```json
 {
