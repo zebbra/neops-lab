@@ -83,8 +83,8 @@ make doctor
 - **`uv`** — only for `make test` / `make lint` / `make check` and the docs.
 - **`cms_api_key.env`** exists (produced by `make local-env-init` — needed once).
 - **A worker image that carries `fb.base.neops.io/global_discover_network:0.2.0`.**
-  That version ships first in neops-worker-sdk `0.4.0`, which needs engine
-  `0.45.0`, which in turn needs a CMS from neops-core `2.4.0`: the engine
+  That version ships first in neops-worker-sdk `0.5.0`, which needs engine
+  `0.46.0`, which in turn needs a CMS from neops-core `2.4.0`: the engine
   refuses every worker until it has read the network zones from the CMS.
   `.env.example` pins all three (`NEOPS_WORKER_SDK_IMAGE`, `NEOPS_ENGINE_TAG`,
   `NEOPS_CMS_IMAGE`); move them together. When you pin another worker tag,

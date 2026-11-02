@@ -27,7 +27,7 @@ services:
       # zone exists the engine refuses a worker that lists none, and lab zones
       # outlive a scenario switch in the CMS volume. It belongs here and never in
       # .env: a zone's worker that missed its own setting must stop, not fall
-      # back to default. A worker image before SDK 0.4 ignores it.
+      # back to default. A worker image before SDK 0.5 ignores it.
       NEOPS_WORKER_NETWORK_ZONES: default
       NEOPS_BLOCKING_DETECTOR: "true"
     volumes:

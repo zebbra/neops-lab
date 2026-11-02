@@ -142,8 +142,8 @@ Discovery runs the `fb.base.neops.io/global_discover_network:0.2.0` block, which
 | Worker image built from | Function blocks | Discovery |
 |---|---|---|
 | `quay.io/zebbra/neops-worker-sdk:develop`, the default | base blocks, including `global_discover_network` | Works on an engine of the release line its client pins |
-| `quay.io/zebbra/neops-worker-sdk:0.4.0` | base blocks, including `global_discover_network:0.2.0` | Works on engine `0.45.0` or later |
-| `quay.io/zebbra/neops-worker-sdk:0.3.0` | base blocks, with `global_discover_network` at `0.1.0` | `wait_ready` times out: discovery names `0.2.0` |
+| `quay.io/zebbra/neops-worker-sdk:0.5.0` | base blocks, including `global_discover_network:0.2.0` | Works on engine `0.46.0` or later |
+| `quay.io/zebbra/neops-worker-sdk:0.4.0` and older | base blocks, with `global_discover_network` at `0.1.0` | `wait_ready` times out: discovery names `0.2.0` |
 | the `neops-worker-sdk-py` checkout, `make build-docker` | whatever the checked-out branch carries | Works if that branch has `global_discover_network` |
 | any image built without `neops/fb` | none | `wait_ready` times out with *no online worker* |
 

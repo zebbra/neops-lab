@@ -91,20 +91,20 @@ timeout: no online worker for fb.base.neops.io/global_discover_network:0.2.0 wit
 ```
 
 **Cause:** the worker image you pinned does not carry
-`global_discover_network` at `0.2.0`: a release before `0.4.0` (it carries
+`global_discover_network` at `0.2.0`: a release before `0.5.0` (it carries
 `0.1.0`, and a `.env` written before this release still pins one), an old
 prerelease tag or an old local build. The
 block ships *inside* the image rather than being bind-mounted from here, so the
 worker starts, registers the blocks it has, and never announces this one;
 `wait_ready` waits for it until the budget runs out.
 
-Engine `0.45.0` refuses every worker until it has read the network zones from
+Engine `0.46.0` refuses every worker until it has read the network zones from
 the CMS, so a CMS older than neops-core `2.4.0` gives the same timeout with the
 right worker image; `docker compose logs worker` then shows the refused
 registration. Pin the CMS from `.env.example` too.
 
 **Fix:** check what the image actually holds, and fall back to the published
-`develop` tag, a `0.4.x` release, or a fresh build of an
+`develop` tag, a `0.5.x` release, or a fresh build of an
 SDK checkout that has it:
 
 ```bash
@@ -114,7 +114,7 @@ echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
 make local-lab-up
 ```
 
-Re-pinning another `0.4.x` the same way? Run the `discover_network.py`
+Re-pinning another `0.5.x` the same way? Run the `discover_network.py`
 check against it before `make local-lab-up`.
 
 ### A network zone never becomes ready
@@ -127,7 +127,7 @@ timeout: no online worker for fb.base.neops.io/global_discover_network:0.2.0 in 
 
 **Cause:** `worker-<zone>` is not online in its zone. It exits when the engine
 refuses its registration: the zone is missing from the CMS, or the engine
-predates network zones. A worker image older than SDK 0.4.0 ignores
+predates network zones. A worker image older than SDK 0.5.0 ignores
 `NEOPS_WORKER_NETWORK_ZONES` and registers in `default` only, so it never
 counts for a zone.
 
@@ -139,8 +139,8 @@ SCENARIO=network-zones COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 make apply-cms-config SCENARIO=network-zones   # creates the zones; stops on a CMS without them
 ```
 
-The scenario needs a CMS from neops-core 2.4.0, engine 0.45.0 and worker SDK
-0.4.0 or later, the releases `.env.example` pins; a `.env` written before them
+The scenario needs a CMS from neops-core 2.4.0, engine 0.46.0 and worker SDK
+0.5.0 or later, the releases `.env.example` pins; a `.env` written before them
 keeps its older pins.
 
 ### The engine's license admits fewer workers than the lab starts
