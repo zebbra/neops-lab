@@ -64,3 +64,13 @@ def test_a_fresh_clone_has_no_env_to_check(tmp_path, monkeypatch, capsys):
     _lab(tmp_path, monkeypatch)
     assert check.main() == 0
     assert capsys.readouterr().out == ""
+
+
+def test_an_inline_comment_is_not_part_of_the_pin():
+    """As compose reads a .env: ` #` ends an unquoted value; inside quotes it is the value."""
+    assert check.pins("A=0.46.0 # held for the demo\nB='x # y' # why\nC=\"v\"  # c\nD=1#2\n") == {
+        "A": "0.46.0",
+        "B": "x # y",
+        "C": "v",
+        "D": "1#2",
+    }

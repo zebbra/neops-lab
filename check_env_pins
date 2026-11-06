@@ -15,7 +15,9 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 ASSIGNMENT = re.compile(r"^(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=\s*(.*)$")
-QUOTED = re.compile(r"^([\"'])(.*)\1$")
+# A quoted value is taken whole; an unquoted one ends at whitespace followed by `#`, as compose reads it.
+QUOTED = re.compile(r"^([\"'])(.*?)\1(?:\s+#.*)?$")
+INLINE_COMMENT = re.compile(r"\s+#.*$")
 
 
 def pins(text: str) -> dict[str, str]:
@@ -26,7 +28,7 @@ def pins(text: str) -> dict[str, str]:
 
 def unquoted(value: str) -> str:
     quoted = QUOTED.match(value)
-    return quoted.group(2) if quoted else value
+    return quoted.group(2) if quoted else INLINE_COMMENT.sub("", value)
 
 
 def differences(env: dict[str, str], example: dict[str, str]) -> list[str]:
