@@ -79,7 +79,7 @@ Bringing the pods up needs no product stack. Wiring them to one is a separate ta
 make kind-lab-cms-config   # grant the CMS role and seed the Global scope
 ```
 
-That runs `apply_cms_config`, the compose lab's own script, reused rather than copied: it drives `manage.py` through a `CMS_EXEC` prefix, which this flavour sets to `kubectl exec` instead of `docker compose exec`. Without it a freshly installed CMS gives the `neops` user no role, and the web client shows *You don't have access to any scope*.
+That runs `apply_cms_config`, the compose lab's own script, reused rather than copied: it drives `manage.py` through a `CMS_EXEC` prefix, which this flavour sets to `kubectl exec` instead of `docker compose exec`. Without it a freshly installed CMS gives the `neops` user no role, and the web client shows *You don't have access to any scope*. The CMS must be neops-core 2.4.0 or later: the script grants the role through core's `bootstrap_admin_role`, which earlier releases lack.
 
 The host reaches the CMS through a short-lived `kubectl port-forward` that the target opens and tears down, so no ingress, public DNS or TLS is involved.
 

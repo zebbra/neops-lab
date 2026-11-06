@@ -239,7 +239,7 @@ Load-bearing and usually not obvious from the code:
   `networks: !override` (compose ≥ 2.24.4; without it compose merges `lab-net`
   in). `gen_clab_topology` owns every zone name, and `DEFAULT_ZONE` lives once,
   in `gen_device_configs`: the Makefile asks the generator
-  (`--zone-workers`, `--ready-zones`) rather than spelling a worker or `default`
+  (`--zone-workers`, `--ready-zones`, `--topologies`) rather than spelling a worker, a topology or `default`
   itself. The central worker's
   `NEOPS_WORKER_NETWORK_ZONES: default` lives in `docker-compose.worker.yml`
   for every scenario and **never in `.env`/`.env.example`**: a zone worker that
@@ -287,9 +287,13 @@ Load-bearing and usually not obvious from the code:
   each down target reads the marker to tear down what
   is actually deployed, not what `SCENARIO` currently says, and then removes it.
   While the marker names the scenario, `generate` keeps the topology of a zone
-  removed from it (`--keep-topologies`); `local-lab-down` destroys every
-  topology it finds, deletes each one it tore down, and runs `docker compose
-  down --remove-orphans` for that zone's worker.
+  removed from it (`--keep-topologies`), and `local-lab-up` deploys only the
+  declared ones (`--topologies`). `local-lab-down` destroys every topology it
+  finds, deletes each one it tore down, runs `docker compose down
+  --remove-orphans` for that zone's worker, and then `docker network rm`s each
+  torn-down topology's mgmt network: containerlab skips a network a worker is
+  still on, and compose removes only the networks its current `zones.yml`
+  declares.
   Neither runtime removes devices the handed input does not name —
   `containerlab destroy` acts on the topology's node list, `kubectl apply` never
   deletes — so without the marker a switch to a smaller scenario strands the

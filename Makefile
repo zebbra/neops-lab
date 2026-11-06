@@ -44,7 +44,6 @@ DEPLOYED_PARAMS_DIR := $(GEN_DIR)/workflow-execution-parameters
 # A scenario with network zones also gets one parameter file per zone, named
 # after it, and one containerlab topology per zone beside the default one.
 ZONE_PARAMS_DIR := $(DEPLOYED_PARAMS_DIR)/zones
-CLAB_DIR := $(GEN_DIR)/clab
 # What a lab target reads of the zones, from gen_clab_topology, which names
 # them: each declared zone paired with its worker's compose service as
 # `<zone>:<service>`, and the zones wait_ready waits for a worker in (default
@@ -57,6 +56,11 @@ ZONE_NAMES = $(foreach pair,$(ZONE_WORKER_PAIRS),$(call pair_zone,$(pair)))
 # Every worker a lab target starts: the central one and one per zone.
 LAB_WORKERS = worker $(foreach pair,$(ZONE_WORKER_PAIRS),$(call pair_worker,$(pair)))
 ZONE_READY_ARGS = $(foreach zone,$(READY_ZONES),--zone $(zone))
+# The containerlab topologies the scenario declares: default's and one per zone.
+# A zone removed while deployed keeps its file for local-lab-down, never for a deploy.
+CLAB_TOPOLOGIES = $(shell ./gen_clab_topology --scenario $(SCENARIO) --topologies)
+# The mgmt network a containerlab topology file names.
+CLAB_MGMT_NETWORK = python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["mgmt"]["network"])'
 
 # Where this lab runs. These are the only defaults: the compose files and
 # gen_clab_topology fail when one is unset. Override them to run a second lab
@@ -461,7 +465,7 @@ local-lab-up: build-docker lab-jwt lab-env generate monitor-config
 	echo "Waiting for workflow registration (lab_bootstrap) to finish..."; \
 	docker compose wait lab_bootstrap; \
 	echo "Deploying containerlab devices (real links)..."; \
-	for topo in $(CLAB_DIR)/*.clab.json; do $(CONTAINERLAB) deploy --reconfigure -t "$$topo"; done; \
+	for topo in $(CLAB_TOPOLOGIES); do $(CONTAINERLAB) deploy --reconfigure -t "$$topo"; done; \
 	unset NEOPS_ENGINE_TOKEN; \
 	$(MINT_ENGINE_TOKEN); \
 	echo "Waiting for the worker to register its function blocks..."; \
@@ -493,16 +497,25 @@ local-lab-down:
 	# from the topology while it was deployed. A topology that is torn down is
 	# deleted with it; `generate` writes the declared ones again.
 	# --cleanup removes the per-lab runtime dir
-	# (generated/<scenario>/clab/clab-$(LAB_NAME)); `|| true` lets `make`
-	# continue if no lab is deployed.
-	@for topo in generated/$(CLAB_DEPLOYED_SCENARIO)/clab/*.clab.json; do \
+	# (generated/<scenario>/clab/clab-$(LAB_NAME)); a failed destroy, as when
+	# no lab is deployed, keeps the topology and does not stop the target.
+	# --remove-orphans takes the worker of a zone the topology no longer
+	# declares, but compose removes only the networks its current files declare,
+	# and containerlab keeps a network a worker is still on. So each torn-down
+	# topology's mgmt network goes by name after compose is done.
+	@nets=""; \
+	for topo in generated/$(CLAB_DEPLOYED_SCENARIO)/clab/*.clab.json; do \
 		test -f "$$topo" || continue; \
 		echo "$(CONTAINERLAB) destroy -t $$topo --cleanup"; \
-		$(CONTAINERLAB) destroy -t "$$topo" --cleanup && rm -f "$$topo" || true; \
-	done
-	@rm -f $(CLAB_DEPLOYED_MARKER)
-	# --remove-orphans takes the worker of a zone the topology no longer declares.
-	docker compose down --remove-orphans
+		$(CONTAINERLAB) destroy -t "$$topo" --cleanup || continue; \
+		nets="$$nets $$($(CLAB_MGMT_NETWORK) "$$topo")"; \
+		rm -f "$$topo"; \
+	done; \
+	rm -f $(CLAB_DEPLOYED_MARKER); \
+	echo "docker compose down --remove-orphans"; \
+	docker compose down --remove-orphans; down=$$?; \
+	for net in $$nets; do docker network rm "$$net" >/dev/null 2>&1 && echo "removed network $$net"; done; \
+	exit $$down
 
 full-e2e-test:
 	# Teardown precedes the prune: the prune's base-only compose file cannot

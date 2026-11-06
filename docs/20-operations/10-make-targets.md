@@ -46,7 +46,7 @@ Only one scenario runs at a time: they share `lab-net`, the `172.30.0.0/24` subn
 | `make local-lab-up` | Depends on `build-docker`, `lab-jwt`, `lab-env` and `generate`, which renders the containerlab topology + device configs from the scenario's `topology.json`. Refreshes the worker image, starts the CMS and waits for it to be healthy, runs `apply_cms_config`, mints an engine token, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `./containerlab deploy --reconfigure`s every topology of the scenario (re-runnable), mints a fresh token, waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`, and on a scenario whose `scenario.json` leaves `clab` out of its `flavours`. With network zones, see [below](#network-zones). |
 | `make local-lab-discover` | Runs `apply_cms_config`, mints one engine token, waits for the discovery function block and for device SSH, then POSTs a workflow execution and polls to a terminal state (15-minute ceiling). Override `DISCOVER_PARAMS` to change targeting. With network zones it then runs `DISCOVER_WORKFLOW` once more per zone. |
 | `make local-lab-logs` | `docker compose logs -f worker lab_bootstrap`, plus each zone's worker. |
-| `make local-lab-down` | `./containerlab destroy --cleanup` for every topology of the deployed scenario (removes the devices, `generated/<scenario>/clab/clab-neops-lab*/` and each topology it tore down), then `docker compose down --remove-orphans`, which also takes the worker of a zone the scenario no longer declares. Volumes survive, and with them the CMS's network zones. |
+| `make local-lab-down` | `./containerlab destroy --cleanup` for every topology of the deployed scenario (removes the devices, `generated/<scenario>/clab/clab-neops-lab*/` and each topology it tore down), then `docker compose down --remove-orphans`, which also takes the worker of a zone the scenario no longer declares, and last removes each torn-down topology's mgmt network, which neither containerlab (a worker was still on it) nor compose (its `zones.yml` no longer names it) removes for such a zone. Volumes survive, and with them the CMS's network zones. |
 | `make clab-suid` | For the `CLAB_NATIVE` (host binary) path: sets the SUID bit on the `containerlab` binary so the lab targets can deploy without `sudo`. Idempotent — it only prompts for a password when the bit is missing — and warns if you are not in `clab_admins`. Re-run after every containerlab upgrade. See [Prerequisites](../getting-started/10-prerequisites.md#native-binary-optional). |
 
 The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml`, so they see the worker overlay, with `generated/<scenario>/compose/zones.yml` appended when the scenario has network zones (`local-lab-down` takes the deployed scenario's); `clab-suid` touches no containers, and the `local-env-*` targets do not get the overlay either.
@@ -56,7 +56,7 @@ The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 A scenario whose `topology.json` declares `zones` (today `network-zones`) runs one
 containerlab topology, one network and one worker per zone beside the default lab.
 `gen_clab_topology` names them all; the targets ask it with `--zone-workers`
-(`<zone>:<service>` per zone) and `--ready-zones`. The lab targets then also:
+(`<zone>:<service>` per zone), `--ready-zones` and `--topologies`. The lab targets then also:
 
 - seed the zones in the CMS through `apply_cms_config`, before `docker compose up -d`
   starts any worker, because a zone's worker is refused while its zone is missing;
@@ -87,7 +87,7 @@ A scenario without `zones` gets none of this, and its targets run as before.
 | `NEOPS_ENGINE_TOKEN` (env) | *(minted per target)* | Engine access token; export one to reuse it across targets. `local-lab-up` mints a fresh one after the containerlab deploy |
 | `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.2.0` | The function block `wait_ready` blocks on. Shared with the Kubernetes flavour |
 | `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.4.0` | The definition that is executed; must match the version in the workflow YAML. Shared with the Kubernetes flavour |
-| `CLAB_DIR` | `$(GEN_DIR)/clab` | The generated containerlab topologies: `neops-lab.clab.json`, and `neops-lab-<zone>.clab.json` per zone |
+| `CLAB_TOPOLOGIES` | from `./gen_clab_topology --topologies` | The containerlab topologies `local-lab-up` deploys: `generated/<scenario>/clab/neops-lab.clab.json`, and `neops-lab-<zone>.clab.json` per declared zone |
 | `CONTAINERLAB` | `./containerlab` | The containerlab launcher |
 | `CLAB_IMAGE` (env) | `ghcr.io/srl-labs/clab:0.78.2` | containerlab version the launcher runs |
 | `WAIT_READY_TIMEOUT` | `180` | Seconds `wait_ready` waits for an online worker |
@@ -109,7 +109,7 @@ A separate flavour that runs the FRR devices as pods in a local KIND cluster. It
 | `make kind-lab-up` | Depends on `build-docker-frr` and `scenario-resolve`. `kind load`s the image onto the cluster nodes, generates `generated/$(SCENARIO)/kind/lab.yaml` from the scenario's `topology.json`, applies it, waits for every Deployment to become Available, then prints each device's in-cluster DNS name. Renders `vendor: "frr"` devices only, so the scenario must declare the `kind` flavour; `kind-lab-up`, `kind-lab-cms-config` and `kind-lab-discover` refuse one that does not. |
 | `make kind-lab-status` | `kubectl get pods,svc` in the lab namespace. |
 | `make kind-lab-down` | Deletes the namespace. The cluster itself is never touched. |
-| `make kind-lab-cms-config` | Runs `apply_cms_config` against a Kubernetes-deployed CMS: grants the `neops` user the `lab-admin` role and seeds the `Global` scope, without which the web client shows no scope at all. Idempotent. |
+| `make kind-lab-cms-config` | Runs `apply_cms_config` against a Kubernetes-deployed CMS, which must be neops-core 2.4.0 or later: grants the `neops` user the `lab-admin` role and seeds the `Global` scope, without which the web client shows no scope at all. Idempotent. |
 | `make kind-lab-discover` | Publishes the workflow definition with `bootstrap/register.py`, generates the per-device targets with `./gen_kind_discover_params`, waits for the discovery function block with `./wait_ready`, then executes it with `./run_workflow`. Depends on `build-docker-bootstrap`, and on the engine being reachable at `KIND_ENGINE_URL`. |
 
 `kind-lab-cms-config` opens a short-lived `kubectl port-forward` to the CMS and reads the API key from a cluster Secret; it touches nothing else in the product namespace. Getting the *devices* into the CMS is discovery's job, and `kind-lab-discover` does it by driving the same workflow, the same function block and the same four scripts the containerlab flavour uses — it needs a worker image that actually carries `global_discover_network`. See [Kubernetes lab](50-kubernetes-lab.md).

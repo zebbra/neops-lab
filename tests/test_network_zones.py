@@ -9,6 +9,7 @@ other scenario.
 import io
 import ipaddress
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -283,11 +284,58 @@ def test_generate_keeps_the_topologies_of_the_deployed_scenario():
     assert "$(CLAB_DEPLOYED_MARKER)" in body
 
 
-def test_local_lab_down_removes_orphaned_zone_workers_and_prunes_the_topologies():
-    body = MAKEFILE[MAKEFILE.index("\nlocal-lab-down:\n") :]
-    body = body[: body.index("\n\n")]
-    assert "docker compose down --remove-orphans" in body
-    assert 'rm -f "$$topo"' in body
+STUB = """#!/bin/sh
+echo "$(basename "$0") $*" >> "$STUB_LOG"
+"""
+
+
+@pytest.fixture
+def lab_copy(tmp_path):
+    """The repo seen through symlinks, with a `generated/` of its own, so a recipe runs without touching it."""
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    for entry in LAB_DIR.iterdir():
+        if entry.name not in ("generated", ".git"):
+            (lab / entry.name).symlink_to(entry)
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    for name in ("docker", "containerlab"):
+        (stubs / name).write_text(STUB)
+        (stubs / name).chmod(0o755)
+    return lab, stubs, tmp_path / "calls.log"
+
+
+def _deployed_topology(lab, name, network):
+    path = lab / "generated" / "network-zones" / "clab" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"name": name, "mgmt": {"network": network}}))
+    return path
+
+
+def test_local_lab_down_removes_a_removed_zones_worker_network_and_topology(lab_copy):
+    """containerlab keeps a network a worker is still on, and compose down only removes the networks
+    its current zones.yml declares, so the zone that left the topology goes by name."""
+    lab, stubs, log = lab_copy
+    kept = _deployed_topology(lab, "neops-lab.clab.json", "lab-net")
+    removed = _deployed_topology(lab, "neops-lab-zone-gone.clab.json", "lab-net-zone-gone")
+    (lab / "generated" / ".deployed-scenario-clab").write_text("network-zones\n")
+
+    subprocess.run(
+        ["make", "-s", "local-lab-down", f"CONTAINERLAB={stubs / 'containerlab'}"],
+        cwd=lab,
+        env={**os.environ, "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}", "STUB_LOG": str(log)},
+        capture_output=True,
+        check=True,
+    )
+
+    calls = log.read_text().splitlines()
+    assert f"containerlab destroy -t generated/network-zones/clab/{removed.name} --cleanup" in calls
+    assert "docker compose down --remove-orphans" in calls
+    assert "docker network rm lab-net-zone-gone" in calls
+    assert calls.index("docker compose down --remove-orphans") < calls.index("docker network rm lab-net-zone-gone")
+    assert not kept.exists()
+    assert not removed.exists()
+    assert not (lab / "generated" / ".deployed-scenario-clab").exists()
 
 
 @pytest.mark.parametrize(
@@ -348,6 +396,22 @@ def test_the_generator_names_the_zones_the_lab_waits_for():
     """Once zones exist, default needs an online worker of its own too."""
     assert _query("--ready-zones") == "default zone-a zone-b"
     assert _query("--ready-zones", scenario="wan-and-fabric") == ""
+
+
+def test_the_generator_names_the_topologies_the_lab_deploys():
+    clab = "generated/network-zones/clab"
+    assert _query("--topologies") == (
+        f"{clab}/neops-lab.clab.json {clab}/neops-lab-zone-a.clab.json {clab}/neops-lab-zone-b.clab.json"
+    )
+    assert _query("--topologies", scenario="frr-only") == "generated/frr-only/clab/neops-lab.clab.json"
+
+
+def test_local_lab_up_deploys_the_declared_topologies_only():
+    """A zone removed while deployed keeps its file for local-lab-down; up must not bring it back."""
+    body = MAKEFILE[MAKEFILE.index("\nlocal-lab-up:") :]
+    body = body[: body.index("\n\n")]
+    assert "for topo in $(CLAB_TOPOLOGIES); do $(CONTAINERLAB) deploy" in body
+    assert "*.clab.json" not in body
 
 
 def test_the_lab_targets_take_the_zones_from_the_generator():
