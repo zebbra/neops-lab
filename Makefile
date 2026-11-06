@@ -192,9 +192,11 @@ lab-jwt:
 
 # A fresh clone has no .env; copy the example so there is one to edit. Its only
 # active line pins the worker image; every other value is commented out.
+# An existing .env is left alone, with a warning for each pin it no longer shares.
 lab-env:
 	@if [ -f .env ]; then \
 		echo ".env already present — skipping"; \
+		./check_env_pins || true; \
 	else \
 		cp .env.example .env && echo "created .env from .env.example"; \
 	fi

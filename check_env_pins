@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Warn when an existing `.env` pins other images than `.env.example` (stdlib-only, run on the host).
+
+`make lab-env` copies `.env.example` only into a fresh clone, so a checkout that already has a
+`.env` keeps the pins it was made with. When `.env.example` moves a pin on, say to a worker that
+carries a block a scenario now names, the old `.env` still brings the lab up and `wait_ready` times
+out with no word of why. This names every pin that differs. It only warns: a pin set on purpose stays.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent
+ASSIGNMENT = re.compile(r"^(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=\s*(.*)$")
+QUOTED = re.compile(r"^([\"'])(.*)\1$")
+
+
+def pins(text: str) -> dict[str, str]:
+    """The active assignments of an env file, quotes off; a commented-out line is not a pin."""
+    found = (ASSIGNMENT.match(line.strip()) for line in text.splitlines())
+    return {match.group(1): unquoted(match.group(2).strip()) for match in found if match}
+
+
+def unquoted(value: str) -> str:
+    quoted = QUOTED.match(value)
+    return quoted.group(2) if quoted else value
+
+
+def differences(env: dict[str, str], example: dict[str, str]) -> list[str]:
+    said = []
+    for key, value in example.items():
+        if key not in env:
+            said.append(f".env leaves {key} unset; .env.example pins {value}")
+        elif env[key] != value:
+            said.append(f".env pins {key}={env[key]}; .env.example pins {value}")
+    return said
+
+
+def main() -> int:
+    env = ROOT / ".env"
+    if not env.exists():
+        return 0
+    stale = differences(pins(env.read_text()), pins((ROOT / ".env.example").read_text()))
+    for line in stale:
+        print(f"warning: {line}")
+    if stale:
+        print("  copy the new pins into .env unless you set yours on purpose; a worker older than the")
+        print("  one .env.example pins lacks blocks the scenarios name, and wait_ready times out")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
