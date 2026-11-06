@@ -82,11 +82,11 @@ def online_worker_count(engine_url: str, fb_id: str) -> int | None:
 
 TIMEOUT_HINT = """\
 Likely causes, most common first:
-  * the worker container is stopped or crash-looping: check
-    `docker compose ps worker` and `make local-lab-logs`;
+  * the worker container is stopped or crash-looping: `make local-lab-logs`
+    shows its last words;
   * the worker image lacks the block, most often because `.env` pins an older
     worker than `.env.example` (`./check_env_pins` names it); see what the image
-    carries with `docker compose exec worker ls /app/neops/fb`;
+    carries with `docker run --rm --entrypoint ls <NEOPS_WORKER_SDK_IMAGE> /app/neops/fb`;
   * the worker is still starting: re-run, or raise WAIT_READY_TIMEOUT.\
 """
 
