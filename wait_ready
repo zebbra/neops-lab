@@ -18,7 +18,7 @@ like `make local-lab-discover` can run deterministically instead of racing.
 
 Usage
 -----
-    ./wait_ready fb.base.neops.io/global_discover_network:0.1.0 [more fb ids ...]
+    ./wait_ready fb.base.neops.io/global_discover_network:0.2.0 [more fb ids ...]
 
 Exit codes
 ----------
