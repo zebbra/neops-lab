@@ -238,6 +238,14 @@ Load-bearing and usually not obvious from the code:
   flow — descriptions must never be rendered twice. `kind-lab-down` deletes the
   namespace and nothing else; the cluster is shared and is never created or
   destroyed from here.
+- **The engine's logs are queryable only through the `victorialogs` service.**
+  The monitor app's log views read them back through the engine
+  (`NEOPS_LOG_BACKEND=victorialogs`); without a store the engine logs to stdout
+  only and the views say "This engine stores no logs". Needs engine `v0.44.0`
+  or later. The image has no shell or wget, so the service has no healthcheck
+  and the engine depends on it with `service_started`: the engine keeps lines
+  in its Postgres outbox until the store answers. Do not add a `wget`/`curl`
+  healthcheck — it can only ever fail.
 - **`scenarios/_base/cms/oidc-config.json` must contain at least one well-formed
   `OpenIdConfiguration` entry with inline `authWellknownEndpoints`** (no network
   discovery). The web client's Angular bootstrap calls

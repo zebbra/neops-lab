@@ -297,7 +297,7 @@ lab_token               # prints a Neops access token for the engine (NEOPS_ENGI
 run_workflow            # triggers a workflow execution and waits for a terminal state
 wait_ready              # blocks until the worker's function block has an online worker
 wait_devices            # blocks until every device in the scenario accepts SSH
-docker-compose.yml               # base stack (CMS, engine, monitor app, web client, postgres, ES, redis)
+docker-compose.yml               # base stack (CMS, engine, monitor app, web client, postgres, ES, redis, victorialogs)
 docker-compose.worker.yml        # worker + lab_bootstrap + the lab-net network definition
 tests/                  # unit tests for the generators and the scenario overlay
 ```
