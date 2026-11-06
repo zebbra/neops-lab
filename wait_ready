@@ -158,9 +158,10 @@ Likely causes, most common first:
 
 ZONE_HINT = """\
 A zone that never becomes ready:
-  * its worker exited: `docker compose ps -a` and that worker's log. It is
-    refused while the CMS holds no such zone (apply_cms_config seeds them), and
-    a worker or engine image older than network zones never serves one.\
+  * its worker exited: `make local-lab-logs SCENARIO=<scenario>` shows every
+    worker's last words. It is refused while the CMS holds no such zone
+    (apply_cms_config seeds them), and a worker or engine image older than
+    network zones never serves one.\
 """
 
 
