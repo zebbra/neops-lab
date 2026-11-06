@@ -46,6 +46,9 @@ services:
       # Access token for the engine's publish route, minted by ./lab_token and
       # interpolated at `up -d`. The lab make targets export it.
       NEOPS_ENGINE_TOKEN: ${NEOPS_ENGINE_TOKEN:-}
+      # Published first, so the engine's definition cap never refuses it. The
+      # Makefile exports it; unset, documents publish in plain file order.
+      DISCOVER_WORKFLOW: ${DISCOVER_WORKFLOW:-}
     volumes:
       - ./generated/${SCENARIO:?set SCENARIO or drive compose through make; see 'make scenarios'}/scenario/workflows:/workflows:ro
     restart: "no"
