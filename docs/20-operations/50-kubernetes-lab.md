@@ -16,7 +16,7 @@ Only `vendor: "frr"` devices are rendered, so a scenario declares whether it sup
 "flavours": ["clab", "kind"]
 ```
 
-Both shipped scenarios do. `make kind-lab-up SCENARIO=frr-only` brings up the same ten devices as the containerlab flavour of that scenario, since `frr-only` has no SR Linux nodes to leave out.
+`wan-and-fabric` and `frr-only` do; `network-zones` does not, and the `kind-lab-*` targets refuse a scenario whose `flavours` leave out `kind` before they touch the cluster. `make kind-lab-up SCENARIO=frr-only` brings up the same ten devices as the containerlab flavour of that scenario, since `frr-only` has no SR Linux nodes to leave out.
 
 ## Targets
 
@@ -79,7 +79,7 @@ Bringing the pods up needs no product stack. Wiring them to one is a separate ta
 make kind-lab-cms-config   # grant the CMS role and seed the Global scope
 ```
 
-That runs `apply_cms_config`, the compose lab's own script, reused rather than copied: it drives `manage.py` through a `CMS_EXEC` prefix, which this flavour sets to `kubectl exec` instead of `docker compose exec`. Without it a freshly installed CMS gives the `neops` user no role, and the web client shows *You don't have access to any scope*.
+That runs `apply_cms_config`, the compose lab's own script, reused rather than copied: it drives `manage.py` through a `CMS_EXEC` prefix, which this flavour sets to `kubectl exec` instead of `docker compose exec`. Without it a freshly installed CMS gives the `neops` user no role, and the web client shows *You don't have access to any scope*. The CMS must be neops-core 2.4.0 or later: the script grants the role through core's `bootstrap_admin_role`, which earlier releases lack.
 
 The host reaches the CMS through a short-lived `kubectl port-forward` that the target opens and tears down, so no ingress, public DNS or TLS is involved.
 

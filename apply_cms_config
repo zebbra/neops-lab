@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Bootstraps the `neops` user with full CMS permissions and configures the
-# `Global` scope (visibility, table columns, drill-down, dashboard).
+# `Global` scope (visibility, table columns, drill-down, dashboard). A scenario
+# whose topology declares network zones gets them created here too.
 #
 # Why the scope is named `Global` (capital G):
 #   The neops-cms-free image seeds a default scope named `Global` on every CMS
@@ -124,31 +125,14 @@ import base64
 import json
 import os
 
-from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from neops.core.models import Scope
-from neops.enterprise.permissions.permissions_simple.models import RolePermission, RoleScope
 
 
 def _decode(var):
     """Decode a base64 env var back to the original JSON text."""
     return base64.b64decode(os.environ[var]).decode("utf-8")
 
-
-User = get_user_model()
-neops = User.objects.get(username=os.environ["USERNAME"])
-
-# permission flags are read=1, execute=2, write=4. With
-# NEOPS_PERMISSIONS_SIMPLE_IMPLICIT_PERMISSION_LEVEL the model's save() promotes
-# the value to 2**bit_length()-1, so passing 4 stores 7 (read+execute+write).
-FULL = 4
-
-role, role_created = RolePermission.objects.get_or_create(
-    name=os.environ["ROLE_NAME"], defaults={"default_permission": FULL}
-)
-role.default_permission = FULL
-role.save()
-neops.roles.add(role)
-print(f"  role: {role.name!r} (id={role.id}) default_permission={int(role.default_permission)} created={role_created}")
 
 # Target the image-seeded `Global` scope (get_or_create matches it) so the lab
 # has a single scope, then apply full visibility + the lab's table columns,
@@ -170,12 +154,11 @@ scope.save()
 print(f"  scope: {scope.name!r} (id={scope.id}) created={scope_created}")
 print(f"    dashboards: {len(scope.dashboard_configuration.get('entries', []))}")
 
-rs, rs_created = RoleScope.objects.get_or_create(
-    role=role, scope=scope, defaults={"permission": FULL}
-)
-rs.permission = FULL
-rs.save()
-print(f"  role->scope: {role.name} -> {scope.name} permission={int(rs.permission)} created={rs_created}")
+# The admin role as compose and Helm make it: write on Global and on the
+# permission elements core lists (network-zones among them), held by the user.
+# It needs the Global scope above, and refuses a role another user already holds.
+# A CMS older than neops-core 2.4.0 has no such command, and the lab pins 2.4.0.
+call_command("bootstrap_admin_role", user=os.environ["USERNAME"], role=os.environ["ROLE_NAME"])
 PYSCRIPT
 
 # The lab devices use platforms `frr` and `srl`, which are not part of the CMS's
@@ -266,6 +249,34 @@ if "grant_workflow_permissions" in get_commands():
 else:
     print("  grant_workflow_permissions is absent from this CMS image; workflow grants skipped")
 PYSCRIPT
+
+# The scenario's network zones, read from the RESOLVED topology; most scenarios
+# declare none. A zone's worker is refused while its zone is missing from the
+# CMS, and the targets run this script before `docker compose up -d` starts any
+# worker, so the zones exist first. Host python3 extracts them, as it runs the
+# GraphQL step below.
+ZONES=$(python3 -c '
+import base64, json, sys
+zones = json.load(sys.stdin).get("zones") or {}
+print(base64.b64encode(json.dumps(zones).encode()).decode() if zones else "")
+' < "${SCENARIO_DIR}/topology.json")
+if [ -n "$ZONES" ]; then
+    echo
+    echo "==> Seeding network zones from ${SCENARIO_DIR}/topology.json via manage.py shell"
+    $CMS_EXEC env ZONES="$ZONES" ./manage.py shell <<'PYSCRIPT'
+import base64
+import json
+import os
+
+from neops.core.models import NetworkZone
+
+for name, spec in json.loads(base64.b64decode(os.environ["ZONES"]).decode("utf-8")).items():
+    zone, created = NetworkZone.objects.get_or_create(name=name, defaults={"description": spec.get("description", "")})
+    zone.description = spec.get("description", "")
+    zone.save()
+    print(f"  zone: {zone.name!r} (id={zone.id}) created={created}")
+PYSCRIPT
+fi
 
 # Resolve the scope id via the ORM (direct DB, no permission filter). We must
 # NOT discover it through the permission-filtered GraphQL `{ scopes }` query:

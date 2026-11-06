@@ -26,9 +26,9 @@ Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the 
 
 ## `Pool overlaps with other one on this address space`
 
-**Where:** `docker compose up`, creating `lab-net` or the project `default` network.
+**Where:** `docker compose up`, creating `lab-net`, the project `default` network, or, in a scenario with network zones, a zone's `lab-net-<zone>`.
 
-**Cause:** another docker network overlaps `172.30.0.0/23`. On a host with many compose projects docker's auto-assigned `/16` blocks run out and some other project's `default` network landed on `172.30.0.0/16` before the lab's networks existed. (The lab's own networks all carry fixed subnets, so they never compete with each other.)
+**Cause:** another docker network overlaps `172.30.0.0/23`, or a zone's subnet from the scenario's `topology.json` (`172.30.10.0/24` and `172.30.20.0/24` in `network-zones`). A second lab moved with `LAB_SUBNET` keeps those zone subnets, so it collides with a first `network-zones` lab. On a host with many compose projects docker's auto-assigned `/16` blocks run out and some other project's `default` network landed on `172.30.0.0/16` before the lab's networks existed. (The lab's own networks all carry fixed subnets, so they never compete with each other.)
 
 **Fix:** `make doctor` names the overlapping network. If it is an unused leftover (`docker network inspect <name>` shows no containers): `docker network rm <name>` — the owning project's next `up` recreates it. If it is genuinely in use, stop that stack first.
 
@@ -116,6 +116,75 @@ make local-lab-up
 
 Re-pinning another `0.5.x` the same way? Run the `discover_network.py`
 check against it before `make local-lab-up`.
+
+### A network zone never becomes ready
+
+**Where:** the `network-zones` scenario, with `in zone <zone>` in the timeout:
+
+```
+timeout: no online worker for fb.base.neops.io/global_discover_network:0.2.0 in zone zone-a within 180s
+```
+
+**Cause:** `worker-<zone>` is not online in its zone. It exits when the engine
+refuses its registration: the zone is missing from the CMS, or the engine
+predates network zones. A worker image older than SDK 0.5.0 ignores
+`NEOPS_WORKER_NETWORK_ZONES` and registers in `default` only, so it never
+counts for a zone.
+
+**Fix:** read the worker's last words, then check the images:
+
+```bash
+make local-lab-logs SCENARIO=network-zones      # every worker, each zone's included
+make apply-cms-config SCENARIO=network-zones   # creates the zones; stops on a CMS older than neops-core 2.4.0
+```
+
+The scenario needs a CMS from neops-core 2.4.0, engine 0.46.0 and worker SDK
+0.5.0 or later, the releases `.env.example` pins; a `.env` written before them
+keeps its older pins.
+
+### The engine's license admits fewer workers than the lab starts
+
+**Where:** `wait_ready` in `make local-lab-up` or `make local-lab-discover`, at
+once rather than after a timeout:
+
+```
+this lab starts 3 workers, but the engine's Developer Preview license admits 2, so it refuses the rest.
+```
+
+**Cause:** the engine is the developer preview, which admits two workers, and
+the `network-zones` scenario starts one per zone beside the central one. The
+scenario asks for the licensed engine, so this usually means
+`NEOPS_WORKFLOW_ENGINE_IMAGE` in `.env` or the environment names the preview,
+or a local build of it, and wins over the scenario.
+
+**Fix:** log in to Quay with an account that can pull the licensed engine,
+unset `NEOPS_WORKFLOW_ENGINE_IMAGE` or point it at a licensed engine, and bring
+the lab up again:
+
+```bash
+docker login quay.io
+make local-lab-up SCENARIO=network-zones
+```
+
+---
+
+## A workflow is refused at the developer preview's limit after `network-zones` ran
+
+**Where:** the `lab_bootstrap` log of a scenario on the developer preview, as a
+`403` naming the workflow definition limit.
+
+**Cause:** the developer preview admits five workflows, counted by package and
+name. The engine's database outlives `make local-lab-down`, and `network-zones`
+published `wf.lab.neops.io/move_device_to_zone` into it, so a preview scenario
+started afterwards has one slot fewer for workflows of your own.
+
+**Fix:** soft-delete that workflow with `DELETE /workflow-definition/{id}`, as
+the refusal's hint says, or start from an empty database:
+
+```bash
+make local-env-prune
+make local-env-init
+```
 
 ---
 

@@ -9,7 +9,8 @@ web client.
 **Which lab runs is a `SCENARIO`.** Each lives under `scenarios/<name>/`,
 overlaid on `scenarios/_base/`; `make scenarios` lists them. The default,
 `scenarios/wan-and-fabric/`, is 10 FRR + 5 Nokia SR Linux devices;
-`scenarios/frr-only/` is the same network without the SR Linux fabric.
+`scenarios/frr-only/` is the same network without the SR Linux fabric;
+`scenarios/network-zones/` is six FRR routers in three network zones.
 
 Extracted from `neops-worker-sdk-py/lab/`. **The contents of that directory are
 this repo's root** — there is no `lab/` subdirectory here. Host-side paths
@@ -171,7 +172,11 @@ Load-bearing and usually not obvious from the code:
   runs the lab; nothing is pushed to a registry. `docker-compose.worker.yml`
   pins `lab_bootstrap` to that exact tag so the compose build and `build-docker`
   cannot diverge. Everything else (CMS, engine, web client, worker) comes from
-  `quay.io/zebbra`.
+  `quay.io/zebbra`. The engine is the public developer preview unless the
+  scenario's `scenario.json` names `"engine": "enterprise"`: the Makefile then
+  exports `NEOPS_ENGINE_REPOSITORY` and compose pulls the licensed engine,
+  which needs `docker login quay.io`. `network-zones` does, because it starts
+  more workers than the preview admits.
 - **The FRR image bakes no config.** `devices/frr/Dockerfile` ships only sshd
   and `devices/frr/entrypoint.sh`; `frr.conf` and `daemons` are scenario data,
   mounted at `/lab` from the resolved tree and installed into `/etc/frr` by the
@@ -223,6 +228,22 @@ Load-bearing and usually not obvious from the code:
   the topology's subnet while the deployed ones go to
   `generated/<scenario>/workflow-execution-parameters/`. Node containers are
   prefixed with `LAB_NAME`, so two labs never share a container name.
+- **Network zones are declared once, in a scenario's `topology.json`** (`zones`,
+  plus `"zone"` on a device; none means `default`). `apply_cms_config` seeds
+  them from the resolved copy before any worker starts, and `gen_clab_topology`
+  derives the rest: one containerlab topology per zone
+  (`neops-lab-<zone>.clab.json`, network `${LAB_NET}-<zone>`), the per-zone
+  parameters under `workflow-execution-parameters/zones/`, and the compose
+  overlay `generated/<scenario>/compose/zones.yml`, whose `worker-<zone>`
+  services `extends` the central worker by absolute path with
+  `networks: !override` (compose ≥ 2.24.4; without it compose merges `lab-net`
+  in). `gen_clab_topology` owns every zone name, and `DEFAULT_ZONE` lives once,
+  in `gen_device_configs`: the Makefile asks the generator
+  (`--zone-workers`, `--ready-zones`, `--topologies`) rather than spelling a worker, a topology or `default`
+  itself. The central worker's
+  `NEOPS_WORKER_NETWORK_ZONES: default` lives in `docker-compose.worker.yml`
+  for every scenario and **never in `.env`/`.env.example`**: a zone worker that
+  missed its own setting has to stop, not fall back to default.
 - **Registering devices in the CMS is discovery's job** — the
   `fb.base.neops.io/global_discover_network` block, driven from here by
   `bootstrap/register.py`, `scenarios/_base/workflows/simple-lab-discovery.workflow.yaml`
@@ -232,7 +253,9 @@ Load-bearing and usually not obvious from the code:
   `generated/<scenario>/kind/lab.yaml`, applied by `make kind-lab-up`). A
   scenario whose manifest claims the `kind` flavour must therefore carry at
   least one FRR device, or an empty manifest gets applied
-  (`tests/test_scenario_manifests.py` checks this). Pods have only `eth0`, so
+  (`tests/test_scenario_manifests.py` checks this). Every lab target that
+  deploys checks its own flavour first (`resolve_scenario --require-flavour`),
+  so a clab-only scenario never reaches the cluster. Pods have only `eth0`, so
   the topology's `swpN` ports are dummy links created by an init container
   running the same `set-aliases.sh` from a ConfigMap mounted at `/lab`, in the
   same network namespace, before FRR starts. It shares `render_frr` with the containerlab
@@ -258,9 +281,19 @@ Load-bearing and usually not obvious from the code:
   name; Postgres name uniqueness is case-sensitive, so a lowercase `global` would
   create a silent duplicate.
 - **`generated/.deployed-scenario-{clab,kind}` is what makes switching safe.**
-  Each up target writes the scenario it deployed and refuses to run while a
-  different one is recorded; each down target reads the marker to tear down what
+  Each up target writes its scenario and refuses to run while a different one
+  is recorded. `local-lab-up` writes it before it starts anything, so a run that
+  fails at `wait_ready` is still torn down with its zone workers and networks;
+  each down target reads the marker to tear down what
   is actually deployed, not what `SCENARIO` currently says, and then removes it.
+  While the marker names the scenario, `generate` keeps the topology of a zone
+  removed from it (`--keep-topologies`), and `local-lab-up` deploys only the
+  declared ones (`--topologies`). `local-lab-down` destroys every topology it
+  finds, deletes each one it tore down, runs `docker compose down
+  --remove-orphans` for that zone's worker, and then `docker network rm`s each
+  torn-down topology's mgmt network: containerlab skips a network a worker is
+  still on, and compose removes only the networks its current `zones.yml`
+  declares.
   Neither runtime removes devices the handed input does not name —
   `containerlab destroy` acts on the topology's node list, `kubectl apply` never
   deletes — so without the marker a switch to a smaller scenario strands the
@@ -302,9 +335,12 @@ depends on:
   and `DISCOVER_WORKFLOW` move with it),
 - the **workflow-engine REST API** used by `run_workflow`, `wait_ready` and
   `bootstrap/register.py` (`/workflow-execution`, `/workflow-definition/publish`,
-  `/function-blocks/…/workers`, `/health`),
-- the **CMS GraphQL mutation `scopesUpsert`** and the `neops.core.models` ORM
-  shape used by `apply_cms_config`.
+  `/function-blocks/…/workers` with each worker's `networkZones`, `/license`
+  for the worker cap `wait_ready --workers` checks, `/health`),
+- the **CMS GraphQL mutation `scopesUpsert`**, the `neops.core.models` ORM
+  shape used by `apply_cms_config` (`NetworkZone` for a scenario with zones),
+  and core's `bootstrap_admin_role` command, which gives `lab-admin` write on
+  `Global` and on `network-zones` the way compose and Helm do.
 
 ## AI Agent Guidance
 
