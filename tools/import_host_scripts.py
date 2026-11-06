@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 import labscripts  # noqa: E402  (needs ROOT on sys.path first)
 
 SCRIPTS = (
+    "check_env_pins",
     "gen_clab_topology",
     "gen_device_configs",
     "gen_kind_discover_params",

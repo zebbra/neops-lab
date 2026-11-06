@@ -43,6 +43,7 @@ indent-width = 4
 # an option — it would break every caller.
 # `apply_cms_config` is deliberately absent: it is a bash script, not Python.
 extend-include = [
+  "check_env_pins",
   "gen_clab_topology",
   "gen_device_configs",
   "gen_kind_discover_params",
@@ -141,6 +142,7 @@ project-includes = [
   "function_blocks/**/*.py",
   "engine_http.py",
   # Same extension-less scripts as ruff's extend-include above.
+  "check_env_pins",
   "gen_clab_topology",
   "gen_device_configs",
   "gen_kind_discover_params",

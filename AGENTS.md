@@ -33,7 +33,7 @@ pytest/ruff/pyrefly and is marked `[tool.uv] package = false`.
 ## Conventions
 
 - Ruff: line length 120, target Python 3.12 (dev tooling). Pyrefly for types.
-- **Host scripts are stdlib-only and Python-3.9-safe** (`gen_clab_topology`,
+- **Host scripts are stdlib-only and Python-3.9-safe** (`check_env_pins`, `gen_clab_topology`,
   `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`,
   `lab_token`, `resolve_scenario`, `run_workflow`, `wait_ready`,
   `wait_devices`). They run on a bare host before any virtualenv exists — do not add a third-party import
