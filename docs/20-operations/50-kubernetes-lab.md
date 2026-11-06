@@ -16,7 +16,7 @@ Only `vendor: "frr"` devices are rendered, so a scenario declares whether it sup
 "flavours": ["clab", "kind"]
 ```
 
-Both shipped scenarios do. `make kind-lab-up SCENARIO=frr-only` brings up the same ten devices as the containerlab flavour of that scenario, since `frr-only` has no SR Linux nodes to leave out.
+`wan-and-fabric` and `frr-only` do; `network-zones` does not, and the `kind-lab-*` targets refuse a scenario whose `flavours` leave out `kind` before they touch the cluster. `make kind-lab-up SCENARIO=frr-only` brings up the same ten devices as the containerlab flavour of that scenario, since `frr-only` has no SR Linux nodes to leave out.
 
 ## Targets
 

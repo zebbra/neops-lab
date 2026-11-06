@@ -26,6 +26,16 @@ Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.4.0` — package `wf.l
 
 `bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then publishes each `*.yaml`, `*.yml` and `*.json` it finds in `/workflows` — the selected scenario's resolved `workflows/` directory, bind-mounted there — through `POST /workflow-definition/publish` as `{"workflow": <parsed document>}`. JSON is a subset of YAML, so one parser reads both and the engine is handed the same structure either way; anything else in that directory (a README, say) is skipped rather than posted. It is **idempotent**: `201` means the version was written, `200` means this version already held exactly this document. Published content is **immutable**, so a `409` is a real failure — it means the version exists with *different* content, and the fix is to bump `majorVersion`/`minorVersion`/`patchVersion` in the document rather than edit in place. A `422` means the engine computed a higher version floor than the document declares. Either exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-lab-up` fails rather than continuing into a broken discovery. Against an engine from before the publish route the script falls back to the legacy `POST /workflow-definition` on a `404`.
 
+### Discovery in a network zone
+
+A run without `zone` discovers in `default` on the central worker. The
+`network-zones` scenario runs the same workflow once more per zone:
+`make local-lab-discover` hands it `workflow-execution-parameters/zones/<zone>.json`,
+which carries `zone` beside the targets. The engine resolves `networkZone` from
+those parameters and hands the job only to a worker serving that zone; the
+block records each device in the zone its job ran in, and identifies an
+existing device by its IP within that zone.
+
 ## The function block
 
 ```text

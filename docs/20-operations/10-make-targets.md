@@ -16,7 +16,7 @@ The lab holds more than one network. `SCENARIO` selects which one every target b
 |---|---|
 | `make scenarios` | Lists every scenario from its `scenario.json`: name, device count, supported flavours, title and summary. |
 | `make scenario-resolve` | Materialises `scenarios/_base` + `scenarios/$(SCENARIO)` into `generated/$(SCENARIO)/scenario/`, the one flat directory the containers mount and the scripts read. A prerequisite of `local-env-init`, `local-env-up`, `local-lab-up`, `local-lab-discover`, `apply-cms-config`, `kind-lab-up`, `kind-lab-discover` and `kind-lab-cms-config`, so you rarely call it directly. |
-| `make generate` | `scenario-resolve`, then `./gen_clab_topology` — rebuilds the containerlab topology and the **committed** `scenarios/$(SCENARIO)/workflow-execution-parameters/*.json`. |
+| `make generate` | `scenario-resolve`, then `./gen_clab_topology` — rebuilds the containerlab topology and the **committed** `scenarios/$(SCENARIO)/workflow-execution-parameters/*.json`. For a scenario with network zones it also writes one topology per zone, the per-zone parameters under `workflow-execution-parameters/zones/`, and the compose overlay `generated/$(SCENARIO)/compose/zones.yml`. While that scenario is deployed it keeps the topology of a zone the scenario no longer declares, so `local-lab-down` still tears it down. |
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -43,13 +43,40 @@ Only one scenario runs at a time: they share `lab-net`, the `172.30.0.0/24` subn
 
 | Target | What it does |
 |---|---|
-| `make local-lab-up` | Depends on `build-docker`, `lab-jwt`, `lab-env` and `scenario-resolve`. Generates the containerlab topology + device configs from the scenario's `topology.json`, refreshes the worker image, starts the CMS and waits for it to be healthy, runs `apply_cms_config`, mints an engine token, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `./containerlab deploy --reconfigure`s the scenario's devices (re-runnable), mints a fresh token, waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`. |
-| `make local-lab-discover` | Runs `apply_cms_config`, mints one engine token, waits for the discovery function block and for device SSH, then POSTs a workflow execution and polls to a terminal state (15-minute ceiling). Override `DISCOVER_PARAMS` to change targeting. |
-| `make local-lab-logs` | `docker compose logs -f worker lab_bootstrap`. |
-| `make local-lab-down` | `./containerlab destroy --cleanup` (removes the devices and `generated/$(SCENARIO)/clab/clab-neops-lab/`), then `docker compose down`. Volumes survive. |
+| `make local-lab-up` | Depends on `build-docker`, `lab-jwt`, `lab-env` and `generate`, which renders the containerlab topology + device configs from the scenario's `topology.json`. Refreshes the worker image, starts the CMS and waits for it to be healthy, runs `apply_cms_config`, mints an engine token, brings up the base stack **plus** the worker and `lab_bootstrap` (creating `lab-net`), waits for workflow registration, `./containerlab deploy --reconfigure`s every topology of the scenario (re-runnable), mints a fresh token, waits for the worker's function blocks, then waits for every device's SSH. Refuses to run without `cms_api_key.env`, and on a scenario whose `scenario.json` leaves `clab` out of its `flavours`. With network zones, see [below](#network-zones). |
+| `make local-lab-discover` | Runs `apply_cms_config`, mints one engine token, waits for the discovery function block and for device SSH, then POSTs a workflow execution and polls to a terminal state (15-minute ceiling). Override `DISCOVER_PARAMS` to change targeting. With network zones it then runs `DISCOVER_WORKFLOW` once more per zone. |
+| `make local-lab-logs` | `docker compose logs -f worker lab_bootstrap`, plus each zone's worker. |
+| `make local-lab-down` | `./containerlab destroy --cleanup` for every topology of the deployed scenario (removes the devices, `generated/<scenario>/clab/clab-neops-lab*/` and each topology it tore down), then `docker compose down --remove-orphans`, which also takes the worker of a zone the scenario no longer declares. Volumes survive, and with them the CMS's network zones. |
 | `make clab-suid` | For the `CLAB_NATIVE` (host binary) path: sets the SUID bit on the `containerlab` binary so the lab targets can deploy without `sudo`. Idempotent — it only prompts for a password when the bit is missing — and warns if you are not in `clab_admins`. Re-run after every containerlab upgrade. See [Prerequisites](../getting-started/10-prerequisites.md#native-binary-optional). |
 
-The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml`, so they see the worker overlay; `clab-suid` touches no containers, and the `local-env-*` targets do not get the overlay either.
+The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml`, so they see the worker overlay, with `generated/<scenario>/compose/zones.yml` appended when the scenario has network zones (`local-lab-down` takes the deployed scenario's); `clab-suid` touches no containers, and the `local-env-*` targets do not get the overlay either.
+
+### Network zones
+
+A scenario whose `topology.json` declares `zones` (today `network-zones`) runs one
+containerlab topology, one network and one worker per zone beside the default lab.
+`gen_clab_topology` names them all; the targets ask it with `--zone-workers`
+(`<zone>:<service>` per zone) and `--ready-zones`. The lab targets then also:
+
+- seed the zones in the CMS through `apply_cms_config`, before `docker compose up -d`
+  starts any worker, because a zone's worker is refused while its zone is missing;
+- start `worker-<zone>` on network `$(LAB_NET)-<zone>` alone, with
+  `NEOPS_WORKER_NETWORK_ZONES=<zone>`; the central `worker` serves `default` in
+  every scenario;
+- pass `wait_ready` a `--zone` for `default` and for each zone, so it waits until
+  each has an online worker holding `DISCOVER_FB`, and `--workers` with the
+  number of workers they start, so it stops at once on an engine whose license
+  admits fewer;
+- run the licensed engine when the scenario's `scenario.json` names
+  `"engine": "enterprise"`, as `network-zones` does;
+- run `wait_devices` for each zone inside that zone's worker, the only container on
+  its network;
+- in `local-lab-discover`, discover `default` with `DISCOVER_WORKFLOW` as always,
+  then each zone with the same workflow and
+  `generated/<scenario>/workflow-execution-parameters/zones/<zone>.json`, whose
+  `zone` sends the job to that zone's worker.
+
+A scenario without `zones` gets none of this, and its targets run as before.
 
 ### Variables
 
@@ -60,7 +87,7 @@ The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 | `NEOPS_ENGINE_TOKEN` (env) | *(minted per target)* | Engine access token; export one to reuse it across targets. `local-lab-up` mints a fresh one after the containerlab deploy |
 | `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.2.0` | The function block `wait_ready` blocks on. Shared with the Kubernetes flavour |
 | `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.4.0` | The definition that is executed; must match the version in the workflow YAML. Shared with the Kubernetes flavour |
-| `CLAB_TOPO` | `$(GEN_DIR)/clab/neops-lab.clab.json` | The generated containerlab topology |
+| `CLAB_DIR` | `$(GEN_DIR)/clab` | The generated containerlab topologies: `neops-lab.clab.json`, and `neops-lab-<zone>.clab.json` per zone |
 | `CONTAINERLAB` | `./containerlab` | The containerlab launcher |
 | `CLAB_IMAGE` (env) | `ghcr.io/srl-labs/clab:0.78.2` | containerlab version the launcher runs |
 | `WAIT_READY_TIMEOUT` | `180` | Seconds `wait_ready` waits for an online worker |
@@ -79,7 +106,7 @@ A separate flavour that runs the FRR devices as pods in a local KIND cluster. It
 
 | Target | What it does |
 |---|---|
-| `make kind-lab-up` | Depends on `build-docker-frr` and `scenario-resolve`. `kind load`s the image onto the cluster nodes, generates `generated/$(SCENARIO)/kind/lab.yaml` from the scenario's `topology.json`, applies it, waits for every Deployment to become Available, then prints each device's in-cluster DNS name. Renders `vendor: "frr"` devices only, so the scenario must declare the `kind` flavour. |
+| `make kind-lab-up` | Depends on `build-docker-frr` and `scenario-resolve`. `kind load`s the image onto the cluster nodes, generates `generated/$(SCENARIO)/kind/lab.yaml` from the scenario's `topology.json`, applies it, waits for every Deployment to become Available, then prints each device's in-cluster DNS name. Renders `vendor: "frr"` devices only, so the scenario must declare the `kind` flavour; `kind-lab-up`, `kind-lab-cms-config` and `kind-lab-discover` refuse one that does not. |
 | `make kind-lab-status` | `kubectl get pods,svc` in the lab namespace. |
 | `make kind-lab-down` | Deletes the namespace. The cluster itself is never touched. |
 | `make kind-lab-cms-config` | Runs `apply_cms_config` against a Kubernetes-deployed CMS: grants the `neops` user the `lab-admin` role and seeds the `Global` scope, without which the web client shows no scope at all. Idempotent. |
@@ -126,7 +153,7 @@ A separate flavour that runs the FRR devices as pods in a local KIND cluster. It
 
 ### What `apply_cms_config` does
 
-It grants the `neops` user a full-permission role (`lab-admin`, `default_permission=7`) and applies the scenario's `cms/permissions.json` — every declared role gets `default_permission=7` and a `RoleScope` on `Global`, every declared user gets its roles and a password equal to its username, and each role's workflow grant profile is applied through the CMS's own `manage.py grant_workflow_permissions`. See [Authorization](../10-concepts/50-authorization.md).
+It grants the `neops` user a full-permission role (`lab-admin`, `default_permission=7`, with write on `Global` and on `network-zones`) through core's `bootstrap_admin_role`, and applies the scenario's `cms/permissions.json` — every declared role gets `default_permission=7` and a `RoleScope` on `Global`, every declared user gets its roles and a password equal to its username, and each role's workflow grant profile is applied through the CMS's own `manage.py grant_workflow_permissions`. See [Authorization](../10-concepts/50-authorization.md).
 
 It also configures the `Global` scope from the JSON files under `generated/$(SCENARIO)/scenario/scope/Global/` — table columns for devices, interfaces, clients and groups, a location drill-down schema, and a dashboard configuration. Those files, and `cms/permissions.json`, come from `scenarios/_base/` unless the scenario overrides one; edit them there, not in `generated/`.
 

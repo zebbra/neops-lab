@@ -58,7 +58,8 @@ make doctor
 
 - **Docker** + `docker compose` ≥ 2.20. No registry login needed: the CMS, the
   web client and the default **developer preview** engine all pull anonymously.
-  `docker login quay.io` is only for swapping in the full licensed engine.
+  `docker login quay.io` is only for the full licensed engine, which the
+  `network-zones` scenario runs.
 - **containerlab** needs no install: every make target and documented command
   uses `./containerlab`, which runs the official `ghcr.io/srl-labs/clab` image
   through the docker socket — the same command and the same pinned containerlab
@@ -154,6 +155,7 @@ make local-lab-up SCENARIO=frr-only   # a different one
 |---|---|---|---|
 | `wan-and-fabric` (default) | 15 | clab, kind | FRR WAN/core/edge/PE + a Nokia SR Linux leaf-spine fabric — see [`scenarios/wan-and-fabric/README.md`](./scenarios/wan-and-fabric/README.md) |
 | `frr-only` | 10 | clab, kind | The FRR half alone; carries only a topology, everything else inherited — see [`scenarios/frr-only/README.md`](./scenarios/frr-only/README.md) |
+| `network-zones` | 6 | clab | Two FRR routers in `default` and two in each of `zone-a` and `zone-b`, each zone on its own subnet with a worker of its own; needs the zone-capable images and the licensed engine (`docker login quay.io`) — see [`scenarios/network-zones/README.md`](./scenarios/network-zones/README.md) |
 
 `SCENARIO` selects it. The [`Makefile`](./Makefile) holds the **only** default
 and exports it; every host script, both compose files and
@@ -352,9 +354,9 @@ without it they use the `Makefile`'s default, `wan-and-fabric`.
 | `make local-lab-up` | Resolves the scenario, generates the containerlab topology + configs from its `topology.json`, builds the lab images, brings up the base stack + worker + bootstrap (creating `lab-net`), then `containerlab deploy --reconfigure`s the scenario's devices with real links. Waits for workflow registration, the worker's function blocks, and every device's SSH. |
 | `make apply-cms-config` | Applies the scenario's `cms/permissions.json` (roles, users and their workflow grant profiles), grants the `neops` user the full-permission `lab-admin` role + creates the `Global` scope so the web client can see all entities. Idempotent. Chained into `local-env-init`. |
 | `make lab-grant` | `make lab-grant ROLE=<role> [PROFILE=operator]` — one ad-hoc workflow grant, the same command `apply_cms_config` runs per role. Additive. |
-| `make local-lab-discover` | POSTs an execution of the discovery workflow; every device in the scenario **and its interfaces** appears in the CMS. Override `DISCOVER_PARAMS` to exercise explicit hosts, autodetection, or subnet expansion. Devices are keyed by IP (re-running skips existing devices); interfaces are always recorded, so run discovery against a **fresh** CMS to avoid duplicate interface rows. |
-| `make local-lab-logs` | Tails worker + bootstrap logs. |
-| `make local-lab-down` | `containerlab destroy --cleanup` (removes the devices and `generated/$(SCENARIO)/clab/clab-neops-lab`) then `docker compose down` (preserves volumes). |
+| `make local-lab-discover` | POSTs an execution of the discovery workflow; every device in the scenario **and its interfaces** appears in the CMS. Override `DISCOVER_PARAMS` to exercise explicit hosts, autodetection, or subnet expansion; it covers the `default` zone, and a scenario with network zones then runs the same workflow once per zone with that zone's parameters. Devices are keyed by IP and network zone (re-running skips existing devices); interfaces are always recorded, so run discovery against a **fresh** CMS to avoid duplicate interface rows. |
+| `make local-lab-logs` | Tails worker + bootstrap logs, each zone's worker included. |
+| `make local-lab-down` | `containerlab destroy --cleanup` for every topology of the deployed scenario (removes the devices, `generated/<scenario>/clab/clab-neops-lab*` and the topology files) then `docker compose down --remove-orphans` (preserves volumes). |
 | `make local-env-prune` | `docker compose down -v` — the true reset, drops the ES + postgres volumes. |
 | `make kind-lab-up` | The Kubernetes flavour: renders the scenario's **FRR** devices into `generated/$(SCENARIO)/kind/lab.yaml` and runs them as pods in a local KIND cluster, reachable over SSH at `<device>.neops-lab.svc.cluster.local`. Needs no containerlab, no compose stack and no control plane. `make kind-lab-status` / `make kind-lab-down` alongside it — the latter deletes the namespace, never the cluster. |
 | `make kind-lab-cms-config` | Points the existing `apply_cms_config` at a Kubernetes-deployed CMS through `CMS_EXEC` (reused, not reimplemented): grants the `neops` user the `lab-admin` role and seeds the `Global` scope, without which the web client shows no scope. Idempotent. Getting devices into the CMS stays discovery's job. |
