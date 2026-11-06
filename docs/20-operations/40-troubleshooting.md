@@ -100,7 +100,7 @@ worker starts, registers the blocks it has, and never announces this one;
 
 Engine `0.46.0` refuses every worker until it has read the network zones from
 the CMS, so a CMS older than neops-core `2.4.0` gives the same timeout with the
-right worker image; `docker compose logs worker` then shows the refused
+right worker image; `make local-lab-logs` then shows the refused
 registration. Pin the CMS from `.env.example` too.
 
 **Fix:** check what the image actually holds, and fall back to the published
