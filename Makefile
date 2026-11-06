@@ -261,7 +261,7 @@ local-env-down:
 	docker compose down
 
 local-env-prune:
-	# `-v` removes the elasticsearch + postgres_data volumes too — leftover
+	# `-v` removes the elasticsearch, postgres_data and victorialogs_data volumes too — leftover
 	# state across down/up cycles caused `elastic_index --create` to fail
 	# and stale CMS data to confuse re-inits.
 	docker compose down -v
