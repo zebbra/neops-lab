@@ -35,7 +35,7 @@ REGISTER_SOURCE = (LAB_DIR / "bootstrap" / "register.py").read_text()
 
 APPLY_SCRIPT = (LAB_DIR / "apply_cms_config").read_text()
 
-FB_ID = "fb.base.neops.io/global_discover_network:0.1.0"
+FB_ID = "fb.base.neops.io/global_discover_network:0.2.0"
 
 # The two shapes the engine refuses with. A 403 names the permission the route
 # wanted, in `requiredPermission` and in the message; a 401 names why no identity

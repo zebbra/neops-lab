@@ -25,7 +25,7 @@ Entity
 :   A record in the CMS. Discovery creates `Device` and `Interface` entities.
 
 Function block
-:   The unit of work a worker executes, identified as `<package>/<name>:<major.minor.patch>` — e.g. `fb.base.neops.io/global_discover_network:0.1.0`. Workflow steps dispatch to function blocks by that identifier.
+:   The unit of work a worker executes, identified as `<package>/<name>:<major.minor.patch>` — e.g. `fb.base.neops.io/global_discover_network:0.2.0`. Workflow steps dispatch to function blocks by that identifier.
 
 FRR / FRRouting
 :   The open-source routing stack behind the `frr` nodes — 10 of them in both shipped scenarios. Run here as `kind: linux` from the locally built `neops-lab-frr:latest`, which takes its `frr.conf` and `daemons` from the scenario at runtime rather than baking them. Vendor string in the CMS: `FRRouting`.
@@ -61,4 +61,4 @@ Worker
 :   The process that polls the blackboard and executes function blocks. Here it is the published `quay.io/zebbra/neops-worker-sdk` image, with this repo mounted read-only at `/app/lab`.
 
 Workflow
-:   A declarative YAML/JSON definition of steps executed by the engine, identified as `<package>/<name>:<version>`. `scenarios/_base/` ships one, `wf.lab.neops.io/simple_lab_discovery:1.3.0`, which every scenario inherits unless it overrides or adds to it.
+:   A declarative YAML/JSON definition of steps executed by the engine, identified as `<package>/<name>:<version>`. `scenarios/_base/` ships one, `wf.lab.neops.io/simple_lab_discovery:1.4.0`, which every scenario inherits unless it overrides or adds to it.

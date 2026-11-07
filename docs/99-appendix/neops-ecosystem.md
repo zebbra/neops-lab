@@ -54,10 +54,10 @@ None of these are verified at build time. All three fail at runtime, in the lab,
 ### The function-block identifier
 
 ```text
-fb.base.neops.io/global_discover_network:0.1.0
+fb.base.neops.io/global_discover_network:0.2.0
 ```
 
-Named in `scenarios/_base/workflows/simple-lab-discovery.workflow.yaml` and in the `Makefile`'s `DISCOVER_FB`. Renaming it in `neops-worker-sdk-py` breaks both, **with no compile-time check**. Symptom: `Function block … not found`.
+Named in `scenarios/_base/workflows/simple-lab-discovery.workflow.yaml` and in the `Makefile`'s `DISCOVER_FB`. Renaming or re-versioning it in `neops-worker-sdk-py` breaks both, **with no compile-time check**. Symptom: `wait_ready` times out, or `Function block … not found`. A published workflow cannot change, so a new block version also moves the workflow's own version and `DISCOVER_WORKFLOW`.
 
 ### The workflow-engine REST API
 
