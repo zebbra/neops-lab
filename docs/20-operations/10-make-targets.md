@@ -58,8 +58,8 @@ The first four export `COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
 | `DISCOVER_PARAMS` | `$(SCENARIO_SRC)/workflow-execution-parameters/discover-params.json` | Which parameter file `local-lab-discover` sends |
 | `PROFILE` | `operator` | Grant profile `lab-grant` applies: `author`, `operator` or `admin` |
 | `NEOPS_ENGINE_TOKEN` (env) | *(minted per target)* | Engine access token; export one to reuse it across targets. `local-lab-up` mints a fresh one after the containerlab deploy |
-| `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.1.0` | The function block `wait_ready` blocks on. Shared with the Kubernetes flavour |
-| `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.3.0` | The definition that is executed; must match the version in the workflow YAML. Shared with the Kubernetes flavour |
+| `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.2.0` | The function block `wait_ready` blocks on. Shared with the Kubernetes flavour |
+| `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.4.0` | The definition that is executed; must match the version in the workflow YAML. Shared with the Kubernetes flavour |
 | `CLAB_TOPO` | `$(GEN_DIR)/clab/neops-lab.clab.json` | The generated containerlab topology |
 | `CONTAINERLAB` | `./containerlab` | The containerlab launcher |
 | `CLAB_IMAGE` (env) | `ghcr.io/srl-labs/clab:0.78.2` | containerlab version the launcher runs |
@@ -109,7 +109,7 @@ A separate flavour that runs the FRR devices as pods in a local KIND cluster. It
 |---|---|
 | `make doctor` | Host preflight (`./doctor`): docker + RAM, amd64 emulation on Apple Silicon, mount round-trip, subnet overlaps, the clab image, python3. Read-only apart from pulling two images; the fix is printed per failure. |
 | `make lab-jwt` | Mints `cms/jwt/{private,public}.pem` with `openssl genpkey` if absent. Idempotent. A prerequisite of `local-env-init`, `local-env-up` and `local-lab-up`. |
-| `make lab-env` | Copies `.env.example` to `.env` if there is no `.env` yet, so a fresh clone has one to edit. Never overwrites an existing file. The example pins the worker image (`NEOPS_WORKER_SDK_IMAGE`); every other value in it is commented out. A prerequisite of `local-lab-up`. |
+| `make lab-env` | Copies `.env.example` to `.env` if there is no `.env` yet, so a fresh clone has one to edit. Never overwrites an existing file. The example pins the CMS, engine and worker images (`NEOPS_CMS_IMAGE`, `NEOPS_ENGINE_TAG`, `NEOPS_WORKER_SDK_IMAGE`), which move together; every other value in it is commented out. A prerequisite of `local-lab-up`. |
 | `make local-env-init` | One-time per environment: pull (`--policy always`) + start the base stack, resolve the `neops` user and mint the CMS API key into `cms_api_key.env` (fails on an empty key), run `apply_cms_config`, then force-recreate the engine so it picks up the token. |
 | `make local-env-up` | Start the base stack again later. Fails with a clear message if `cms_api_key.env` is missing. |
 | `make local-env-down` | `docker compose down` — stops the base stack, keeps the volumes. |

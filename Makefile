@@ -190,8 +190,8 @@ lab-jwt:
 		echo "generated cms/jwt/{private,public}.pem"; \
 	fi
 
-# A fresh clone has no .env; copy the example so there is one to edit. Its only
-# active line pins the worker image; every other value is commented out.
+# A fresh clone has no .env; copy the example so there is one to edit. Its
+# active lines pin the CMS, engine and worker images; the rest is commented out.
 # An existing .env is left alone, with a warning for each pin it no longer shares.
 lab-env:
 	@if [ -f .env ]; then \
@@ -320,8 +320,8 @@ MINT_ENGINE_TOKEN = NEOPS_ENGINE_TOKEN=$${NEOPS_ENGINE_TOKEN:-$$($(LAB_CMS_ENV) 
 # The version must match scenarios/_base/workflows/simple-lab-discovery.workflow.yaml, and
 # published versions are immutable: editing that file means bumping its
 # majorVersion/minorVersion/patchVersion and this variable together.
-DISCOVER_FB := fb.base.neops.io/global_discover_network:0.1.0
-DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.3.0
+DISCOVER_FB := fb.base.neops.io/global_discover_network:0.2.0
+DISCOVER_WORKFLOW := wf.lab.neops.io/simple_lab_discovery:1.4.0
 
 # Execution parameters for the discovery workflow. Override to discover with a
 # different target form, e.g.

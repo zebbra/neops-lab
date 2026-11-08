@@ -16,9 +16,11 @@ tags: [concept, workflow]
 --8<-- "../scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
 ```
 
-Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.3.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
+Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.4.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
 
 `seedEntity: global` and `runOn: global` mean the step is not scoped to an entity — it runs once, globally, which is why `run_workflow` is called with no `--ids`.
+
+`networkZone: "{{ parameters.zone || 'default' }}"` hands the job only to a worker serving the network zone the run names in `zone`, or `default` when it names none, as `make local-lab-discover` does. The block records each device it finds in that zone.
 
 ### How registration works
 
@@ -27,7 +29,7 @@ Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.3.0` — package `wf.l
 ## The function block
 
 ```text
-fb.base.neops.io/global_discover_network:0.1.0
+fb.base.neops.io/global_discover_network:0.2.0
 ```
 
 !!! danger "The function block is not in this repo"
@@ -40,7 +42,7 @@ fb.base.neops.io/global_discover_network:0.1.0
     Symptom when the pinned image does not carry it:
 
     ```text
-    failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.1.0 not found
+    failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.2.0 not found
     ```
 
 The worker is told where to look with a two-entry search path:

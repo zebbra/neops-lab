@@ -141,11 +141,12 @@ Load-bearing and usually not obvious from the code:
   discovery fails with "Function block … not found", check that the
   `NEOPS_WORKER_SDK_IMAGE` you pinned actually carries `neops/fb`.
   The published `quay.io/zebbra/neops-worker-sdk:develop` carries it, including
-  `global_discover_network`. `.env.example` pins `0.3.0` to
-  hold the lab on a fixed release, which needs engine `v0.44.0` or later, the
-  first with the job leases and rollback forward results that worker relies on
-  (re-check any other tag you pin with `ls
-  neops/fb/base/global/discover_network.py`). Against an engine older than
+  `global_discover_network`. Discovery names that block at `0.2.0`, which
+  ships first in SDK `0.5.0`, so `.env.example` pins worker `0.5.0` with
+  engine `0.46.0` and CMS `cms-free:2.4.0`, the releases that carry network
+  zones; they move together. An older worker carries `0.1.0` only and
+  `wait_ready` times out (re-check any tag you pin with `grep -n
+  "version=(0, 2, 0)" neops/fb/base/global/discover_network.py`). Against an engine older than
   `v0.43.0-beta.6`, which lacks
   https://github.com/zebbra/neops-workflow-engine/pull/402, that worker exits
   ~2 min after start (HTTP 500 registering a long help text). `make -C
@@ -294,9 +295,11 @@ neops-core (CMS), neops-workflow-engine, neops-web-client and
 neops-worker-sdk-py. It defines no API and nothing imports it. Contract-wise it
 depends on:
 
-- the **function-block identifier** `fb.base.neops.io/global_discover_network:0.1.0`
-  (renaming it in neops-worker-sdk-py breaks `scenarios/*/workflows/*` and
-  the Makefile's `DISCOVER_FB`, with no compile-time check),
+- the **function-block identifier** `fb.base.neops.io/global_discover_network:0.2.0`
+  (renaming or re-versioning it in neops-worker-sdk-py breaks
+  `scenarios/*/workflows/*` and the Makefile's `DISCOVER_FB`, with no
+  compile-time check; a published workflow is immutable, so its own version
+  and `DISCOVER_WORKFLOW` move with it),
 - the **workflow-engine REST API** used by `run_workflow`, `wait_ready` and
   `bootstrap/register.py` (`/workflow-execution`, `/workflow-definition/publish`,
   `/function-blocks/…/workers`, `/health`),
