@@ -1,0 +1,26 @@
+# Move one device to another network zone. The block records the move and never
+# connects to the device; the device's next jobs go to the new zone's workers.
+label: move_device_to_zone
+name: move_device_to_zone
+package: wf.lab.neops.io
+majorVersion: 1
+minorVersion: 0
+patchVersion: 0
+seedEntity: device
+type: workflow
+description: "Move a device to another network zone."
+
+parameterSchema:
+  type: object
+  properties:
+    zone:
+      type: string
+      description: "Network zone to move the device to. It must exist in the CMS."
+  required: [zone]
+steps:
+  - type: functionBlock
+    label: move
+    functionBlock: "fb.base.neops.io/device_update_device:0.2.0"
+    runOn: device
+    parameters:
+      network_zone: "{{ parameters.zone }}"

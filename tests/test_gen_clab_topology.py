@@ -25,6 +25,12 @@ def _topology(scenario):
     return json.loads((LAB_DIR / "scenarios" / scenario / "topology.json").read_text())
 
 
+def _default_devices(scenario):
+    """The devices the default parameter files cover: those in no network zone."""
+    topology = _topology(scenario)
+    return gen.group_by_zone(topology["devices"], topology.get("zones", {}))[gen.DEFAULT_ZONE]
+
+
 DEPLOYMENT = gen.Deployment(name="neops-lab", network="lab-net", subnet=gen.TOPOLOGY_SUBNET)
 
 
@@ -105,10 +111,10 @@ def test_srl_srl_link_uses_e1_dash():
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_discover_params_matches_committed(scenario):
-    topology = _topology(scenario)
-    result = gen.render_discover_params(topology["devices"])
+    devices = _default_devices(scenario)
+    result = gen.render_discover_params(devices)
     assert result == _committed(scenario, "discover-params.json")
-    assert len(result["subnets"]) == len(topology["devices"])
+    assert len(result["subnets"]) == len(devices)
 
 
 def test_discover_params_supply_credentials_once_per_vendor():
@@ -135,20 +141,20 @@ def test_autodetect_params_match_committed_and_omit_platform(scenario):
     """The autodetect targeting variant: address + shared credentials only, so
     discovery has to detect the platform itself. ("Scenario" means a lab under
     scenarios/ — these four files are targeting variants within one.)"""
-    topology = _topology(scenario)
-    result = gen.render_autodetect_params(topology["devices"])
+    devices = _default_devices(scenario)
+    result = gen.render_autodetect_params(devices)
 
     assert result == _committed(scenario, "discover-params-autodetect.json")
-    assert len(result["subnets"]) == len(topology["devices"])
+    assert len(result["subnets"]) == len(devices)
     assert all(set(s) == {"cidr"} for s in result["subnets"]), "no platform, no per-subnet login"
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_both_parameter_files_target_the_same_hosts(scenario):
     """They differ only in what is declared, never in which devices are probed."""
-    topology = _topology(scenario)
-    declared = gen.render_discover_params(topology["devices"])
-    autodetect = gen.render_autodetect_params(topology["devices"])
+    devices = _default_devices(scenario)
+    declared = gen.render_discover_params(devices)
+    autodetect = gen.render_autodetect_params(devices)
 
     assert [s["cidr"] for s in declared["subnets"]] == [s["cidr"] for s in autodetect["subnets"]]
     # Same logins; only the declared file scopes them (autodetect knows no platforms).
@@ -159,9 +165,7 @@ def test_both_parameter_files_target_the_same_hosts(scenario):
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_subnet_params_match_committed(scenario):
-    assert gen.render_subnet_params(_topology(scenario)["devices"]) == _committed(
-        scenario, "discover-params-subnet.json"
-    )
+    assert gen.render_subnet_params(_default_devices(scenario)) == _committed(scenario, "discover-params-subnet.json")
 
 
 def test_frr_nodes_mount_the_scenario_config_at_lab():

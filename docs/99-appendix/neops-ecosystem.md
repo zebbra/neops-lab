@@ -66,14 +66,14 @@ Used by three things in this repo:
 | Caller | Endpoints |
 |---|---|
 | `bootstrap/register.py` | `GET /health`, `POST /workflow-definition/publish` (legacy `POST /workflow-definition` fallback on 404) |
-| `wait_ready` | `GET /function-blocks/{pkg}/{name}/{version}/workers` |
+| `wait_ready` | `GET /function-blocks/{pkg}/{name}/{version}/workers`, whose `networkZones` per worker `--zone` reads; with `--workers`, `GET /license` |
 | `run_workflow` | `POST /workflow-execution`, `GET /workflow-execution/id/{uuid}` |
 
 `run_workflow` also encodes the engine's terminal-state vocabulary: `completed_ack`, `failed_safe_ack`, `failed_unsafe_ack`. A change to any of these in `neops-workflow-engine` breaks the lab's automation, not just its output.
 
 ### The CMS
 
-`apply_cms_config` depends on the GraphQL mutation `scopesUpsert` **and** on the `neops.core.models` ORM shape it manipulates through `manage.py shell`. It also depends on the image seeding a scope named `Global` and on `init_scopes` re-running on every `manage.py` invocation — which is why its step ordering is load-bearing.
+`apply_cms_config` depends on the GraphQL mutation `scopesUpsert` **and** on the `neops.core.models` ORM shape it manipulates through `manage.py shell`, `NetworkZone` included for a scenario with zones, and on core's `bootstrap_admin_role` command (neops-core 2.4.0 or later), which gives `lab-admin` write on `Global` and on the `network-zones` permission element. It also depends on the image seeding a scope named `Global` and on `init_scopes` re-running on every `manage.py` invocation — which is why its step ordering is load-bearing.
 
 ## Where the lab fits in a change
 
