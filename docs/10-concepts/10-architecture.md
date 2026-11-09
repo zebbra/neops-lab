@@ -14,7 +14,7 @@ The lab is declared in two files:
 
 | File | Declares |
 |---|---|
-| `docker-compose.yml` | The **base stack**: CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis, plus a `wait_health` helper |
+| `docker-compose.yml` | The **base stack**: CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis, VictoriaLogs, plus a `wait_health` helper |
 | `docker-compose.worker.yml` | The **worker overlay**: the `worker`, the one-shot `lab_bootstrap`, and the `lab-net` network definition |
 
 They are combined through docker compose's `COMPOSE_FILE` environment variable, exported only for the lab targets in the `Makefile`:
@@ -49,6 +49,7 @@ export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
 | `postgres` | `postgres:15-alpine` | — | Volume `postgres_data` |
 | `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.19.23` | — | Volume `elasticsearch`; 2 CPU / 4 GB limits (2 GB heap) |
 | `redis` | `redis:7-alpine` | — | The CMS's channel layer (GraphQL subscriptions), cache and Celery broker |
+| `victorialogs` | `victoriametrics/victoria-logs:v1.53.0` | — | The engine's log store (`NEOPS_LOG_BACKEND=victorialogs`): engine and worker lines, read back by the monitor app's log views. Volume `victorialogs_data`, 30-day retention, no healthcheck (the image has no shell) |
 | `wait_health` | `busybox` | — | Depends on CMS + engine + web client being *healthy*, so `up -d` blocks until they are |
 
 The four overridable images (`cms`, `workflow_engine`/`workflow-engine-client`, `web_client`, `worker`) each read a `NEOPS_*_IMAGE` variable and set `pull_policy: missing` — see [Images](../20-operations/20-images.md).
@@ -65,6 +66,7 @@ graph LR
     boot[lab_bootstrap]
     pg[(postgres)]
     es[(elasticsearch)]
+    vl[(victorialogs)]
   end
   subgraph labnet["lab-net — 172.30.0.0/24"]
     dev1["core-rtr-01 … border-rtr-01<br/>172.30.0.11–20"]
@@ -77,6 +79,7 @@ graph LR
   worker -- "SSH 22" --> dev1
   worker -- "SSH 22" --> dev2
   boot -- "POST /workflow-definition/publish" --> engine
+  engine -- "log lines" --> vl
 ```
 
 `lab-net` is declared by `docker-compose.worker.yml` with an explicit IPAM subnet of `172.30.0.0/24`, and containerlab's topology sets `mgmt.network: lab-net` with the same subnet. That is the join: compose creates the bridge, containerlab attaches the devices to it at their fixed `mgmt-ipv4`, and the worker — a member of both networks — can reach the engine by service name *and* the devices by IP.

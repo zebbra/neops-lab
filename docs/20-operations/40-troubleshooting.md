@@ -370,6 +370,24 @@ With `CLAB_NATIVE` (a host binary) the classic failure is *"This containerlab co
 
 ---
 
+## The monitor app says `This engine stores no logs`
+
+The engine keeps queryable logs only when it has a log store; without one it
+logs to stdout and the monitor app's log views stay empty. The lab gives it
+one: the `victorialogs` service, with `NEOPS_LOG_BACKEND=victorialogs` and
+`NEOPS_LOG_URL=http://victorialogs:9428` on `workflow_engine`. If you still see
+the message:
+
+- The engine is older than `v0.44.0`, the first release that pushes to
+  VictoriaLogs. Check `NEOPS_ENGINE_TAG` / `NEOPS_WORKFLOW_ENGINE_IMAGE`.
+- The engine was started before the store was configured. Recreate it with
+  `docker compose up -d workflow_engine`; at boot it logs `Log store configured`
+  with `backend: victorialogs`.
+
+Lines from before the store existed were never stored and do not come back.
+While the store is unreachable the engine keeps lines in its Postgres outbox
+and replays them once it answers, so a slow `victorialogs` start loses nothing.
+
 ## Duplicate interface rows after re-running discovery
 
 **Cause:** devices are keyed by IP so they are skipped on a second run, but **interfaces are always recorded**.
@@ -417,4 +435,4 @@ make local-lab-down local-env-prune
 make local-env-init && make local-lab-up && make local-lab-discover
 ```
 
-`local-lab-down` tolerates there being no deployed lab (the `./containerlab destroy` line is prefixed with `-`, so `make` continues on failure). `local-env-prune` drops the Elasticsearch and Postgres volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.
+`local-lab-down` tolerates there being no deployed lab (the `./containerlab destroy` line is prefixed with `-`, so `make` continues on failure). `local-env-prune` drops the Elasticsearch, Postgres and VictoriaLogs volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.

@@ -109,6 +109,11 @@ services:
       # Exact browser origins allowed to call this engine: the web client and
       # the monitor app, on the host ports they are published on.
       - NEOPS_CORS_ORIGINS=http://localhost:${LAB_WEB_PORT:?set it or drive compose through make},http://localhost:${LAB_MONITOR_PORT:?set it or drive compose through make}
+      # Log store behind the monitor app's log views; unset, the engine logs to
+      # stdout only and the views say "This engine stores no logs".
+      - NEOPS_LOG_BACKEND=victorialogs
+      - NEOPS_LOG_URL=http://victorialogs:9428
+      - NEOPS_LOG_ENV=lab
     env_file:
       - cms_api_key.env
     volumes:
@@ -120,6 +125,8 @@ services:
         condition: service_healthy
       cms:
         condition: service_healthy # Ensures CMS is up before the workflow engine connects
+      victorialogs:
+        condition: service_started
     healthcheck:
       test: [ "CMD-SHELL", "node -e \"require('http').request('http://localhost:3030/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => { process.exit(1); }).end();\"" ]
       interval: 10s
@@ -191,6 +198,15 @@ services:
       timeout: 5s
       retries: 5
 
+  victorialogs:
+    # The version the engine's CI round-trips its logs through.
+    image: victoriametrics/victoria-logs:v1.53.0
+    command: [ "-storageDataPath=/victoria-logs-data", "-retentionPeriod=30d" ]
+    volumes:
+      - victorialogs_data:/victoria-logs-data
+    # No healthcheck: the image has no shell or wget. The engine keeps lines
+    # in its outbox until the store answers, so starting it is enough.
+
   redis:
     # Same major as the production compose file and the Helm chart.
     image: redis:7-alpine
@@ -239,6 +255,8 @@ volumes:
   elasticsearch:
     driver: local
   postgres_data:
+    driver: local
+  victorialogs_data:
     driver: local
 
 networks:
