@@ -16,18 +16,30 @@ tags: [concept, workflow]
 --8<-- "../scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
 ```
 
-Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.3.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
+Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.4.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
 
 `seedEntity: global` and `runOn: global` mean the step is not scoped to an entity — it runs once, globally, which is why `run_workflow` is called with no `--ids`.
+
+`networkZone: "{{ parameters.zone || 'default' }}"` hands the job only to a worker serving the network zone the run names in `zone`, or `default` when it names none, as `make local-lab-discover` does. The block records each device it finds in that zone.
 
 ### How registration works
 
 `bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then publishes each `*.yaml`, `*.yml` and `*.json` it finds in `/workflows` — the selected scenario's resolved `workflows/` directory, bind-mounted there — through `POST /workflow-definition/publish` as `{"workflow": <parsed document>}`. JSON is a subset of YAML, so one parser reads both and the engine is handed the same structure either way; anything else in that directory (a README, say) is skipped rather than posted. It is **idempotent**: `201` means the version was written, `200` means this version already held exactly this document. Published content is **immutable**, so a `409` is a real failure — it means the version exists with *different* content, and the fix is to bump `majorVersion`/`minorVersion`/`patchVersion` in the document rather than edit in place. A `422` means the engine computed a higher version floor than the document declares. Either exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-lab-up` fails rather than continuing into a broken discovery. Against an engine from before the publish route the script falls back to the legacy `POST /workflow-definition` on a `404`. The discovery workflow — the Makefile's `DISCOVER_WORKFLOW`, handed to the container in the same-named variable — is published **first**, the rest in file order: the engine's license caps how many definitions it holds (`403 LicenseLimitExceeded`), and when a scenario's workflows exceed the cap the one refused must be an extra workflow, never discovery. A `DISCOVER_WORKFLOW` no document matches (the Makefile and the YAML disagree on a version) only prints a warning.
 
+### Discovery in a network zone
+
+A run without `zone` discovers in `default` on the central worker. The
+`network-zones` scenario runs the same workflow once more per zone:
+`make local-lab-discover` hands it `workflow-execution-parameters/zones/<zone>.json`,
+which carries `zone` beside the targets. The engine resolves `networkZone` from
+those parameters and hands the job only to a worker serving that zone; the
+block records each device in the zone its job ran in, and identifies an
+existing device by its IP within that zone.
+
 ## The function block
 
 ```text
-fb.base.neops.io/global_discover_network:0.1.0
+fb.base.neops.io/global_discover_network:0.2.0
 ```
 
 !!! danger "The function block is not in this repo"
@@ -40,7 +52,7 @@ fb.base.neops.io/global_discover_network:0.1.0
     Symptom when the pinned image does not carry it:
 
     ```text
-    failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.1.0 not found
+    failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.2.0 not found
     ```
 
 The worker is told where to look with a two-entry search path:
@@ -88,7 +100,7 @@ So credential resolution is: **subnet credentials → global credentials**, and 
 
 Optional, default `false`. When `true`, the run fails if any host given as its own `/32` (or `/128`) yields no device; hosts reached only through a wider prefix never fail it. With the default, undiscovered hosts are reported in the result's `failed_hosts`/`skipped_hosts` and the run still succeeds.
 
-The flag needs a worker image that includes [neops-worker-sdk-py `2b21f99`](https://github.com/zebbra/neops-worker-sdk-py/commit/2b21f99), which no released tag carries yet; an older worker ignores it, logging only a warning. On an engine older than `v0.43.0-beta.5` an omitted flag resolves to `null` and the step fails, so pin the engine at `v0.43.0-beta.5` or later.
+The flag needs a worker image that includes [neops-worker-sdk-py `2b21f99`](https://github.com/zebbra/neops-worker-sdk-py/commit/2b21f99), first released in `v0.2.0-beta.8`; an older worker ignores it, logging only a warning. On an engine older than `v0.43.0-beta.5` an omitted flag resolves to `null` and the step fails; the lab needs `v0.43.0-beta.6` or later anyway (see [Troubleshooting](../20-operations/40-troubleshooting.md)).
 
 ### The four parameter files
 

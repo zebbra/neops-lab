@@ -16,7 +16,7 @@ Only `vendor: "frr"` devices are rendered, so a scenario declares whether it sup
 "flavours": ["clab", "kind"]
 ```
 
-Both shipped scenarios do. `make kind-lab-up SCENARIO=frr-only` brings up the same ten devices as the containerlab flavour of that scenario, since `frr-only` has no SR Linux nodes to leave out.
+`wan-and-fabric` and `frr-only` do; `network-zones` does not, and the `kind-lab-*` targets refuse a scenario whose `flavours` leave out `kind` before they touch the cluster. `make kind-lab-up SCENARIO=frr-only` brings up the same ten devices as the containerlab flavour of that scenario, since `frr-only` has no SR Linux nodes to leave out.
 
 ## Targets
 
@@ -79,7 +79,7 @@ Bringing the pods up needs no product stack. Wiring them to one is a separate ta
 make kind-lab-cms-config   # grant the CMS role and seed the Global scope
 ```
 
-That runs `apply_cms_config`, the compose lab's own script, reused rather than copied: it drives `manage.py` through a `CMS_EXEC` prefix, which this flavour sets to `kubectl exec` instead of `docker compose exec`. Without it a freshly installed CMS gives the `neops` user no role, and the web client shows *You don't have access to any scope*.
+That runs `apply_cms_config`, the compose lab's own script, reused rather than copied: it drives `manage.py` through a `CMS_EXEC` prefix, which this flavour sets to `kubectl exec` instead of `docker compose exec`. Without it a freshly installed CMS gives the `neops` user no role, and the web client shows *You don't have access to any scope*. The CMS must be neops-core 2.4.0 or later: the script grants the role through core's `bootstrap_admin_role`, which earlier releases lack.
 
 The host reaches the CMS through a short-lived `kubectl port-forward` that the target opens and tears down, so no ingress, public DNS or TLS is involved.
 
@@ -137,12 +137,13 @@ The output is git-ignored and regenerated on every run, because a `kind-lab-down
 
 ### The worker image has to carry `global_discover_network`
 
-Discovery runs the `fb.base.neops.io/global_discover_network:0.1.0` block, which ships **inside the worker image** rather than being mounted from here. Which image you deployed decides whether this works at all:
+Discovery runs the `fb.base.neops.io/global_discover_network:0.2.0` block, which ships **inside the worker image** rather than being mounted from here. Which image you deployed decides whether this works at all:
 
 | Worker image built from | Function blocks | Discovery |
 |---|---|---|
-| `quay.io/zebbra/neops-worker-sdk:develop`, the default | base blocks, **without** `global_discover_network` | The worker runs but never announces the block; `wait_ready` times out with *no online worker* |
-| `quay.io/zebbra/neops-worker-sdk:0.2.0-beta.*` (prerelease, expires after 20 days) | base blocks, including `global_discover_network` | Works once [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402) is in develop |
+| `quay.io/zebbra/neops-worker-sdk:develop`, the default | base blocks, including `global_discover_network` | Works on an engine of the release line its client pins |
+| `quay.io/zebbra/neops-worker-sdk:0.5.0` | base blocks, including `global_discover_network:0.2.0` | Works on engine `0.46.0` or later |
+| `quay.io/zebbra/neops-worker-sdk:0.4.0` and older | base blocks, with `global_discover_network` at `0.1.0` | `wait_ready` times out: discovery names `0.2.0` |
 | the `neops-worker-sdk-py` checkout, `make build-docker` | whatever the checked-out branch carries | Works if that branch has `global_discover_network` |
 | any image built without `neops/fb` | none | `wait_ready` times out with *no online worker* |
 
@@ -155,8 +156,8 @@ The KIND release deployed against this lab runs a worker built from that checkou
 | `KIND_ENGINE_URL` | `http://engine.neops.local` | How the host **and** the bootstrap container reach the workflow engine |
 | `KIND_DISCOVER_PARAMS` | `generated/$(SCENARIO)/kind/discover-params.json` | The generated parameter file |
 | `KIND_DISCOVER_TIMEOUT` | `600` | Seconds `run_workflow` polls for a terminal state |
-| `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.1.0` | The block `wait_ready` blocks on — shared with the containerlab flavour |
-| `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.3.0` | The definition that is published and executed — shared with the containerlab flavour |
+| `DISCOVER_FB` | `fb.base.neops.io/global_discover_network:0.2.0` | The block `wait_ready` blocks on — shared with the containerlab flavour |
+| `DISCOVER_WORKFLOW` | `wf.lab.neops.io/simple_lab_discovery:1.4.0` | The definition that is published and executed — shared with the containerlab flavour |
 | `DOCKER_RUN_FLAGS` | *(empty)* | Extra flags for the `docker run`, e.g. `--network=host` |
 
 ### Why one URL, and where it comes from

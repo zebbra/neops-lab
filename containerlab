@@ -11,8 +11,8 @@
 #     network namespaces to wire the veth links; --network host makes the
 #     mgmt bridge visible. On Docker Desktop "host" is the Linux VM.
 #   * /etc/hosts and ssh_config.d entries land inside this ephemeral
-#     container; reach devices with `docker exec <node>` (the topology sets
-#     prefix "", so node names are container names).
+#     container; reach devices with `docker exec <LAB_NAME>-<node>` (the
+#     topology prefixes node names with the lab name).
 #
 #   CLAB_IMAGE=ghcr.io/srl-labs/clab:<version>   containerlab version
 #   CLAB_NATIVE=/path/to/containerlab            use a host binary instead

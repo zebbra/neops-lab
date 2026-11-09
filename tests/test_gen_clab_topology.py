@@ -25,6 +25,15 @@ def _topology(scenario):
     return json.loads((LAB_DIR / "scenarios" / scenario / "topology.json").read_text())
 
 
+def _default_devices(scenario):
+    """The devices the default parameter files cover: those in no network zone."""
+    topology = _topology(scenario)
+    return gen.group_by_zone(topology["devices"], topology.get("zones", {}))[gen.DEFAULT_ZONE]
+
+
+DEPLOYMENT = gen.Deployment(name="neops-lab", network="lab-net", subnet=gen.TOPOLOGY_SUBNET)
+
+
 def _committed(scenario, filename):
     return json.loads((LAB_DIR / "scenarios" / scenario / "workflow-execution-parameters" / filename).read_text())
 
@@ -102,10 +111,10 @@ def test_srl_srl_link_uses_e1_dash():
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_discover_params_matches_committed(scenario):
-    topology = _topology(scenario)
-    result = gen.render_discover_params(topology["devices"])
+    devices = _default_devices(scenario)
+    result = gen.render_discover_params(devices)
     assert result == _committed(scenario, "discover-params.json")
-    assert len(result["subnets"]) == len(topology["devices"])
+    assert len(result["subnets"]) == len(devices)
 
 
 def test_discover_params_supply_credentials_once_per_vendor():
@@ -132,20 +141,20 @@ def test_autodetect_params_match_committed_and_omit_platform(scenario):
     """The autodetect targeting variant: address + shared credentials only, so
     discovery has to detect the platform itself. ("Scenario" means a lab under
     scenarios/ — these four files are targeting variants within one.)"""
-    topology = _topology(scenario)
-    result = gen.render_autodetect_params(topology["devices"])
+    devices = _default_devices(scenario)
+    result = gen.render_autodetect_params(devices)
 
     assert result == _committed(scenario, "discover-params-autodetect.json")
-    assert len(result["subnets"]) == len(topology["devices"])
+    assert len(result["subnets"]) == len(devices)
     assert all(set(s) == {"cidr"} for s in result["subnets"]), "no platform, no per-subnet login"
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_both_parameter_files_target_the_same_hosts(scenario):
     """They differ only in what is declared, never in which devices are probed."""
-    topology = _topology(scenario)
-    declared = gen.render_discover_params(topology["devices"])
-    autodetect = gen.render_autodetect_params(topology["devices"])
+    devices = _default_devices(scenario)
+    declared = gen.render_discover_params(devices)
+    autodetect = gen.render_autodetect_params(devices)
 
     assert [s["cidr"] for s in declared["subnets"]] == [s["cidr"] for s in autodetect["subnets"]]
     # Same logins; only the declared file scopes them (autodetect knows no platforms).
@@ -156,9 +165,7 @@ def test_both_parameter_files_target_the_same_hosts(scenario):
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_subnet_params_match_committed(scenario):
-    assert gen.render_subnet_params(_topology(scenario)["devices"]) == _committed(
-        scenario, "discover-params-subnet.json"
-    )
+    assert gen.render_subnet_params(_default_devices(scenario)) == _committed(scenario, "discover-params-subnet.json")
 
 
 def test_frr_nodes_mount_the_scenario_config_at_lab():
@@ -168,10 +175,43 @@ def test_frr_nodes_mount_the_scenario_config_at_lab():
     root — containerlab resolves them from there before handing absolute host
     paths to the daemon."""
     devices = {"r1": {"mgmt_ip": "172.30.0.11", "vendor": "frr", "loopback": "lo", "interfaces": []}}
-    node = gen.render_clab(devices)["topology"]["nodes"]["r1"]
+    node = gen.render_clab(devices, DEPLOYMENT)["topology"]["nodes"]["r1"]
 
     assert "../scenario/devices/frr/frr.conf:/lab/frr.conf:ro" in node["binds"]
     assert "../scenario/devices/frr/daemons:/lab/daemons:ro" in node["binds"]
     assert "../scenario/devices/frr/set-aliases.sh:/lab/set-aliases.sh:ro" in node["binds"]
     assert node["exec"] == ["sh /lab/set-aliases.sh"]
     assert "frr/r1.iface:/etc/frr/lab-interfaces/r1.iface:ro" in node["binds"]
+
+
+def test_relocate_keeps_each_host_offset():
+    devices = {"r1": {"mgmt_ip": "172.30.0.11", "vendor": "frr"}, "s1": {"mgmt_ip": "172.30.0.31", "vendor": "srl"}}
+    moved = gen.relocate(devices, "10.131.0.0/24")
+    assert {host: dev["mgmt_ip"] for host, dev in moved.items()} == {"r1": "10.131.0.11", "s1": "10.131.0.31"}
+    assert devices["r1"]["mgmt_ip"] == "172.30.0.11", "the topology itself is left as it was"
+
+
+def test_relocate_refuses_a_subnet_too_small_for_the_topology():
+    with pytest.raises(ValueError, match="smaller than"):
+        gen.relocate({"r1": {"mgmt_ip": "172.30.0.11", "vendor": "frr"}}, "10.131.0.0/28")
+
+
+def test_a_relocated_lab_carries_its_own_name_network_and_subnet():
+    """Two labs on one host differ in lab name, network and node container names."""
+    deployment = gen.Deployment(name="lab-b", network="lab-b-net", subnet="10.131.0.0/24")
+    devices = gen.relocate(
+        {"r1": {"mgmt_ip": "172.30.0.11", "vendor": "frr", "loopback": "lo", "interfaces": []}}, deployment.subnet
+    )
+    clab = gen.render_clab(devices, deployment)
+    assert clab["name"] == "lab-b"
+    assert clab["prefix"] == "__lab-name"
+    assert clab["mgmt"] == {"network": "lab-b-net", "ipv4-subnet": "10.131.0.0/24"}
+    assert clab["topology"]["nodes"]["r1"]["mgmt-ipv4"] == "10.131.0.11"
+    assert gen.render_subnet_params(devices, deployment.subnet)["subnets"][0]["cidr"] == "10.131.0.0/24"
+
+
+def test_the_generator_refuses_an_unset_deployment(monkeypatch):
+    for key in ("LAB_NAME", "LAB_NET", "LAB_SUBNET"):
+        monkeypatch.delenv(key, raising=False)
+    with pytest.raises(SystemExit):
+        gen.deployment_from_env()

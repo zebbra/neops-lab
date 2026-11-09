@@ -65,19 +65,19 @@ A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `re
 
 | Service | Default image | Override with |
 |---|---|---|
-| `cms` | `quay.io/zebbra/neops-cms-free:develop` | `NEOPS_CMS_IMAGE` |
-| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image — e.g. the full licensed `quay.io/zebbra/neops-workflow-engine:develop`) |
+| `cms` | `quay.io/zebbra/neops-cms-free:develop`; `.env.example` pins `2.4.0`, the first neops-core with network zones, which engine `0.46.0` needs | `NEOPS_CMS_IMAGE` |
+| `workflow_engine`, `workflow-engine-client` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public; `.env.example` pins `NEOPS_ENGINE_TAG=0.46.0`, the first with network zones, to match the worker pin. A scenario whose `scenario.json` names `"engine": "enterprise"` gets the licensed `quay.io/zebbra/neops-workflow-engine` at the same tag instead (the Makefile exports `NEOPS_ENGINE_REPOSITORY`) | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image — e.g. the full licensed `quay.io/zebbra/neops-workflow-engine:develop`), which wins over the scenario |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
-| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` — lacks `global_discover_network`, so `.env.example` pins a prerelease `0.2.0-beta.*` that has it | `NEOPS_WORKER_SDK_IMAGE` |
+| `worker` | `quay.io/zebbra/neops-worker-sdk:develop`; `.env.example` pins `0.5.0`, the first with `global_discover_network:0.2.0`, to hold a fixed release | `NEOPS_WORKER_SDK_IMAGE` |
 
-The CMS, the web client, the worker and the developer-preview engine are all public, so the default lab pulls with no `docker login`. The **full licensed engine** (`quay.io/zebbra/neops-workflow-engine`) is the one exception.
+The CMS, the web client, the worker and the developer-preview engine are all public, so the default lab pulls with no `docker login`. The **full licensed engine** (`quay.io/zebbra/neops-workflow-engine`) is the one exception, and the `network-zones` scenario runs it.
 
 The make targets pull the published tags with `--policy always`; the services' `pull_policy: missing` would otherwise skip images already on disk. The default `develop` is republished on every merge to the engine's `develop` branch and never expires, so `make local-env-up` is all it takes to move forward. `0.42.2-beta.3` remains the oldest engine tag the lab supports (raised body limits + the publish route).
 
 !!! warning "Do not pin the preview's `latest`"
     The preview's `latest` is 0.42.1 — below the oldest engine the lab supports — because `latest` only advances on non-prerelease releases. Prerelease tags carry a `quay.expires-after=20d` label and vanish — `0.42.2-beta.3` did, on 2026-09-07 — so a pinned beta stops resolving without warning; `develop` carries no such label.
 
-Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:7-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
+Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:7-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.19.23`, `victoriametrics/victoria-logs:v1.53.0`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
 
 ## Running a locally-built image
 
@@ -99,7 +99,7 @@ Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}
 ### Why you would
 
 - **Worker SDK** — to exercise a function block before it is released. The lab
-  depends on `fb.base.neops.io/global_discover_network:0.1.0` shipping *inside*
+  depends on `fb.base.neops.io/global_discover_network:0.2.0` shipping *inside*
   the worker image rather than being bind-mounted from here, so a block you are
   editing reaches the lab only through a rebuilt image:
   `make -C ../neops-worker-sdk-py build-docker`, then point

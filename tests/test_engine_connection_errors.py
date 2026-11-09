@@ -19,7 +19,7 @@ import labscripts
 run_workflow = labscripts.load("run_workflow")
 wait_ready = labscripts.load("wait_ready")
 
-FB_ID = "fb.base.neops.io/global_discover_network:0.1.0"
+FB_ID = "fb.base.neops.io/global_discover_network:0.2.0"
 COMPLETED = {"status": "completed_ack"}
 
 # Each failure a round trip can raise past urllib's URLError wrapper.

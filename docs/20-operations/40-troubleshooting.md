@@ -26,9 +26,9 @@ Without `COMPOSE_FILE` exported, plain `docker compose` commands do not see the 
 
 ## `Pool overlaps with other one on this address space`
 
-**Where:** `docker compose up`, creating `lab-net` or the project `default` network.
+**Where:** `docker compose up`, creating `lab-net`, the project `default` network, or, in a scenario with network zones, a zone's `lab-net-<zone>`.
 
-**Cause:** another docker network overlaps `172.30.0.0/23`. On a host with many compose projects docker's auto-assigned `/16` blocks run out and some other project's `default` network landed on `172.30.0.0/16` before the lab's networks existed. (The lab's own networks all carry fixed subnets, so they never compete with each other.)
+**Cause:** another docker network overlaps `172.30.0.0/23`, or a zone's subnet from the scenario's `topology.json` (`172.30.10.0/24` and `172.30.20.0/24` in `network-zones`). A second lab moved with `LAB_SUBNET` keeps those zone subnets, so it collides with a first `network-zones` lab. On a host with many compose projects docker's auto-assigned `/16` blocks run out and some other project's `default` network landed on `172.30.0.0/16` before the lab's networks existed. (The lab's own networks all carry fixed subnets, so they never compete with each other.)
 
 **Fix:** `make doctor` names the overlapping network. If it is an unused leftover (`docker network inspect <name>` shows no containers): `docker network rm <name>` — the owning project's next `up` recreates it. If it is genuinely in use, stop that stack first.
 
@@ -64,11 +64,11 @@ docker compose logs lab_bootstrap
 
 ## `Function block … not found`
 
-**Where:** the execution's terminal state, as `failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.1.0 not found`.
+**Where:** the execution's terminal state, as `failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.2.0 not found`.
 
 **Two different causes, in order of likelihood:**
 
-1. **You raced the worker.** The worker registers its function blocks with the engine *asynchronously* after its container starts. `make local-lab-up` and `make local-lab-discover` both run `./wait_ready fb.base.neops.io/global_discover_network:0.1.0` first, which polls the engine's per-function-block worker registry until an online worker exists. Run the make target rather than `run_workflow` directly.
+1. **You raced the worker.** The worker registers its function blocks with the engine *asynchronously* after its container starts. `make local-lab-up` and `make local-lab-discover` both run `./wait_ready fb.base.neops.io/global_discover_network:0.2.0` first, which polls the engine's per-function-block worker registry until an online worker exists. Run the make target rather than `run_workflow` directly.
 
 2. **The image does not carry the block.** `neops/fb` ships *inside* the `neops-worker-sdk` image; it is not mounted from this repo. Check what you are running:
 
@@ -76,7 +76,7 @@ docker compose logs lab_bootstrap
     docker compose exec worker ls /app/neops/fb/base/global/discover_network.py
     ```
 
-    ⚠️ The published `quay.io/zebbra/neops-worker-sdk:develop` tag **does not carry it** — see the next entry.
+    ⚠️ An old prerelease tag or an old local build may not carry it — see the next entry.
 
 See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10-concepts/40-container-paths.md).
 
@@ -87,35 +87,111 @@ See [Discovery](../10-concepts/30-discovery.md) and [The `/app/lab` mount](../10
 **Where:** `make local-lab-up` burns its full `wait_ready` budget and gives up with
 
 ```
-timeout: no online worker for fb.base.neops.io/global_discover_network:0.1.0 within 180s
+timeout: no online worker for fb.base.neops.io/global_discover_network:0.2.0 within 180s
 ```
 
 **Cause:** the worker image you pinned does not carry
-`global_discover_network` — the published `develop` tag is one such image. The
+`global_discover_network` at `0.2.0`: a release before `0.5.0` (it carries
+`0.1.0`, and a `.env` written before this release still pins one), an old
+prerelease tag or an old local build. The
 block ships *inside* the image rather than being bind-mounted from here, so the
 worker starts, registers the blocks it has, and never announces this one;
 `wait_ready` waits for it until the budget runs out.
 
-**Fix:** check what the image actually holds, and fall back to a prerelease
-`0.2.0-beta.*` tag (the published `develop` lacks the block) or a fresh build of
-an SDK checkout that has it:
+Engine `0.46.0` refuses every worker until it has read the network zones from
+the CMS, so a CMS older than neops-core `2.4.0` gives the same timeout with the
+right worker image; `make local-lab-logs` then shows the refused
+registration. Pin the CMS from `.env.example` too.
+
+**Fix:** check what the image actually holds, and fall back to the published
+`develop` tag, a `0.5.x` release, or a fresh build of an
+SDK checkout that has it:
 
 ```bash
-docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'ls neops/fb/base/global/discover_network.py'
+docker run --rm --entrypoint sh "$NEOPS_WORKER_SDK_IMAGE" -c 'grep -n "version=(0, 2, 0)" neops/fb/base/global/discover_network.py'
 make -C ../neops-worker-sdk-py build-docker          # -> neops-worker-sdk:latest
 echo 'NEOPS_WORKER_SDK_IMAGE=neops-worker-sdk:latest' >> .env
 make local-lab-up
 ```
 
-Re-pinning a newer `0.2.0-beta.*` the same way? Run the `discover_network.py`
+Re-pinning another `0.5.x` the same way? Run the `discover_network.py`
 check against it before `make local-lab-up`.
+
+### A network zone never becomes ready
+
+**Where:** the `network-zones` scenario, with `in zone <zone>` in the timeout:
+
+```
+timeout: no online worker for fb.base.neops.io/global_discover_network:0.2.0 in zone zone-a within 180s
+```
+
+**Cause:** `worker-<zone>` is not online in its zone. It exits when the engine
+refuses its registration: the zone is missing from the CMS, or the engine
+predates network zones. A worker image older than SDK 0.5.0 ignores
+`NEOPS_WORKER_NETWORK_ZONES` and registers in `default` only, so it never
+counts for a zone.
+
+**Fix:** read the worker's last words, then check the images:
+
+```bash
+make local-lab-logs SCENARIO=network-zones      # every worker, each zone's included
+make apply-cms-config SCENARIO=network-zones   # creates the zones; stops on a CMS older than neops-core 2.4.0
+```
+
+The scenario needs a CMS from neops-core 2.4.0, engine 0.46.0 and worker SDK
+0.5.0 or later, the releases `.env.example` pins; a `.env` written before them
+keeps its older pins.
+
+### The engine's license admits fewer workers than the lab starts
+
+**Where:** `wait_ready` in `make local-lab-up` or `make local-lab-discover`, at
+once rather than after a timeout:
+
+```
+this lab starts 3 workers, but the engine's Developer Preview license admits 2, so it refuses the rest.
+```
+
+**Cause:** the engine is the developer preview, which admits two workers, and
+the `network-zones` scenario starts one per zone beside the central one. The
+scenario asks for the licensed engine, so this usually means
+`NEOPS_WORKFLOW_ENGINE_IMAGE` in `.env` or the environment names the preview,
+or a local build of it, and wins over the scenario.
+
+**Fix:** log in to Quay with an account that can pull the licensed engine,
+unset `NEOPS_WORKFLOW_ENGINE_IMAGE` or point it at a licensed engine, and bring
+the lab up again:
+
+```bash
+docker login quay.io
+make local-lab-up SCENARIO=network-zones
+```
+
+---
+
+## A workflow is refused at the developer preview's limit after `network-zones` ran
+
+**Where:** the `lab_bootstrap` log of a scenario on the developer preview, as a
+`403` naming the workflow definition limit.
+
+**Cause:** the developer preview admits five workflows, counted by package and
+name. The engine's database outlives `make local-lab-down`, and `network-zones`
+published `wf.lab.neops.io/move_device_to_zone` into it, so a preview scenario
+started afterwards has one slot fewer for workflows of your own.
+
+**Fix:** soft-delete that workflow with `DELETE /workflow-definition/{id}`, as
+the refusal's hint says, or start from an empty database:
+
+```bash
+make local-env-prune
+make local-env-init
+```
 
 ---
 
 ## Worker exits ~2 min after start; discovery hangs after `wait_ready`
 
-**Known issue until [engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402) is in the engine's
-published `develop` image.**
+**Affects engines older than `v0.43.0-beta.6`**, which lack
+[engine #402](https://github.com/zebbra/neops-workflow-engine/pull/402). The default `develop` image has it.
 
 **Where:** `make local-lab-up` succeeds and `wait_ready` reports an online
 worker, but `make local-lab-discover` sits in `running` and never finishes. The
@@ -124,15 +200,15 @@ worker log shows `Registration failed: (500)` for one function block (e.g.
 container exits with code 1. The engine log shows `value too long for type
 character varying(255)`.
 
-**Cause:** the engine stores a function block's description and help text in
-`varchar(255)` columns, and the `0.2.0-beta.*` worker ships a block whose help
+**Cause:** an engine older than `v0.43.0-beta.6` stores a function block's
+description and help text in `varchar(255)` columns, and the `0.2.0-beta.*` worker ships a block whose help
 text is longer. That insert fails, the worker gives up and exits. The discovery
 block registers before the failing one, so `wait_ready` passes — and the engine
 keeps listing the dead worker as online.
 
-**Fix:** once #402 is merged and the engine's `develop` image is republished,
-re-pull the engine and restart the stack. The worker pin does **not** need to
-move.
+**Fix:** run an engine at `v0.43.0-beta.6` or later: drop an older
+`NEOPS_ENGINE_TAG`, re-pull the engine and restart the stack. The worker pin
+does **not** need to move.
 
 ```bash
 make local-env-up          # pulls with --policy always
@@ -173,7 +249,7 @@ make local-lab-up
 
 ```bash
 export NEOPS_ENGINE_TOKEN=$(./lab_token)
-./wait_ready fb.base.neops.io/global_discover_network:0.1.0
+./wait_ready fb.base.neops.io/global_discover_network:0.2.0
 ```
 
 A token lasts 15 minutes, so a long session needs a fresh one. If the account is short of a permission, widen its role:
@@ -294,6 +370,24 @@ With `CLAB_NATIVE` (a host binary) the classic failure is *"This containerlab co
 
 ---
 
+## The monitor app says `This engine stores no logs`
+
+The engine keeps queryable logs only when it has a log store; without one it
+logs to stdout and the monitor app's log views stay empty. The lab gives it
+one: the `victorialogs` service, with `NEOPS_LOG_BACKEND=victorialogs` and
+`NEOPS_LOG_URL=http://victorialogs:9428` on `workflow_engine`. If you still see
+the message:
+
+- The engine is older than `v0.44.0`, the first release that pushes to
+  VictoriaLogs. Check `NEOPS_ENGINE_TAG` / `NEOPS_WORKFLOW_ENGINE_IMAGE`.
+- The engine was started before the store was configured. Recreate it with
+  `docker compose up -d workflow_engine`; at boot it logs `Log store configured`
+  with `backend: victorialogs`.
+
+Lines from before the store existed were never stored and do not come back.
+While the store is unreachable the engine keeps lines in its Postgres outbox
+and replays them once it answers, so a slow `victorialogs` start loses nothing.
+
 ## Duplicate interface rows after re-running discovery
 
 **Cause:** devices are keyed by IP so they are skipped on a second run, but **interfaces are always recorded**.
@@ -307,6 +401,33 @@ make local-env-init && make local-lab-up && make local-lab-discover
 
 ---
 
+## Search is empty after the CMS image changed its index layout
+
+**Symptom:** device or interface search returns nothing, or `groups.*` searches and acquires fail,
+after pulling a newer CMS image onto an existing `elasticsearch` volume.
+
+**Cause:** a newer neops-core keeps devices and interfaces in one `network` index and joins
+groups and clients through ES|QL lookup indices (which is why the lab runs Elasticsearch 8.19).
+`elastic_index --create` at CMS start creates the new indices empty and leaves the old ones alone,
+so nothing is in them until the rows are written again. The old `devices` and `interfaces` indices
+stay on the volume, unused, until it is pruned.
+
+**Fix:** with no workflow executing (its searches and acquires fail while the indices are
+rebuilt), refill every index from the database:
+
+```bash
+docker compose exec -T cms python manage.py elastic_index --rebuild --force
+```
+
+or start from empty volumes with `make local-env-prune` (below), which also drops the old indices.
+
+**The reverse case:** the first start of 8.19 upgrades the volume in place, and 8.9 cannot read
+it afterwards. Checking out an older revision of this repo, which pins 8.9.2, makes
+`elasticsearch` exit with status 1 on that volume. The index is derived data: run
+`make local-env-prune` and bring the lab up again.
+
+---
+
 ## Nothing works and you want to start over
 
 ```bash
@@ -314,4 +435,4 @@ make local-lab-down local-env-prune
 make local-env-init && make local-lab-up && make local-lab-discover
 ```
 
-`local-lab-down` tolerates there being no deployed lab (the `./containerlab destroy` line is prefixed with `-`, so `make` continues on failure). `local-env-prune` drops the Elasticsearch and Postgres volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.
+`local-lab-down` tolerates there being no deployed lab (the `./containerlab destroy` line is prefixed with `-`, so `make` continues on failure). `local-env-prune` drops the Elasticsearch, Postgres and VictoriaLogs volumes — leftover volume state across down/up cycles has previously made `elastic_index --create` fail and stale CMS data confuse re-inits.

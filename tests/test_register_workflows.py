@@ -109,7 +109,8 @@ DISCOVERY = "wf.lab.neops.io/simple_lab_discovery:1.3.0"
 @pytest.fixture
 def documents(workflows, monkeypatch):
     """Stand in for `yaml.safe_load`: each file parses to a document named after it,
-    and the discovery file to the id the Makefile's DISCOVER_WORKFLOW names."""
+    and the discovery file to DISCOVERY. test_discovery_workflow.py pins the real
+    file to the Makefile's DISCOVER_WORKFLOW."""
 
     def load_document(path):
         if path.name == "simple-lab-discovery.workflow.yaml":
@@ -152,18 +153,3 @@ def test_an_unset_or_unmatched_discovery_id_keeps_file_order(documents, first):
     """Unset outside make; unmatched when the Makefile and the YAML disagree on
     a version. Neither may stop the documents from being published."""
     assert register.publish_order(documents, first) == documents
-
-
-def test_the_makefile_names_the_discovery_workflow_the_base_scenario_ships():
-    """The id is matched exactly, version included, so the two must move together."""
-    makefile = (LAB_DIR / "Makefile").read_text()
-    assert f"DISCOVER_WORKFLOW := {DISCOVERY}\n" in makefile
-    text = (LAB_DIR / "scenarios" / "_base" / "workflows" / "simple-lab-discovery.workflow.yaml").read_text()
-    for line in (
-        "package: wf.lab.neops.io",
-        "name: simple_lab_discovery",
-        "majorVersion: 1",
-        "minorVersion: 3",
-        "patchVersion: 0",
-    ):
-        assert f"\n{line}\n" in text, line
