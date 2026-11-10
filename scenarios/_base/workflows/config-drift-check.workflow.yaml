@@ -1,0 +1,29 @@
+# Config drift check: compare each device's running configuration against the
+# baseline fact written by config-baseline. Read-only: the baseline is never
+# touched, and a device without one fails the step rather than getting one.
+# The step result carries `drifted` and the unified `diff`.
+label: config_drift_check
+name: config_drift_check
+package: wf.lab.neops.io
+majorVersion: 1
+minorVersion: 0
+patchVersion: 0
+seedEntity: device
+type: workflow
+description: "Report drift of the device's running configuration from its baseline config fact."
+
+parameterSchema:
+  type: object
+  properties:
+    baseline_fact_key:
+      type: string
+      description: "Device fact holding the baseline configuration (written by config_baseline)."
+      default: config_baseline
+steps:
+  - type: functionBlock
+    label: detect_drift
+    functionBlock: "fb.base.neops.io/network_device_detect_config_drift:0.1.0"
+    runOn: device
+    parameters:
+      baseline_fact_key: "{{ parameters.baseline_fact_key }}"
+      update_baseline: false

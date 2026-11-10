@@ -11,8 +11,13 @@ RUN apk add --no-cache openssh openssh-server bash shadow iproute2 \
  && addgroup frr frrvty \
  && chown frr:frr /home/frr \
  && sed -ri 's|^#?PasswordAuthentication .*|PasswordAuthentication yes|' /etc/ssh/sshd_config \
- && sed -ri 's|^#?PermitRootLogin .*|PermitRootLogin no|' /etc/ssh/sshd_config
+ && sed -ri 's|^#?PermitRootLogin .*|PermitRootLogin no|' /etc/ssh/sshd_config \
+ && install -m 640 -o frr -g frrvty /dev/null /etc/frr/vtysh.conf
 
+# An empty vtysh.conf is vtysh's own settings, not routing config. Without it
+# every vtysh call prints a "% Can't open configuration file" warning, which ends
+# up inside every `show running-config` a worker captures.
+#
 # frr.conf and daemons are NOT baked in: they are scenario data, mounted at
 # /lab and installed by the entrypoint. One image serves every scenario, and the
 # config lives in exactly one place (scenarios/*/devices/frr/).

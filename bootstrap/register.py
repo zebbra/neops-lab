@@ -30,6 +30,14 @@ UNAUTHORIZED = (401, 403)
 
 AUTH_HINT = "mint a token with ./lab_token and export NEOPS_ENGINE_TOKEN before `docker compose up -d`"
 
+# The discovery workflow, as `package/name:major.minor.patch` — the Makefile's
+# DISCOVER_WORKFLOW. It is published before every other document: the engine's
+# license caps how many definitions it holds, and when a scenario's workflows
+# exceed that cap it must be an extra workflow that is refused, never the one
+# `local-lab-up` and `local-lab-discover` cannot do without. Unset, the order is
+# the plain sorted one.
+DISCOVER_WORKFLOW = os.environ.get("DISCOVER_WORKFLOW", "").strip()
+
 
 def wait_for_engine() -> None:
     deadline = time.monotonic() + MAX_WAIT_SECONDS
@@ -77,10 +85,20 @@ def register_legacy(wf: dict) -> bool:
     return False
 
 
+def load_document(path: pathlib.Path) -> dict:
+    with path.open() as fh:
+        return yaml.safe_load(fh)
+
+
+def workflow_id(wf: dict) -> str:
+    """The `package/name:major.minor.patch` the engine and `run_workflow` address a definition by."""
+    version = f"{wf.get('majorVersion')}.{wf.get('minorVersion')}.{wf.get('patchVersion')}"
+    return f"{wf.get('package')}/{wf.get('name')}:{version}"
+
+
 def register_one(path: pathlib.Path) -> bool:
     print(f"-> {path.name}", flush=True)
-    with path.open() as fh:
-        wf = yaml.safe_load(fh)
+    wf = load_document(path)
 
     resp = requests.post(
         f"{ENGINE_URL}/workflow-definition/publish",
@@ -133,9 +151,25 @@ def workflow_files(directory: pathlib.Path) -> list[pathlib.Path]:
     return sorted(p for p in directory.iterdir() if p.is_file() and p.suffix in WORKFLOW_SUFFIXES)
 
 
+def publish_order(paths: list[pathlib.Path], first: str) -> list[pathlib.Path]:
+    """`paths` with the document whose id is `first` moved to the front.
+
+    A `first` no document carries is reported, not fatal: it means the
+    Makefile's DISCOVER_WORKFLOW and the discovery YAML disagree on a version,
+    which `local-lab-discover` would otherwise only reveal as a 404.
+    """
+    if not first:
+        return paths
+    for path in paths:
+        if workflow_id(load_document(path)) == first:
+            return [path, *(p for p in paths if p != path)]
+    print(f"warning: no workflow document is {first}; publishing in file order", flush=True)
+    return paths
+
+
 def main() -> int:
     wait_for_engine()
-    workflows = workflow_files(WORKFLOWS_DIR)
+    workflows = publish_order(workflow_files(WORKFLOWS_DIR), DISCOVER_WORKFLOW)
     if not workflows:
         print(f"no workflow files found in {WORKFLOWS_DIR}", flush=True)
         return 0
