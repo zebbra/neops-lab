@@ -59,6 +59,7 @@ ZONE_READY_ARGS = $(foreach zone,$(READY_ZONES),--zone $(zone))
 # The containerlab topologies the scenario declares: default's and one per zone.
 # A zone removed while deployed keeps its file for local-lab-down, never for a deploy.
 CLAB_TOPOLOGIES = $(shell ./gen_clab_topology --scenario $(SCENARIO) --topologies)
+SCENARIO_DEVICE_COUNT = $(shell ./gen_clab_topology --scenario $(SCENARIO) --device-count)
 # The mgmt network a containerlab topology file names.
 CLAB_MGMT_NETWORK = python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["mgmt"]["network"])'
 
@@ -489,7 +490,7 @@ local-lab-up: build-docker lab-jwt lab-env generate monitor-config
 	@echo "  Engine API:   $(LAB_ENGINE_URL)/"
 	@echo "  CMS admin:    $(LAB_CMS_URL)/admin/ (neops / neops)"
 	@echo "  CMS GraphQL:  $(LAB_CMS_URL)/graphql"
-	@echo "  Run 'make local-lab-discover' to populate the CMS (15 devices with interfaces)."
+	@echo "  Run 'make local-lab-discover' to populate the CMS ($(SCENARIO_DEVICE_COUNT) devices with interfaces)."
 
 local-lab-down:
 	# Destroy the scenario that is actually deployed, which is not necessarily

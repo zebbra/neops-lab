@@ -406,6 +406,17 @@ def test_the_generator_names_the_topologies_the_lab_deploys():
     assert _query("--topologies", scenario="frr-only") == "generated/frr-only/clab/neops-lab.clab.json"
 
 
+def test_the_generator_counts_every_device_of_the_scenario():
+    assert _query("--device-count") == "6"
+    assert _query("--device-count", scenario="frr-only") == "10"
+    assert _query("--device-count", scenario="wan-and-fabric") == "15"
+
+
+def test_local_lab_up_names_the_scenarios_device_count():
+    assert _make_value("SCENARIO_DEVICE_COUNT") == "6"
+    assert _make_value("SCENARIO_DEVICE_COUNT", scenario="frr-only") == "10"
+
+
 def test_local_lab_up_deploys_the_declared_topologies_only():
     """A zone removed while deployed keeps its file for local-lab-down; up must not bring it back."""
     body = MAKEFILE[MAKEFILE.index("\nlocal-lab-up:") :]

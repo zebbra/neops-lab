@@ -434,6 +434,9 @@ def parse_args(argv: list) -> argparse.Namespace:
         action="store_true",
         help="print the containerlab topology of each zone, default first, and exit",
     )
+    query.add_argument(
+        "--device-count", action="store_true", help="print how many devices the scenario has, every zone's, and exit"
+    )
     return parser.parse_args(argv)
 
 
@@ -509,8 +512,10 @@ def _prune_zone_clab_files(scenario: str, zones: set) -> None:
             path.unlink()
 
 
-def _query(args: argparse.Namespace, scenario: str, declared: dict) -> list | None:
-    """What a lab target reads of the zones, or None when no query flag is set."""
+def _query(args: argparse.Namespace, scenario: str, devices: dict, declared: dict) -> list | None:
+    """What a lab target reads of the scenario, or None when no query flag is set."""
+    if args.device_count:
+        return [str(len(devices))]
     if args.zone_workers:
         return [f"{zone}:{zone_worker(zone)}" for zone in declared]
     if args.ready_zones:
@@ -527,7 +532,7 @@ def main(argv: list | None = None) -> int:
     devices = gen_device_configs.load_topology(scenario)
     declared = gen_device_configs.load_zones(scenario)
     groups = group_by_zone(devices, declared)
-    answer = _query(args, scenario, declared)
+    answer = _query(args, scenario, devices, declared)
     if answer is not None:
         print(" ".join(answer))
         return 0
