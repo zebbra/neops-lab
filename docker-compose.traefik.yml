@@ -92,7 +92,7 @@ services:
       # Vite host check (no --allowedHosts CLI on older Vite in the image).
       __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${LAB_HOST}
     volumes: !override
-      - ./monitor/config.host.js:/app/rest/monitor-app/static/config.js:ro
+      - ./generated/monitor/config.host.js:/app/rest/monitor-app/static/config.js:ro
     ports: !override
       # Cross-origin iframe target (HTTP). Root base — not /monitor/.
       - "3031:5173"

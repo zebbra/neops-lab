@@ -14,7 +14,7 @@ The lab is declared in two files:
 
 | File | Declares |
 |---|---|
-| `docker-compose.yml` | The **base stack**: CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis, plus a `wait_health` helper |
+| `docker-compose.yml` | The **base stack**: CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis, VictoriaLogs, plus a `wait_health` helper |
 | `docker-compose.worker.yml` | The **worker overlay**: the `worker`, the one-shot `lab_bootstrap`, and the `lab-net` network definition |
 | `docker-compose.traefik.yml` | **Host-mode only**: bundled Traefik on :80/:443 and path-prefix labels (`make host-*`) |
 | `docker-compose.traefik-acme.yml` | **Host-mode optional**: Let's Encrypt `certresolver` labels when `TRAEFIK_CERTRESOLVER` is set |
@@ -41,6 +41,7 @@ HOST_LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml:docker-co
 
     ```bash
     export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
+export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
     ```
 
 ## Services
@@ -48,17 +49,18 @@ HOST_LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml:docker-co
 | Service | Image | Published port | Notes |
 |---|---|---|---|
 | `cms` | `quay.io/zebbra/neops-cms-free:develop` | `8001` → 8000 | Django CMS + GraphQL. Runs `migrate`, creates the `neops` superuser, builds the ES index, then `runserver`. `REDIS_URL` points it at `redis` |
-| `workflow_engine` | `quay.io/zebbra/neops-workflow-engine-preview:develop` | `3030` | Reads the CMS token from `cms_api_key.env`. The **developer preview**, public; `NEOPS_WORKFLOW_ENGINE_IMAGE` swaps in the full licensed engine |
-| `workflow-engine-client` | same image as the engine | `3031` → 5173 | The **monitor app**, run in dev mode (`npm install && npm run dev`) out of `/app/rest/monitor-app` |
+| `workflow_engine` | `quay.io/zebbra/neops-workflow-engine-preview:develop` | `3030` | Reads the CMS token from `cms_api_key.env`. The **developer preview**, public; a scenario whose `scenario.json` names `"engine": "enterprise"` (`network-zones`) runs the full licensed engine instead, and `NEOPS_WORKFLOW_ENGINE_IMAGE` wins over both |
+| `workflow-engine-client` | the developer preview at the engine's tag (`NEOPS_MONITOR_IMAGE`) | `3031` → 5173 | The **monitor app**, run in dev mode (`npm install && npm run dev`) out of `/app/rest/monitor-app` |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `8080` | `FRONTEND_*` env vars are browser-relative, so they point at host ports |
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | — | On **both** networks; polls the engine's blackboard and drives the devices |
-| `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: POSTs every `workflows/*.yaml` to the engine, then exits |
+| `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: POSTs every workflow document in the resolved scenario to the engine, then exits |
 | `postgres` | `postgres:15-alpine` | — | Volume `postgres_data` |
-| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.9.2` | — | Volume `elasticsearch_lab` (avoids colliding with a host ES volume named `elasticsearch`); 2 CPU / 4 GB limits (2 GB heap) |
+| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.19.23` | — | Volume `elasticsearch_lab` (avoids colliding with a host ES volume named `elasticsearch`); 2 CPU / 4 GB limits (2 GB heap) |
 | `redis` | `redis:7-alpine` | — | The CMS's channel layer (GraphQL subscriptions), cache and Celery broker |
+| `victorialogs` | `victoriametrics/victoria-logs:v1.53.0` | — | The engine's log store (`NEOPS_LOG_BACKEND=victorialogs`): engine and worker lines, read back by the monitor app's log views. Volume `victorialogs_data`, 30-day retention, no healthcheck (the image has no shell) |
 | `wait_health` | `busybox` | — | Depends on CMS + engine + web client being *healthy*, so `up -d` blocks until they are |
 
-The three overridable images (`workflow_engine`/`workflow-engine-client`, `web_client`, `worker`) each read a `NEOPS_*_IMAGE` variable and set `pull_policy: missing` — see [Images](../20-operations/20-images.md).
+The four overridable images (`cms`, `workflow_engine`/`workflow-engine-client`, `web_client`, `worker`) each read a `NEOPS_*_IMAGE` variable and set `pull_policy: missing` — see [Images](../20-operations/20-images.md).
 
 ## Networks
 
@@ -72,6 +74,7 @@ graph LR
     boot[lab_bootstrap]
     pg[(postgres)]
     es[(elasticsearch)]
+    vl[(victorialogs)]
   end
   subgraph labnet["lab-net — 172.30.0.0/24"]
     dev1["core-rtr-01 … border-rtr-01<br/>172.30.0.11–20"]
@@ -84,6 +87,7 @@ graph LR
   worker -- "SSH 22" --> dev1
   worker -- "SSH 22" --> dev2
   boot -- "POST /workflow-definition/publish" --> engine
+  engine -- "log lines" --> vl
 ```
 
 `lab-net` is declared by `docker-compose.worker.yml` with an explicit IPAM subnet of `172.30.0.0/24`, and containerlab's topology sets `mgmt.network: lab-net` with the same subnet. That is the join: compose creates the bridge, containerlab attaches the devices to it at their fixed `mgmt-ipv4`, and the worker — a member of both networks — can reach the engine by service name *and* the devices by IP.
@@ -105,6 +109,8 @@ graph LR
 
 ## The devices
 
+Which devices exist is a property of the selected [scenario](../30-scenarios/index.md). The table below is `wan-and-fabric`, the default; `frr-only` is the same list without the `spine-*` and `leaf-*` rows.
+
 | Hostname | Mgmt IP | Vendor | `vendor` in `topology.json` | Login |
 |---|---|---|---|---|
 | `core-rtr-01` … `core-rtr-02` | 172.30.0.11–12 | FRRouting | `frr` | `frr` / `frr` |
@@ -121,7 +127,7 @@ The `vendor` value doubles as the discovery **platform** short name, which is wh
 
 ## The wiring
 
-The devices are cabled to each other with containerlab `veth` links — a Nokia SR Linux spine-leaf fabric plus an FRR WAN/core/edge domain:
+The devices are cabled to each other with containerlab `veth` links. In `wan-and-fabric` that is a Nokia SR Linux spine-leaf fabric plus an FRR WAN/core/edge domain:
 
 ```mermaid
 graph TD
@@ -158,14 +164,39 @@ Because the links are real, interface state is real: connected ports come up **U
     plane; they meet only on the shared `lab-net` management network. Nothing
     in the lab routes between them today.
 
+    That separation is what lets `frr-only` exist as a straight subset: dropping
+    the five SR Linux nodes leaves no FRR interface pointing at something that
+    is gone. `tests/test_scenario_manifests.py` asserts that link symmetry for
+    every scenario, so a future subset that *does* cut a cable fails the suite.
+
 ## What is authored vs generated
 
-| Tracked in git | Generated (git-ignored) |
-|---|---|
-| `topology.json`, `gen_clab_topology`, `gen_device_configs` | `generated/neops-lab.clab.json` |
-| `devices/frr/` (Dockerfile, `frr.conf`, `daemons`, `entrypoint.sh`, `set-aliases.sh`) | `generated/frr/<host>.iface` |
-| `workflows/`, `function_blocks/`, `bootstrap/`, `scope/Global/`, `cms/oidc-config.json` | `generated/srl/<host>.cli` |
-| `workflow-execution-parameters/*.json` | `generated/clab-neops-lab/` (containerlab runtime, incl. minted TLS keys) |
-| the compose files, the `Makefile`, the host scripts | `cms/jwt/`, `cms_api_key.env` |
+**Tracked in git.** Per scenario, under `scenarios/<name>/`:
 
-Everything under `generated/` is rebuilt from `topology.json` on every `make local-lab-up`. Never commit it — containerlab mints TLS private keys in there.
+- `topology.json` and `scenario.json` — what the scenario is
+- `workflow-execution-parameters/*.json` — generated *into* the repo, and committed
+
+Shared across scenarios, under `scenarios/_base/`, each overridable by a scenario file by file:
+
+- `workflows/`, `scope/Global/`, `cms/oidc-config.json`, `cms/permissions.json`, `function_blocks/`
+- `devices/frr/frr.conf`, `devices/frr/daemons`, `devices/frr/set-aliases.sh`
+
+At the repo root:
+
+- `devices/frr/Dockerfile` and `devices/frr/entrypoint.sh` — image build inputs, not scenario data
+- `bootstrap/`, the compose files, the `Makefile`, and the host scripts (`resolve_scenario`, `gen_clab_topology`, `gen_device_configs`, `gen_kind_manifests`, `gen_kind_discover_params`, `run_workflow`, `wait_ready`, `wait_devices`)
+
+**Generated, git-ignored.** For `SCENARIO=wan-and-fabric`:
+
+| Path | Written by |
+|---|---|
+| `generated/wan-and-fabric/scenario/` | `resolve_scenario` — the `_base` + scenario overlay, flattened |
+| `generated/wan-and-fabric/clab/neops-lab.clab.json` | `gen_clab_topology` |
+| `generated/wan-and-fabric/clab/frr/<host>.iface`, `clab/srl/<host>.cli` | `gen_device_configs` |
+| `generated/wan-and-fabric/clab/clab-neops-lab/` | containerlab runtime, incl. minted TLS keys |
+| `generated/wan-and-fabric/kind/lab.yaml`, `kind/discover-params.json` | `gen_kind_manifests`, `gen_kind_discover_params` |
+| `cms/jwt/`, `cms_api_key.env` | `make lab-jwt`, `make local-env-init` |
+
+Everything under `generated/` is rebuilt on every `make local-lab-up`. Never commit it — containerlab mints TLS private keys in there.
+
+The one thing generated *outside* `generated/` is the committed `workflow-execution-parameters/*.json`, written back beside the topology that produced it. `make test` asserts it reproduces byte-for-byte, for every scenario.

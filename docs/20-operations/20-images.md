@@ -16,7 +16,7 @@ make build-docker
 
 | Image | Built from | Used by |
 |---|---|---|
-| `neops-lab-frr:latest` | `devices/frr/` | containerlab, as the image for every `kind: linux` node |
+| `neops-lab-frr:latest` | `devices/frr/` (`Dockerfile` + `entrypoint.sh` only) | containerlab, as the image for every `kind: linux` node |
 | `neops-lab-bootstrap:latest` | `bootstrap/` | the `lab_bootstrap` compose service |
 
 !!! warning "Nothing is pushed to a registry"
@@ -36,8 +36,8 @@ make build-docker
 
 - `openssh` with `PasswordAuthentication yes` and `PermitRootLogin no`
 - the `frr` user gets a home directory, a shell, and membership in `frrvty`
-- `frr.conf` and `daemons` are baked in (`zebra`, `ospfd` and `vtysh` enabled; everything else off)
-- the entrypoint rewrites the hostname into `frr.conf`, seeds `/etc/machine-id`, starts `sshd`, then hands off to FRR's own `docker-start`
+- `frr.conf` and `daemons` are **not** baked in — they are scenario data, mounted at `/lab` and installed by the entrypoint
+- the entrypoint copies `/lab/frr.conf` and `/lab/daemons` into `/etc/frr/`, rewrites the hostname, fixes ownership, seeds `/etc/machine-id`, starts `sshd`, then hands off to FRR's own `docker-start`
 
 !!! danger "The FRR image needs `NET_ADMIN` **and** `SYS_ADMIN`"
     The FRR binary refuses to start without `cap_sys_admin`, even with no VRFs
@@ -45,30 +45,40 @@ make build-docker
     which is why this works under `containerlab deploy` — if you ever run the
     image by hand with plain `docker run`, you must add them yourself.
 
-Interface *descriptions* are not baked into the image: containerlab `exec`s `devices/frr/set-aliases.sh` after the links are wired, which sets each interface's Linux alias from the generated `.iface` file. See [Topology as source of truth](../10-concepts/20-topology.md).
+!!! danger "No `/lab` mount, no boot"
+    The entrypoint exits non-zero with `/lab/frr.conf is not mounted` rather
+    than starting FRR on whatever happens to be in `/etc/frr`. A silently wrong
+    routing config costs far more to debug than a container that refuses to
+    start. Both flavours mount it: containerlab binds the three files from
+    `generated/<scenario>/scenario/devices/frr/`, and the Kubernetes flavour
+    carries them in its ConfigMap.
+
+**One image serves every scenario.** Because nothing is baked, a scenario that needs a different FRR baseline — `bgpd` instead of `ospfd`, say — ships a `devices/frr/daemons` or `devices/frr/frr.conf` delta in its own directory. There is no second image to build and no second tag to pin. See [Scenarios](../30-scenarios/index.md).
+
+Interface *descriptions* are not baked in either: containerlab `exec`s `/lab/set-aliases.sh` after the links are wired, which sets each interface's Linux alias from the generated `.iface` file. The script comes from `scenarios/_base/devices/frr/set-aliases.sh`. See [Topology as source of truth](../10-concepts/20-topology.md).
 
 ### `neops-lab-bootstrap`
 
-A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, publishes every `workflows/*.yaml` through the engine's `POST /workflow-definition/publish`, and exits. Publishing is idempotent: an unchanged document answers `200 unchanged`, which is the normal outcome of re-running `make local-lab-up`. Published content is immutable, so *editing* a workflow without bumping its version answers `409` and fails the target — bump `majorVersion`/`minorVersion`/`patchVersion` instead. Engines older than [`068753a0`](https://github.com/zebbra/neops-workflow-engine/commit/068753a0) have no publish route; `register.py` falls back to the legacy `POST /workflow-definition` on a 404. `docker compose wait lab_bootstrap` in `local-lab-up` blocks on that exit and propagates the code.
+A `python:3.12-slim` image with `pyyaml` and `requests`, whose entrypoint is `register.py`. It runs once per `docker compose up`, publishes every workflow document in the resolved scenario (`generated/<scenario>/scenario/workflows/`, sourced from `scenarios/_base/workflows/` unless the scenario overrides or adds one) — `*.yaml`, `*.yml` and `*.json` alike — through the engine's `POST /workflow-definition/publish`, and exits. Publishing is idempotent: an unchanged document answers `200 unchanged`, which is the normal outcome of re-running `make local-lab-up`. Published content is immutable, so *editing* a workflow without bumping its version answers `409` and fails the target — bump `majorVersion`/`minorVersion`/`patchVersion` instead. Engines older than [`068753a0`](https://github.com/zebbra/neops-workflow-engine/commit/068753a0) have no publish route; `register.py` falls back to the legacy `POST /workflow-definition` on a 404. `docker compose wait lab_bootstrap` in `local-lab-up` blocks on that exit and propagates the code.
 
 ## Pulled — the NeOps control plane
 
 | Service | Default image | Override with |
 |---|---|---|
-| `cms` | `quay.io/zebbra/neops-cms-free:develop` | `NEOPS_CMS_IMAGE` |
-| `workflow_engine` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (e.g. licensed `quay.io/zebbra/neops-workflow-engine:develop`) |
-| `workflow-engine-client` (monitor) | same preview default | `NEOPS_MONITOR_IMAGE` — **defaults to preview even when the engine image is the licensed one** (that image often has no `rest/monitor-app`) |
+| `cms` | `quay.io/zebbra/neops-cms-free:develop`; `.env.example` pins `2.4.0`, the first neops-core with network zones, which engine `0.46.0` needs | `NEOPS_CMS_IMAGE` |
+| `workflow_engine` | `quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}` — the **developer preview**, public; `.env.example` pins `NEOPS_ENGINE_TAG=0.46.0`, the first with network zones, to match the worker pin. A scenario whose `scenario.json` names `"engine": "enterprise"` gets the licensed `quay.io/zebbra/neops-workflow-engine` at the same tag instead (the Makefile exports `NEOPS_ENGINE_REPOSITORY`) | `NEOPS_ENGINE_TAG` (tag) or `NEOPS_WORKFLOW_ENGINE_IMAGE` (image — e.g. the full licensed `quay.io/zebbra/neops-workflow-engine:develop`), which wins over the scenario |
+| `workflow-engine-client` (monitor) | the developer preview at the same `NEOPS_ENGINE_TAG` | `NEOPS_MONITOR_IMAGE` — **defaults to preview even when the engine runs the licensed image**, whether through `NEOPS_WORKFLOW_ENGINE_IMAGE` or a scenario's `"engine": "enterprise"` (that image often has no `rest/monitor-app`) |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `NEOPS_WEB_CLIENT_IMAGE` |
-| `worker` | `quay.io/zebbra/neops-worker-sdk:develop` ⚠️ **unusable — build locally** | `NEOPS_WORKER_SDK_IMAGE` |
+| `worker` | `quay.io/zebbra/neops-worker-sdk:develop`; `.env.example` pins `0.5.0`, the first with `global_discover_network:0.2.0`, to hold a fixed release | `NEOPS_WORKER_SDK_IMAGE` |
 
-The CMS, the web client and the developer-preview engine are all public, so the default lab pulls with no `docker login`. The **full licensed engine** (`quay.io/zebbra/neops-workflow-engine`) is not, and neither is `neops-worker-sdk` — but that one is built locally anyway.
+The CMS, the web client, the worker and the developer-preview engine are all public, so the default lab pulls with no `docker login`. The **full licensed engine** (`quay.io/zebbra/neops-workflow-engine`) is the one exception, and the `network-zones` scenario runs it.
 
 The make targets pull the published tags with `--policy always`; the services' `pull_policy: missing` would otherwise skip images already on disk. The default `develop` is republished on every merge to the engine's `develop` branch and never expires, so `make local-env-up` is all it takes to move forward. `0.42.2-beta.3` remains the oldest engine tag the lab supports (raised body limits + the publish route).
 
 !!! warning "Do not pin the preview's `latest`"
-    The preview's `latest` is 0.42.1 — below the oldest engine the lab supports — because `latest` only advances on non-prerelease releases. Prerelease tags carry a `quay.expires-after=20d` label and vanish (`0.42.2-beta.3` on **2026-09-07**); `develop` carries no such label.
+    The preview's `latest` is 0.42.1 — below the oldest engine the lab supports — because `latest` only advances on non-prerelease releases. Prerelease tags carry a `quay.expires-after=20d` label and vanish — `0.42.2-beta.3` did, on 2026-09-07 — so a pinned beta stops resolving without warning; `develop` carries no such label.
 
-Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:5-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.9.2`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
+Plus third-party images that need no credentials: `postgres:15-alpine`, `redis:7-alpine`, `docker.elastic.co/elasticsearch/elasticsearch:8.19.23`, `victoriametrics/victoria-logs:v1.53.0`, `busybox`, and `ghcr.io/nokia/srlinux:26.3` for the SR Linux devices.
 
 ## Running a locally-built image
 
@@ -89,17 +99,12 @@ Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}
 
 ### Why you would
 
-- **Worker SDK — not optional today.** The published `develop` tag is built from
-  `neops-worker-sdk-py`'s `develop`, where `neops/` holds only `.gitkeep` files and
-  the Dockerfile copies neither `neops/` nor `README.md`. The container therefore
-  dies at start (`OSError: Readme file does not exist: README.md`) and carries no
-  function blocks. The lab depends on
-  `fb.base.neops.io/global_discover_network:0.1.0` shipping *inside* the worker
-  image — it is not bind-mounted from here — and that block plus the `COPY ./neops`
-  that ships it live on the SDK's `feature/technopark` branch (open PR
-  [#127](https://github.com/zebbra/neops-worker-sdk-py/pull/127)). Until it merges
-  and CI republishes the tag, build the image yourself and point
-  `NEOPS_WORKER_SDK_IMAGE` at it.
+- **Worker SDK** — to exercise a function block before it is released. The lab
+  depends on `fb.base.neops.io/global_discover_network:0.2.0` shipping *inside*
+  the worker image rather than being bind-mounted from here, so a block you are
+  editing reaches the lab only through a rebuilt image:
+  `make -C ../neops-worker-sdk-py build-docker`, then point
+  `NEOPS_WORKER_SDK_IMAGE` at `neops-worker-sdk:latest`.
 - **Workflow engine** — discovery emits a few hundred `Interface` rows in one job result, so it needs an engine with the large-payload and reference-resolution fixes. If the published `develop` tag lags, run a local build.
 - **Web client** — to preview UI changes against a populated CMS.
 
@@ -107,7 +112,9 @@ Each overridable service also sets `pull_policy: ${NEOPS_*_PULL_POLICY:-missing}
 
 ```bash
 export COMPOSE_FILE=docker-compose.yml:docker-compose.worker.yml
+export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
 docker compose images                       # image + tag per service
 docker compose exec worker ls /app/neops/fb # base function blocks in the image
 docker compose exec worker ls /app/lab      # this repo, through the read-only mount
+docker compose exec worker ls /app/lab/generated/wan-and-fabric/scenario  # the resolved scenario
 ```

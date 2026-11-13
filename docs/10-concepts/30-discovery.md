@@ -10,24 +10,36 @@ tags: [concept, workflow]
 
 ## The workflow
 
-`workflows/simple-lab-discovery.workflow.yaml` is registered with the engine by the `lab_bootstrap` container on every `make local-lab-up`. It is a single-step workflow whose entire job is to pass parameters through to a function block:
+`scenarios/_base/workflows/simple-lab-discovery.workflow.yaml` is registered with the engine by the `lab_bootstrap` container on every `make local-lab-up`. It is a single-step workflow whose entire job is to pass parameters through to a function block:
 
-```yaml title="workflows/simple-lab-discovery.workflow.yaml"
---8<-- "../workflows/simple-lab-discovery.workflow.yaml"
+```yaml title="scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
+--8<-- "../scenarios/_base/workflows/simple-lab-discovery.workflow.yaml"
 ```
 
-Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.2.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
+Its identifier is `wf.lab.neops.io/simple_lab_discovery:1.4.0` — package `wf.lab.neops.io`, name `simple_lab_discovery`, and the version assembled from `majorVersion`/`minorVersion`/`patchVersion`. That string is what `make local-lab-discover` passes to `run_workflow`, so bumping a version field in the YAML means bumping it in the `Makefile` too.
 
 `seedEntity: global` and `runOn: global` mean the step is not scoped to an entity — it runs once, globally, which is why `run_workflow` is called with no `--ids`.
 
+`networkZone: "{{ parameters.zone || 'default' }}"` hands the job only to a worker serving the network zone the run names in `zone`, or `default` when it names none, as `make local-lab-discover` does. The block records each device it finds in that zone.
+
 ### How registration works
 
-`bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then publishes each `workflows/*.yaml` through `POST /workflow-definition/publish` as `{"workflow": <parsed yaml>}`. It is **idempotent**: `201` means the version was written, `200` means this version already held exactly this document. Published content is **immutable**, so a `409` is a real failure — it means the version exists with *different* content, and the fix is to bump `majorVersion`/`minorVersion`/`patchVersion` in the YAML rather than edit in place. A `422` means the engine computed a higher version floor than the document declares. Either exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-lab-up` fails rather than continuing into a broken discovery. Against an engine from before the publish route the script falls back to the legacy `POST /workflow-definition` on a `404`.
+`bootstrap/register.py` waits for `GET /health` on the engine (60s budget, then tries anyway), then publishes each `*.yaml`, `*.yml` and `*.json` it finds in `/workflows` — the selected scenario's resolved `workflows/` directory, bind-mounted there — through `POST /workflow-definition/publish` as `{"workflow": <parsed document>}`. JSON is a subset of YAML, so one parser reads both and the engine is handed the same structure either way; anything else in that directory (a README, say) is skipped rather than posted. It is **idempotent**: `201` means the version was written, `200` means this version already held exactly this document. Published content is **immutable**, so a `409` is a real failure — it means the version exists with *different* content, and the fix is to bump `majorVersion`/`minorVersion`/`patchVersion` in the document rather than edit in place. A `422` means the engine computed a higher version floor than the document declares. Either exits non-zero, and `docker compose wait lab_bootstrap` propagates that so `make local-lab-up` fails rather than continuing into a broken discovery. Against an engine from before the publish route the script falls back to the legacy `POST /workflow-definition` on a `404`. The discovery workflow — the Makefile's `DISCOVER_WORKFLOW`, handed to the container in the same-named variable — is published **first**, the rest in file order: the engine's license caps how many definitions it holds (`403 LicenseLimitExceeded`), and when a scenario's workflows exceed the cap the one refused must be an extra workflow, never discovery. A `DISCOVER_WORKFLOW` no document matches (the Makefile and the YAML disagree on a version) only prints a warning.
+
+### Discovery in a network zone
+
+A run without `zone` discovers in `default` on the central worker. The
+`network-zones` scenario runs the same workflow once more per zone:
+`make local-lab-discover` hands it `workflow-execution-parameters/zones/<zone>.json`,
+which carries `zone` beside the targets. The engine resolves `networkZone` from
+those parameters and hands the job only to a worker serving that zone; the
+block records each device in the zone its job ran in, and identifies an
+existing device by its IP within that zone.
 
 ## The function block
 
 ```text
-fb.base.neops.io/global_discover_network:0.1.0
+fb.base.neops.io/global_discover_network:0.2.0
 ```
 
 !!! danger "The function block is not in this repo"
@@ -40,25 +52,25 @@ fb.base.neops.io/global_discover_network:0.1.0
     Symptom when the pinned image does not carry it:
 
     ```text
-    failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.1.0 not found
+    failed_safe_ack — Function block with id fb.base.neops.io/global_discover_network:0.2.0 not found
     ```
 
 The worker is told where to look with a two-entry search path:
 
 ```yaml
-DIR_FUNCTION_BLOCKS: lab/function_blocks,neops/fb
+DIR_FUNCTION_BLOCKS: lab/generated/${SCENARIO}/scenario/function_blocks,neops/fb
 ```
 
 Both are relative to the worker image's WORKDIR, `/app`:
 
-- **`lab/function_blocks`** → this repo's `function_blocks/`, bind-mounted at `/app/lab`. See [The `/app/lab` mount](40-container-paths.md).
+- **`lab/generated/<scenario>/scenario/function_blocks`** → the selected scenario's resolved function blocks, reached through the whole-repo bind mount at `/app/lab`. See [The `/app/lab` mount](40-container-paths.md).
 - **`neops/fb`** → the base function blocks baked into the image.
 
-`function_blocks/` currently holds only an empty `__init__.py`: it is the **extension point** for lab-local blocks (package `fb.lab.neops.io`), wired up and discovered but not yet used. Drop a block in there and the worker picks it up on restart — no image rebuild, because the directory is mounted.
+`scenarios/_base/function_blocks/` currently holds only an empty `__init__.py`: it is the **extension point** for lab-local blocks (package `fb.lab.neops.io`), wired up and discovered but not yet used. Drop a block in there — or in a single scenario's own `function_blocks/`, which overrides the base file by file — and the worker picks it up on restart. No image rebuild, because the directory is mounted; but `make scenario-resolve` has to run first, since the worker reads the *resolved* copy rather than the source. See [Scenarios](../30-scenarios/index.md).
 
 ## Parameters
 
-The workflow's `parameterSchema` declares two top-level arrays.
+The workflow's `parameterSchema` declares two top-level arrays and one flag.
 
 ### `subnets`
 
@@ -84,7 +96,15 @@ The global fallback list, tried in order against hosts whose subnet carries none
 
 So credential resolution is: **subnet credentials → global credentials**, and within a list, **platform-matched → unscoped**.
 
+### `fail_if_not_discovered`
+
+Optional, default `false`. When `true`, the run fails if any host given as its own `/32` (or `/128`) yields no device; hosts reached only through a wider prefix never fail it. With the default, undiscovered hosts are reported in the result's `failed_hosts`/`skipped_hosts` and the run still succeeds.
+
+The flag needs a worker image that includes [neops-worker-sdk-py `2b21f99`](https://github.com/zebbra/neops-worker-sdk-py/commit/2b21f99), first released in `v0.2.0-beta.8`; an older worker ignores it, logging only a warning. On an engine older than `v0.43.0-beta.5` an omitted flag resolves to `null` and the step fails; the lab needs `v0.43.0-beta.6` or later anyway (see [Troubleshooting](../20-operations/40-troubleshooting.md)).
+
 ### The four parameter files
+
+They live in `scenarios/<scenario>/workflow-execution-parameters/`; the counts below are for `wan-and-fabric`.
 
 | File | Shape | Generated? |
 |---|---|---|
@@ -92,6 +112,8 @@ So credential resolution is: **subnet credentials → global credentials**, and 
 | `discover-params-autodetect.json` | the same `/32`s, no `platform` | yes |
 | `discover-params-subnet.json` | one `/24`, subnet-scoped credentials | yes |
 | `discover-params-mixed.json` | `/24` + `/32` overrides for the SR Linux nodes | **no — hand-maintained** |
+
+`frr-only` carries the three generated files only: mixing per-subnet platforms and credentials has nothing to express when every device runs the same NOS.
 
 See [Your first discovery](../getting-started/30-first-discovery.md) for the contents of each and the `DISCOVER_PARAMS` override that selects them.
 
@@ -106,6 +128,7 @@ Discovery emits a few hundred `Interface` rows in a single job result, which is 
 
 ## Related
 
+- [Scenarios](../30-scenarios/index.md) — how the workflow, the parameters and the function blocks are selected per lab.
 - [The `/app/lab` mount](40-container-paths.md) — why `DIR_FUNCTION_BLOCKS` has a `lab/` prefix.
 - [Troubleshooting](../20-operations/40-troubleshooting.md) — the three race conditions between registration, worker readiness and device boot.
 - [NeOps ecosystem](../99-appendix/neops-ecosystem.md) — the contracts this repo depends on and cannot verify locally.

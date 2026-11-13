@@ -47,7 +47,7 @@
         "expect_prompt": true,
         "schedule_reload": false
       },
-      "functionBlock": "fb.base.neops.io/network_device_apply_configuration:0.1.0",
+      "functionBlock": "fb.base.neops.io/network_device_apply_configuration:0.1.1",
       "rawParameters": {
         "config_template": "{% for vlan in input.vlans %}\n{% if context.device.platform.short_name == \"ios\" %}\nvlan {{ vlan.vid }}\n name {{ vlan.name }}\n{% elif context.device.platform.short_name == \"procurve\" %}\nvlan {{ vlan.vid }}\n name \"{{ vlan.name }}\"\n{% endif %}\n{% endfor %}"
       }
@@ -65,7 +65,7 @@
   "parameters": {},
   "seedEntity": "group",
   "majorVersion": 1,
-  "minorVersion": 2,
+  "minorVersion": 3,
   "patchVersion": 0,
   "rawParameters": {}
 }

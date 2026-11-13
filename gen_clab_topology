@@ -1,42 +1,154 @@
 #!/usr/bin/env python3
-"""Render the containerlab lab from `topology.json` (stdlib-only, run on the host).
+"""Render the containerlab lab from a scenario's topology (stdlib-only, run on the host).
 
-Writes the containerlab topology + device configs under `generated/` (git-ignored)
-and the committed `workflow-execution-parameters/discover-params.json`. Reuses the
-per-device renderers from the sibling `gen_device_configs`.
+Writes the containerlab topology + device configs under
+`generated/<scenario>/clab/` (git-ignored), the committed
+`scenarios/<scenario>/workflow-execution-parameters/*.json` in the topology's
+own subnet, and the same parameter files moved into the deployed subnet under
+`generated/<scenario>/workflow-execution-parameters/`. Reuses the per-device
+renderers from the sibling `gen_device_configs`.
+
+The deployment (lab name, mgmt network and its subnet) comes from LAB_NAME,
+LAB_NET and LAB_SUBNET, which the Makefile defaults and exports.
+
+A topology may declare network `zones`. Devices without a zone stay in
+`default` on that deployment; each zone gets a containerlab topology, a mgmt
+network and a worker of its own (`generated/<scenario>/compose/zones.yml`), and
+its own discovery parameters under `workflow-execution-parameters/zones/`.
 """
 
 from __future__ import annotations
 
+import argparse
+import ipaddress
 import json
+import os
 import pathlib
 import sys
+from typing import NamedTuple
 
 import labscripts
 
-HERE = pathlib.Path(__file__).resolve().parent
-TOPOLOGY = HERE / "topology.json"
-FRR_DIR = HERE / "generated" / "frr"
-SRL_DIR = HERE / "generated" / "srl"
-CLAB_DIR = HERE / "generated"
-CLAB_FILE = CLAB_DIR / "neops-lab.clab.json"
-DISCOVER_PARAMS = HERE / "workflow-execution-parameters" / "discover-params.json"
-AUTODETECT_PARAMS = HERE / "workflow-execution-parameters" / "discover-params-autodetect.json"
-SUBNET_PARAMS = HERE / "workflow-execution-parameters" / "discover-params-subnet.json"
+# Generated parameter files keep their committed names; only the directory they
+# live in is per-scenario.
+PARAM_FILES = ("discover-params.json", "discover-params-autodetect.json", "discover-params-subnet.json")
 
-# The lab management network: containerlab's mgmt block, the /24 discovery
-# target and docker-compose.worker.yml must agree; tests/test_host_invariants.py
-# cross-checks the compose files against these values.
-LAB_NET_NAME = "lab-net"
-LAB_SUBNET = "172.30.0.0/24"
+# The subnet every scenario's topology.json writes its mgmt_ip values in. A
+# deployment in another subnet keeps each device's host offset.
+TOPOLOGY_SUBNET = "172.30.0.0/24"
+
+# One discovery parameter file per zone, beside the default ones.
+ZONE_PARAMS_DIR = "zones"
+
+
+class Deployment(NamedTuple):
+    """Where one lab runs: its containerlab name and its mgmt network."""
+
+    name: str
+    network: str
+    subnet: str
+
+
+def deployment_from_env() -> Deployment:
+    """Read the deployment the Makefile exports; an unset value is an error, not a guess."""
+    missing = [key for key in ("LAB_NAME", "LAB_NET", "LAB_SUBNET") if not os.environ.get(key)]
+    if missing:
+        raise SystemExit(f"set {', '.join(missing)} or drive this through make")
+    return Deployment(os.environ["LAB_NAME"], os.environ["LAB_NET"], os.environ["LAB_SUBNET"])
+
+
+def relocate(devices: dict, subnet: str) -> dict:
+    """Return the devices with each mgmt_ip moved from TOPOLOGY_SUBNET into `subnet`."""
+    source = ipaddress.ip_network(TOPOLOGY_SUBNET)
+    target = ipaddress.ip_network(subnet)
+    if target.prefixlen > source.prefixlen:
+        raise ValueError(f"LAB_SUBNET {subnet} is smaller than the topology's {TOPOLOGY_SUBNET}")
+    moved = {}
+    for host, dev in devices.items():
+        offset = int(ipaddress.ip_address(dev["mgmt_ip"])) - int(source.network_address)
+        moved[host] = {**dev, "mgmt_ip": str(target.network_address + offset)}
+    return moved
+
 
 # Reuse the per-device render helpers from the extension-less sibling module.
 gen_device_configs = labscripts.load("gen_device_configs")
+
+# Which files a device is handed at /lab is one decision, made in
+# resolve_scenario and shared with the Kubernetes flavour.
+LAB_FILE_KEYS = gen_device_configs.resolve_scenario.LAB_FILE_KEYS
+LAB_DIR_PATH = gen_device_configs.resolve_scenario.LAB_DIR_PATH
+
+DEFAULT_ZONE = gen_device_configs.DEFAULT_ZONE
 
 render_frr = gen_device_configs.render_frr
 render_srl = gen_device_configs.render_srl
 _write = gen_device_configs._write
 _prune_stale = gen_device_configs._prune_stale
+
+
+def zone_network(network: str, zone: str) -> str:
+    """The docker network of a zone, named after the lab's own."""
+    return f"{network}-{zone}"
+
+
+def zone_deployment(base: Deployment, zone: str, spec: dict) -> Deployment:
+    """Where one zone runs: the lab's name and network suffixed with the zone, in the zone's own subnet."""
+    return Deployment(f"{base.name}-{zone}", zone_network(base.network, zone), spec["subnet"])
+
+
+def group_by_zone(devices: dict, zones: dict) -> dict:
+    """Split the devices by zone: default first, then the declared zones in order."""
+    if DEFAULT_ZONE in zones:
+        raise SystemExit(f"{DEFAULT_ZONE!r} is not declared as a zone: a device without one is already in it")
+    groups: dict = {DEFAULT_ZONE: {}, **{zone: {} for zone in zones}}
+    for host, dev in devices.items():
+        zone = dev.get("zone", DEFAULT_ZONE)
+        if zone not in groups:
+            raise SystemExit(f"{host} names zone {zone!r}, which the topology's zones do not declare")
+        groups[zone][host] = dev
+    return groups
+
+
+def clab_file(scenario: str, zone: str) -> pathlib.Path:
+    """A zone's containerlab topology. All sit in one directory, which their FRR binds are relative to."""
+    name = "neops-lab.clab.json" if zone == DEFAULT_ZONE else f"neops-lab-{zone}.clab.json"
+    return gen_device_configs.resolve_scenario.output_dir(scenario) / "clab" / name
+
+
+def zone_compose_file(scenario: str) -> pathlib.Path:
+    """The compose overlay a scenario with zones adds; the Makefile picks it up when it exists."""
+    return gen_device_configs.resolve_scenario.output_dir(scenario) / "compose" / "zones.yml"
+
+
+def zone_worker(zone: str) -> str:
+    """The compose service of a zone's worker."""
+    return f"worker-{zone}"
+
+
+def ready_zones(zones: dict) -> list:
+    """The zones a lab target waits for an online worker in: default and each declared one, none without zones."""
+    return [DEFAULT_ZONE, *zones] if zones else []
+
+
+def scenario_paths(scenario: str) -> dict:
+    """Return every path this generator writes for one scenario."""
+    return {
+        "clab_file": clab_file(scenario, DEFAULT_ZONE),
+        "params": {
+            name: gen_device_configs.resolve_scenario.source_dir(scenario) / "workflow-execution-parameters" / name
+            for name in PARAM_FILES
+        },
+        "deployed_params": {
+            name: gen_device_configs.resolve_scenario.output_dir(scenario) / "workflow-execution-parameters" / name
+            for name in PARAM_FILES
+        },
+        "zone_params": gen_device_configs.resolve_scenario.source_dir(scenario)
+        / "workflow-execution-parameters"
+        / ZONE_PARAMS_DIR,
+        "deployed_zone_params": gen_device_configs.resolve_scenario.output_dir(scenario)
+        / "workflow-execution-parameters"
+        / ZONE_PARAMS_DIR,
+    }
 
 
 def mgmt_creds(vendor: str) -> tuple[str, str]:
@@ -130,8 +242,12 @@ def build_links(devices: dict) -> tuple[list, list]:
     return veth_links, dummy_links
 
 
-def render_clab(devices: dict) -> dict:
-    """Render the full containerlab topology document."""
+def render_clab(devices: dict, deployment: Deployment) -> dict:
+    """Render the full containerlab topology document.
+
+    Nodes are prefixed with the lab name, so two labs on one host never share a
+    container name.
+    """
     nodes: dict = {}
     for host, dev in devices.items():
         vendor = dev["vendor"]
@@ -139,11 +255,15 @@ def render_clab(devices: dict) -> dict:
             nodes[host] = {
                 "kind": "linux",
                 "mgmt-ipv4": dev["mgmt_ip"],
+                # Relative to the topology file's own directory
+                # (generated/<scenario>/clab), which is where containerlab
+                # resolves binds from before handing absolute host paths to the
+                # daemon — not relative to the repo root.
                 "binds": [
                     f"frr/{host}.iface:/etc/frr/lab-interfaces/{host}.iface:ro",
-                    "../devices/frr/set-aliases.sh:/etc/frr/set-aliases.sh:ro",
+                    *(f"../scenario/devices/frr/{name}:{LAB_DIR_PATH}/{name}:ro" for name in LAB_FILE_KEYS),
                 ],
-                "exec": ["sh /etc/frr/set-aliases.sh"],
+                "exec": [f"sh {LAB_DIR_PATH}/set-aliases.sh"],
             }
         elif vendor == "srl":
             nodes[host] = {
@@ -157,9 +277,9 @@ def render_clab(devices: dict) -> dict:
     veth_links, dummy_links = build_links(devices)
 
     return {
-        "name": "neops-lab",
-        "prefix": "",
-        "mgmt": {"network": LAB_NET_NAME, "ipv4-subnet": LAB_SUBNET},
+        "name": deployment.name,
+        "prefix": "__lab-name",
+        "mgmt": {"network": deployment.network, "ipv4-subnet": deployment.subnet},
         "topology": {
             "kinds": {
                 "linux": {"image": "neops-lab-frr:latest"},
@@ -183,6 +303,46 @@ def render_discover_params(devices: dict) -> dict:
     return {"subnets": subnets, "credentials": _credentials(devices, scoped=True)}
 
 
+def render_zone_params(zone: str, devices: dict) -> dict:
+    """The discovery parameters for one zone: its name, which the zone discovery workflow runs the step in."""
+    return {"zone": zone, **render_discover_params(devices)}
+
+
+def render_zone_compose(zones: dict, worker_file: pathlib.Path) -> str:
+    """Render the compose overlay that gives each zone a worker on that zone's network alone.
+
+    Each worker extends the central one, so its image, mounts and settings stay in
+    one place. `extends.file` is absolute because compose versions disagree on what
+    a relative one is relative to, and `!override` keeps compose from merging the
+    central worker's lab-net into the list.
+    """
+    lines = ["services:"]
+    for zone in zones:
+        lines += [
+            f"  {zone_worker(zone)}:",
+            "    extends:",
+            f"      file: {json.dumps(str(worker_file))}",
+            "      service: worker",
+            "    environment:",
+            f"      WORKER_NAME: simple-lab-worker-{zone}",
+            f"      NEOPS_WORKER_NETWORK_ZONES: {zone}",
+            "    networks: !override",
+            "      - default",
+            f"      - {zone}",
+        ]
+    lines.append("networks:")
+    for zone, deployment in zones.items():
+        lines += [
+            f"  {zone}:",
+            f"    name: {deployment.network}",
+            "    driver: bridge",
+            "    ipam:",
+            "      config:",
+            f"        - subnet: {deployment.subnet}",
+        ]
+    return "\n".join(lines) + "\n"
+
+
 def render_autodetect_params(devices: dict) -> dict:
     """Same /32 subnets with `platform` left out, so discovery has to detect it.
 
@@ -193,20 +353,13 @@ def render_autodetect_params(devices: dict) -> dict:
     return {"subnets": subnets, "credentials": _credentials(devices)}
 
 
-def render_subnet_params(devices: dict) -> dict:
-    """One subnet target for the complete lab management network."""
-    del devices
-    return {
-        "subnets": [
-            {
-                "cidr": LAB_SUBNET,
-                "credentials": [
-                    {"username": "frr", "password": "frr"},
-                    {"username": "admin", "password": "NokiaSrl1!"},
-                ],
-            }
-        ]
-    }
+def render_subnet_params(devices: dict, subnet: str = TOPOLOGY_SUBNET) -> dict:
+    """One subnet target for the complete lab management network.
+
+    The credentials sit on the subnet here rather than on the document, because
+    a wide prefix carries no platform to scope them against.
+    """
+    return {"subnets": [{"cidr": subnet, "credentials": _credentials(devices)}]}
 
 
 def _credentials(devices: dict, scoped: bool = False) -> list:
@@ -231,7 +384,9 @@ def _dump_discover_params(data: dict) -> str:
     Each subnet object sits on its own line as `{ "cidr": ..., ... }` with
     spaces inside the braces -- a layout `json.dumps` cannot produce directly.
     """
-    lines = ["{", '  "subnets": [']
+    lines = ["{"]
+    lines.extend(f'  "{k}": {json.dumps(v)},' for k, v in data.items() if k not in ("subnets", "credentials"))
+    lines.append('  "subnets": [')
     subnets = data["subnets"]
     for i, subnet in enumerate(subnets):
         fields = ", ".join(f'"{k}": {json.dumps(v)}' for k, v in subnet.items())
@@ -253,44 +408,143 @@ def _dump_subnet_params(data: dict) -> str:
     return json.dumps(data, indent=2) + "\n"
 
 
-def main() -> int:
-    data = json.loads(TOPOLOGY.read_text())
-    devices = data["devices"]
+def _write_params(targets: dict, devices: dict, subnet: str) -> None:
+    _write(targets["discover-params.json"], _dump_discover_params(render_discover_params(devices)))
+    _write(targets["discover-params-autodetect.json"], _dump_discover_params(render_autodetect_params(devices)))
+    _write(targets["discover-params-subnet.json"], _dump_subnet_params(render_subnet_params(devices, subnet)))
 
+
+def parse_args(argv: list) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render the containerlab lab for a scenario.")
+    parser.add_argument("--scenario", help="scenario to render; defaults to $SCENARIO")
+    parser.add_argument(
+        "--keep-topologies",
+        action="store_true",
+        help="keep the topology of a zone the scenario no longer declares; set while the scenario is deployed",
+    )
+    query = parser.add_mutually_exclusive_group()
+    query.add_argument(
+        "--zone-workers", action="store_true", help="print `<zone>:<compose service>` per declared zone and exit"
+    )
+    query.add_argument(
+        "--ready-zones", action="store_true", help="print the zones the lab waits for a worker in and exit"
+    )
+    query.add_argument(
+        "--topologies",
+        action="store_true",
+        help="print the containerlab topology of each zone, default first, and exit",
+    )
+    query.add_argument(
+        "--device-count", action="store_true", help="print how many devices the scenario has, every zone's, and exit"
+    )
+    return parser.parse_args(argv)
+
+
+def _write_device_configs(scenario: str, devices: dict) -> tuple[int, int]:
+    """Write every device's interface config, prune the stale ones, and count them per vendor."""
+    frr_dir, srl_dir = gen_device_configs.device_dirs(scenario)
     frr_hosts = set()
     srl_hosts = set()
-
     for host, dev in devices.items():
         vendor = dev["vendor"]
         if vendor == "frr":
-            _write(FRR_DIR / f"{host}.iface", render_frr(host, dev))
+            _write(frr_dir / f"{host}.iface", render_frr(host, dev))
             frr_hosts.add(host)
         elif vendor == "srl":
-            _write(SRL_DIR / f"{host}.cli", render_srl(host, dev))
+            _write(srl_dir / f"{host}.cli", render_srl(host, dev))
             srl_hosts.add(host)
         else:
-            print(f"unknown vendor {vendor!r} for {host}", file=sys.stderr)
-            return 1
+            raise SystemExit(f"unknown vendor {vendor!r} for {host}")
+    _prune_stale(frr_dir, ".iface", frr_hosts)
+    _prune_stale(srl_dir, ".cli", srl_hosts)
+    return len(frr_hosts), len(srl_hosts)
 
-    _prune_stale(FRR_DIR, ".iface", frr_hosts)
-    _prune_stale(SRL_DIR, ".cli", srl_hosts)
 
-    CLAB_DIR.mkdir(parents=True, exist_ok=True)
-    clab = render_clab(devices)
-    CLAB_FILE.write_text(json.dumps(clab, indent=2) + "\n")
-
-    _write(DISCOVER_PARAMS, _dump_discover_params(render_discover_params(devices)))
-    _write(AUTODETECT_PARAMS, _dump_discover_params(render_autodetect_params(devices)))
-    _write(SUBNET_PARAMS, _dump_subnet_params(render_subnet_params(devices)))
-
-    veth_count = sum(1 for link in clab["topology"]["links"] if link.get("type") != "dummy")
-    dummy_count = sum(1 for link in clab["topology"]["links"] if link.get("type") == "dummy")
+def _write_clab(path: pathlib.Path, devices: dict, deployment: Deployment) -> None:
+    clab = render_clab(devices, deployment)
+    _write(path, json.dumps(clab, indent=2) + "\n")
+    links = clab["topology"]["links"]
+    dummies = sum(1 for link in links if link.get("type") == "dummy")
     print(
-        f"generated clab topology: {len(clab['topology']['nodes'])} nodes, "
-        f"{veth_count} veth links, {dummy_count} dummy links"
+        f"{path.name}: {len(clab['topology']['nodes'])} nodes, {len(links) - dummies} veth links, {dummies} dummy links"
     )
-    print(f"generated {len(frr_hosts)} FRR + {len(srl_hosts)} SRL device configs")
-    print("generated discover-params.json + discover-params-autodetect.json + discover-params-subnet.json")
+
+
+def _write_default_lab(scenario: str, devices: dict, deployment: Deployment) -> None:
+    """The lab every scenario has: the default zone's devices on the deployment's own network."""
+    paths = scenario_paths(scenario)
+    deployed = relocate(devices, deployment.subnet)
+    _write_clab(paths["clab_file"], deployed, deployment)
+    _write_params(paths["params"], devices, TOPOLOGY_SUBNET)
+    _write_params(paths["deployed_params"], deployed, deployment.subnet)
+
+
+def _write_zone_labs(scenario: str, groups: dict, zones: dict, keep_topologies: bool) -> None:
+    """One topology, one parameter file and one worker per zone; whatever a removed zone left is pruned.
+
+    A removed zone's topology stays while `keep_topologies` says its scenario is
+    deployed: local-lab-down destroys what the topologies name, then prunes them.
+    """
+    paths = scenario_paths(scenario)
+    for zone, deployment in zones.items():
+        _write_clab(clab_file(scenario, zone), groups[zone], deployment)
+        params = _dump_discover_params(render_zone_params(zone, groups[zone]))
+        _write(paths["zone_params"] / f"{zone}.json", params)
+        _write(paths["deployed_zone_params"] / f"{zone}.json", params)
+    _prune_stale(paths["zone_params"], ".json", set(zones))
+    _prune_stale(paths["deployed_zone_params"], ".json", set(zones))
+    if not keep_topologies:
+        _prune_zone_clab_files(scenario, set(zones))
+    compose = zone_compose_file(scenario)
+    if zones:
+        _write(
+            compose, render_zone_compose(zones, gen_device_configs.resolve_scenario.HERE / "docker-compose.worker.yml")
+        )
+    elif compose.exists():
+        compose.unlink()
+
+
+def _prune_zone_clab_files(scenario: str, zones: set) -> None:
+    keep = {clab_file(scenario, zone) for zone in zones} | {clab_file(scenario, DEFAULT_ZONE)}
+    directory = clab_file(scenario, DEFAULT_ZONE).parent
+    for path in directory.glob("*.clab.json"):
+        if path not in keep:
+            path.unlink()
+
+
+def _query(args: argparse.Namespace, scenario: str, devices: dict, declared: dict) -> list | None:
+    """What a lab target reads of the scenario, or None when no query flag is set."""
+    if args.device_count:
+        return [str(len(devices))]
+    if args.zone_workers:
+        return [f"{zone}:{zone_worker(zone)}" for zone in declared]
+    if args.ready_zones:
+        return ready_zones(declared)
+    if args.topologies:
+        here = gen_device_configs.resolve_scenario.HERE
+        return [str(clab_file(scenario, zone).relative_to(here)) for zone in (DEFAULT_ZONE, *declared)]
+    return None
+
+
+def main(argv: list | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    scenario = gen_device_configs.resolve_scenario.scenario_name(args.scenario)
+    devices = gen_device_configs.load_topology(scenario)
+    declared = gen_device_configs.load_zones(scenario)
+    groups = group_by_zone(devices, declared)
+    answer = _query(args, scenario, devices, declared)
+    if answer is not None:
+        print(" ".join(answer))
+        return 0
+
+    frr_count, srl_count = _write_device_configs(scenario, devices)
+    deployment = deployment_from_env()
+    zones = {zone: zone_deployment(deployment, zone, spec) for zone, spec in declared.items()}
+    _write_default_lab(scenario, groups[DEFAULT_ZONE], deployment)
+    _write_zone_labs(scenario, groups, zones, args.keep_topologies)
+
+    print(f"scenario {scenario!r}: generated {frr_count} FRR + {srl_count} SRL device configs")
+    print(f"generated {', '.join(PARAM_FILES)}" + (f" and the parameters of zones {', '.join(zones)}" if zones else ""))
     return 0
 
 

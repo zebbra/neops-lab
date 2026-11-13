@@ -50,7 +50,7 @@ access token over `postMessage`. That only works when the iframe URL is a
 **different origin** (scheme/host/port) than the web client — path prefixes on
 the same host do not count. Lab config therefore sets
 `FRONTEND_WORKFLOW_MANAGER_URL` to `http://LAB_HOST:3031/` or
-`https://LAB_HOST:8443/`, while `monitor/config.host.js` keeps
+`https://LAB_HOST:8443/`, while `generated/monitor/config.host.js` keeps
 `webclientOrigin` at `${LAB_SCHEME}://${LAB_HOST}`.
 
 Open the web client at `https://LAB_HOST/` (or `http://…` in HTTP mode), not
@@ -116,7 +116,7 @@ HTTPS adds `:docker-compose.traefik-https.yml` (+ `:docker-compose.traefik-acme.
 
 `host-env-init` performs the **same key setup** as `local-env-init`: `make lab-jwt` → CMS starts with `cms/jwt` → `generate_api_key` → `cms_api_key.env` → `./apply_cms_config` (GraphQL via `http://localhost:8001`) → recreate `workflow_engine` so it picks up `NEOPS_CMS_TOKEN`.
 
-`./gen_host_oidc` (via `make host-oidc`, `LAB_ACCESS=proxy`) writes git-ignored `cms/oidc-config.host.json` and `monitor/config.host.js` from `LAB_HOST` / `LAB_SCHEME` before every host `up`.
+`./gen_host_oidc` (via `make host-oidc`, `LAB_ACCESS=proxy`) writes git-ignored `cms/oidc-config.host.json` and `generated/monitor/config.host.js` from `LAB_HOST` / `LAB_SCHEME` before every host `up`.
 
 ## First bring-up
 

@@ -1,10 +1,11 @@
 # Lab discovery: SSH into the containerlab devices and register them as Device
-# entities in the CMS.
+# entities in the CMS. The step runs on a worker serving the network zone it is
+# given, default without one, and the devices it finds are recorded in that zone.
 label: simple_lab_discovery
 name: simple_lab_discovery
 package: wf.lab.neops.io
 majorVersion: 1
-minorVersion: 2
+minorVersion: 4
 patchVersion: 0
 seedEntity: global
 type: workflow
@@ -13,6 +14,9 @@ description: "Discover the lab devices and register them in the CMS."
 parameterSchema:
   type: object
   properties:
+    zone:
+      type: string
+      description: "Network zone to discover in; default when left out. Its worker must reach the subnets below."
     subnets:
       type: array
       description: "CIDRs to expand; a single host is a /32. A subnet can scope credentials and a platform, and the most specific prefix wins for overlaps."
@@ -43,11 +47,17 @@ parameterSchema:
           platform: { type: string }
         required: [username, password]
       default: []
+    fail_if_not_discovered:
+      type: boolean
+      description: "Fail the run when a host given as its own /32 or /128 is not discovered."
+      default: false
 steps:
   - type: functionBlock
     label: discover
-    functionBlock: "fb.base.neops.io/global_discover_network:0.1.0"
+    functionBlock: "fb.base.neops.io/global_discover_network:0.2.0"
     runOn: global
+    networkZone: "{{ parameters.zone || 'default' }}"
     parameters:
       subnets: "{{ parameters.subnets }}"
       credentials: "{{ parameters.credentials }}"
+      fail_if_not_discovered: "{{ parameters.fail_if_not_discovered }}"

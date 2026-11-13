@@ -43,11 +43,15 @@ indent-width = 4
 # an option — it would break every caller.
 # `apply_cms_config` is deliberately absent: it is a bash script, not Python.
 extend-include = [
+  "check_env_pins",
   "gen_clab_topology",
   "gen_device_configs",
-  "gen_host_oidc",
   "gen_compose_env",
+  "gen_host_oidc",
+  "gen_kind_discover_params",
+  "gen_kind_manifests",
   "lab_token",
+  "resolve_scenario",
   "run_workflow",
   "wait_devices",
   "wait_ready",
@@ -99,6 +103,7 @@ convention = "google"
   "D",      # Don't require docstrings in tests
   "ANN",    # Don't require full typing in tests
   "S101",   # Allow asserts in tests
+  "S105",   # Fake credentials in fixtures
   "PLR2004" # Allow magic values in tests
 ]
 "**/__init__.py" = [
@@ -116,6 +121,12 @@ convention = "google"
 # Host scripts open URLs built from local CLI arguments, not user input.
 "lab_token" = ["S310"]
 "run_workflow" = ["S310"]
+"gen_kind_discover_params" = [
+  "S603", "S607", # runs the local kubectl CLI with fixed arguments
+]
+"tests/test_network_zones.py" = [
+  "S603", "S607", # runs the local make with fixed arguments
+]
 "tools/check_subnets.py" = [
   "S603", "S607", # runs the local docker CLI with fixed arguments
   "PLR2004",      # the IP version literal
@@ -131,12 +142,17 @@ project-includes = [
   "tests/**/*.py",
   "tools/**/*.py",
   "function_blocks/**/*.py",
+  "engine_http.py",
   # Same extension-less scripts as ruff's extend-include above.
+  "check_env_pins",
   "gen_clab_topology",
   "gen_device_configs",
-  "gen_host_oidc",
   "gen_compose_env",
+  "gen_host_oidc",
+  "gen_kind_discover_params",
+  "gen_kind_manifests",
   "lab_token",
+  "resolve_scenario",
   "run_workflow",
   "wait_devices",
   "wait_ready",

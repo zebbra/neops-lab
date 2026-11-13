@@ -9,6 +9,10 @@ This module is the one place that knows how. It carries a `.py` suffix because
 it is a module rather than a command, and it sits beside the scripts so a script
 run directly finds it on `sys.path[0]`; the root `conftest.py` puts the same
 directory on the path for the tests.
+
+`name` is a path relative to the repo root, so it also serves the one `.py` that
+`import` cannot reach either — `bootstrap/register.py`, which ships in the
+bootstrap image rather than in a package here.
 """
 
 from __future__ import annotations

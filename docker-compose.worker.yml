@@ -12,15 +12,23 @@ services:
     environment:
       URL_BLACKBOARD: http://workflow_engine:3030
       # In-container paths (the SDK image's WORKDIR is /app):
-      #   lab/function_blocks -> this repo, bind-mounted below at /app/lab
+      #   lab/generated/<scenario>/scenario/function_blocks -> the resolved
+      #                          scenario tree inside this repo, bind-mounted
+      #                          below at /app/lab
       #   neops/fb            -> the base function blocks, which ship INSIDE the
       #                          published neops-worker-sdk image (`COPY ./neops
       #                          neops/` in its base stage). FB discovery walks
       #                          these relative to the CWD. If discovery ever
       #                          fails with "Function block ... not found",
       #                          check the image you pinned carries /app/neops/fb.
-      DIR_FUNCTION_BLOCKS: lab/function_blocks,neops/fb
+      DIR_FUNCTION_BLOCKS: lab/generated/${SCENARIO:?set SCENARIO or drive compose through make; see 'make scenarios'}/scenario/function_blocks,neops/fb
       WORKER_NAME: simple-lab-worker
+      # The central worker serves the default zone, in every scenario. Once any
+      # zone exists the engine refuses a worker that lists none, and lab zones
+      # outlive a scenario switch in the CMS volume. It belongs here and never in
+      # .env: a zone's worker that missed its own setting must stop, not fall
+      # back to default. A worker image before SDK 0.5 ignores it.
+      NEOPS_WORKER_NETWORK_ZONES: default
       NEOPS_BLOCKING_DETECTOR: "true"
     volumes:
       # The whole repo is the lab: mounted at /app/lab so the in-container paths
@@ -44,14 +52,18 @@ services:
       # Access token for the engine's publish route, minted by ./lab_token and
       # interpolated at `up -d`. The lab make targets export it.
       NEOPS_ENGINE_TOKEN: ${NEOPS_ENGINE_TOKEN:-}
+      # Published first, so the engine's definition cap never refuses it. The
+      # Makefile exports it; unset, documents publish in plain file order.
+      DISCOVER_WORKFLOW: ${DISCOVER_WORKFLOW:-}
     volumes:
-      - ./workflows:/workflows:ro
+      - ./generated/${SCENARIO:?set SCENARIO or drive compose through make; see 'make scenarios'}/scenario/workflows:/workflows:ro
     restart: "no"
 
 networks:
   lab-net:
-    name: lab-net
+    # LAB_NET is the network containerlab attaches the devices to.
+    name: ${LAB_NET:?set it or drive compose through make}
     driver: bridge
     ipam:
       config:
-        - subnet: 172.30.0.0/24
+        - subnet: ${LAB_SUBNET:?set it or drive compose through make}

@@ -25,8 +25,9 @@ The worker SDK image's WORKDIR is `/app`. So a path that the *worker* resolves i
 | `Makefile` recipe, host shell | `./lab/gen_clab_topology` | ❌ |
 | `docker compose exec worker python3 …` | `lab/wait_devices` | ✅ |
 | `docker compose exec worker python3 …` | `wait_devices` | ❌ |
-| env var read **by the container** | `DIR_FUNCTION_BLOCKS: lab/function_blocks,neops/fb` | ✅ |
+| env var read **by the container** | `DIR_FUNCTION_BLOCKS: lab/generated/${SCENARIO}/scenario/function_blocks,neops/fb` | ✅ |
 | env var read by the host | anything with `lab/` | ❌ |
+| compose bind **source** (host side) | `./generated/${SCENARIO}/scenario/workflows` | ✅ |
 
 Put plainly: **a `lab/` inside a `docker compose exec` or a container-read env var is correct; a `lab/` in a Makefile recipe or a host script is a bug.**
 
@@ -38,7 +39,14 @@ The result is an asymmetry that looks like an inconsistency and is not.
 
 ## Where you meet it
 
-**`DIR_FUNCTION_BLOCKS`** — the worker's function-block search path, `lab/function_blocks,neops/fb`. The first entry is this repo's `function_blocks/` through the mount; the second is `/app/neops/fb`, baked into the image. See [Discovery](30-discovery.md).
+**`DIR_FUNCTION_BLOCKS`** — the worker's function-block search path, `lab/generated/${SCENARIO}/scenario/function_blocks,neops/fb`. The first entry is the resolved [scenario](../30-scenarios/index.md) tree through the mount; the second is `/app/neops/fb`, baked into the image. See [Discovery](30-discovery.md).
+
+!!! note "The resolved scenario is inside the repo, which is why this works"
+    `make scenario-resolve` materialises `scenarios/_base` + `scenarios/$SCENARIO`
+    into `generated/$SCENARIO/scenario/` — under the repo root, so the whole-repo
+    mount carries it into the container for free. Only the prefix differs:
+    `generated/…` on the host, `lab/generated/…` inside the worker. The rule is
+    unchanged; the path simply got longer.
 
 **Device readiness** — `make local-lab-up` and `make local-lab-discover` both run:
 
@@ -62,9 +70,10 @@ That is *this repo's* `wait_devices` script, executed inside the worker containe
     `/app/neops/fb`".
 
     ```bash
+    export SCENARIO=wan-and-fabric   # or run these through make
     docker compose exec worker ls /app/neops/fb
     docker compose exec worker ls /app/lab
     ```
 
     The first lists what the image ships; the second should show this repo's
-    root — `topology.json`, `function_blocks/`, `wait_devices`, and so on.
+    root — `scenarios/`, `generated/`, `wait_devices`, and so on.
