@@ -18,7 +18,7 @@ Use this when Traefik path prefixes (`/cms`, Vite `--base /monitor/`) get in the
 | Host (Traefik) | `https://LAB_HOST/…` path prefixes | `host-*` |
 | **Host-direct** | `http://LAB_HOST:8080` … | `host-direct-*` |
 
-After `make host-direct-env-init` / `host-direct-lab-up`, `COMPOSE_FILE` is written into `.env` so bare `docker compose up/down` works.
+After `make host-direct-env-init` / `host-direct-lab-up`, `COMPOSE_FILE`, `SCENARIO` and the required `LAB_*` values are written into `.env` so bare `docker compose up/down` works.
 
 ```bash
 make host-env-down          # or host-lab-down

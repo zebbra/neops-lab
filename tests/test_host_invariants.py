@@ -5,6 +5,8 @@ import pathlib
 import re
 import sys
 
+import labscripts
+
 LAB_DIR = pathlib.Path(__file__).resolve().parents[1]
 
 
@@ -90,13 +92,13 @@ def test_host_direct_overlay_publishes_ports():
 
 def test_gen_compose_env_upserts_dotenv(tmp_path, monkeypatch):
     """Bare docker compose reads COMPOSE_FILE from .env after host-env-init."""
-    import labscripts
-
     mod = labscripts.load("gen_compose_env")
     dotenv = tmp_path / ".env"
     dotenv.write_text("LAB_HOST=lab.example.com\nCOMPOSE_FILE=old.yml\n")
     monkeypatch.setattr(mod, "DOTENV", dotenv)
     files = "docker-compose.yml:docker-compose.traefik.yml:docker-compose.host-data.yml"
+    for name in _required_compose_vars(files):
+        monkeypatch.setenv(name, "x")
     monkeypatch.setattr(sys, "argv", ["gen_compose_env", files])
     assert mod.main() == 0
     text = dotenv.read_text()
@@ -104,6 +106,60 @@ def test_gen_compose_env_upserts_dotenv(tmp_path, monkeypatch):
     assert text.count("COMPOSE_FILE=") == 1
     assert "COMPOSE_PATH_SEPARATOR=:" in text
     assert "LAB_HOST=lab.example.com" in text
+
+
+HOST_COMPOSE_FILE_SETS = (
+    "docker-compose.yml:docker-compose.traefik.yml:docker-compose.traefik-https.yml:docker-compose.host-data.yml",
+    "docker-compose.yml:docker-compose.worker.yml:docker-compose.traefik.yml:docker-compose.traefik-https.yml"
+    ":docker-compose.host-data.yml",
+    "docker-compose.yml:docker-compose.worker.yml:docker-compose.host-direct.yml:docker-compose.host-data.yml",
+)
+
+
+def _required_compose_vars(files: str) -> set[str]:
+    names: set[str] = set()
+    for name in files.split(":"):
+        names.update(re.findall(r"\$\{([A-Z_][A-Z0-9_]*):\?", (LAB_DIR / name).read_text()))
+    return names
+
+
+def _dotenv_keys(text: str) -> set[str]:
+    return {line.split("=", 1)[0].strip() for line in text.splitlines() if "=" in line and not line.startswith("#")}
+
+
+def test_gen_compose_env_writes_every_required_compose_variable(tmp_path, monkeypatch):
+    """Bare `docker compose` in host mode reads only .env, and the compose files
+    refuse to interpolate without SCENARIO and the LAB_* values make resolved."""
+    mod = labscripts.load("gen_compose_env")
+    for files in HOST_COMPOSE_FILE_SETS:
+        required = _required_compose_vars(files)
+        assert "SCENARIO" in required
+        dotenv = tmp_path / ".env"
+        dotenv.write_text("LAB_HOST=lab.example.com\n")
+        monkeypatch.setattr(mod, "DOTENV", dotenv)
+        for name in required:
+            monkeypatch.setenv(name, f"value-of-{name}")
+        monkeypatch.setattr(sys, "argv", ["gen_compose_env", files])
+        assert mod.main() == 0
+        text = dotenv.read_text()
+        assert required <= _dotenv_keys(text), f"{files}: missing {sorted(required - _dotenv_keys(text))}"
+        assert "SCENARIO=value-of-SCENARIO" in text
+        assert "LAB_HOST=lab.example.com" in text
+
+
+def test_gen_compose_env_refuses_an_unresolved_required_variable(tmp_path, monkeypatch):
+    """Without make's exports there is no value to persist; writing a blank
+    would only move the failure to the bare `docker compose` call."""
+    mod = labscripts.load("gen_compose_env")
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("")
+    monkeypatch.setattr(mod, "DOTENV", dotenv)
+    files = HOST_COMPOSE_FILE_SETS[0]
+    for name in _required_compose_vars(files):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.delenv("SCENARIO")
+    monkeypatch.setattr(sys, "argv", ["gen_compose_env", files])
+    assert mod.main() == 2
 
 
 def test_host_data_overlay_bind_mounts():

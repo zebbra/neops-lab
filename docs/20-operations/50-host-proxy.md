@@ -14,7 +14,7 @@ For **published ports without Traefik** (no `/cms` prefix pain), see [Host-direc
 
 Use **host mode** when the lab runs on a Linux box that should be reached by name (colleagues, a jump host, a demo VM) without wiring an external proxy. Use **laptop mode** (`make local-lab-up`) on a developer machine with published ports `8080` / `8001` / `3030` / `3031`. Use **host-direct** when you want those same ports on a shared host with `LAB_HOST` in OIDC/CORS.
 
-Do not mix the compose file sets in one shell — export `COMPOSE_FILE` only through the matching make targets. Tear down with `make host-env-down` before switching to `host-direct-*`. After `make host-env-init` / `host-lab-up`, `COMPOSE_FILE` is also written into `.env`, so bare `docker compose up -d` / `down` / `ps` work from the repo root (same pattern as [neops-docker-compose](https://github.com/zebbra/neops-docker-compose)). `make local-env-init` resets `.env` to the laptop file set.
+Do not mix the compose file sets in one shell — export `COMPOSE_FILE` only through the matching make targets. Tear down with `make host-env-down` before switching to `host-direct-*`. After `make host-env-init` / `host-lab-up`, `COMPOSE_FILE` is also written into `.env`, together with `SCENARIO` and the `LAB_*` values the compose files require (as make resolved them for that run), so bare `docker compose up -d` / `down` / `ps` work from the repo root (same pattern as [neops-docker-compose](https://github.com/zebbra/neops-docker-compose)). `make local-env-init` resets `.env` to the laptop file set.
 
 ## Path map
 
@@ -78,7 +78,7 @@ make lab-env          # copies .env.example → .env once
 LAB_HOST=lab.example.com
 LAB_SCHEME=http       # or https (default)
 
-make host-env-init    # writes COMPOSE_FILE into .env + first bring-up
+make host-env-init    # writes COMPOSE_FILE, SCENARIO and LAB_* into .env + first bring-up
 ```
 
 After `make host-env-init` (or `make host-env-up`), bare `docker compose up -d` /

@@ -5,6 +5,11 @@ docker compose reads .env automatically (neops-docker-compose does the same).
 Make targets still export COMPOSE_FILE for their own recipes; this keeps a
 shell without make aligned after host-env-init / host-lab-up / local-env-init.
 
+The compose files refuse to interpolate without the variables they name as
+`${NAME:?...}` (SCENARIO, the LAB_* ports, networks and subnets), which make
+exports. Each one is copied from the environment into .env with the value make
+resolved for this run; one that is unset is refused rather than written blank.
+
 Usage
 -----
     ./gen_compose_env docker-compose.yml:docker-compose.traefik.yml:...
@@ -14,49 +19,80 @@ Stdlib-only and Python-3.9-safe.
 
 from __future__ import annotations
 
+import os
 import pathlib
+import re
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 DOTENV = HERE / ".env"
+REQUIRED_VARIABLE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*):\?")
+MARKER = "# Written by ./gen_compose_env — bare `docker compose up/down` uses this."
+EXPECTED_ARGC = 2
+USAGE_ERROR = 2
 
 
-def _upsert(path: pathlib.Path, key: str, value: str) -> None:
-    """Replace or append KEY=value; drop duplicate KEY lines."""
+def _assigned_key(line: str, keys: dict[str, str]) -> str | None:
+    """The key a `KEY=` or `#KEY=` line assigns, if it is one of `keys`."""
+    stripped = line.strip()
+    for key in keys:
+        if stripped.startswith((f"{key}=", f"#{key}=")):
+            return key
+    return None
+
+
+def _upsert(path: pathlib.Path, values: dict[str, str]) -> None:
+    """Replace each KEY's line in place or append it; drop duplicate KEY lines."""
     lines = path.read_text().splitlines() if path.is_file() else []
     out: list[str] = []
-    found = False
-    prefix = f"{key}="
+    written: set[str] = set()
     for line in lines:
-        stripped = line.strip()
-        if stripped.startswith(prefix) or stripped.startswith(f"#{prefix}"):
-            if not found:
-                out.append(f"{key}={value}")
-                found = True
-            continue
-        out.append(line)
-    if not found:
-        if out and out[-1] != "":
-            out.append("")
-        out.append("# Written by ./gen_compose_env — bare `docker compose up/down` uses this.")
-        out.append(f"{key}={value}")
+        key = _assigned_key(line, values)
+        if key is None:
+            out.append(line)
+        elif key not in written:
+            out.append(f"{key}={values[key]}")
+            written.add(key)
+    missing = [key for key in values if key not in written]
+    if missing:
+        if MARKER not in out:
+            if out and out[-1] != "":
+                out.append("")
+            out.append(MARKER)
+        out.extend(f"{key}={values[key]}" for key in missing)
     path.write_text("\n".join(out) + "\n")
 
 
+def required_variables(files: str) -> list[str]:
+    """Every NAME the selected compose files interpolate as `${NAME:?...}`."""
+    names: set[str] = set()
+    for name in files.split(":"):
+        path = HERE / name
+        if path.is_file():
+            names.update(REQUIRED_VARIABLE.findall(path.read_text()))
+    return sorted(names)
+
+
 def main() -> int:
-    if len(sys.argv) != 2 or not sys.argv[1].strip():
+    if len(sys.argv) != EXPECTED_ARGC or not sys.argv[1].strip():
         print(
             "usage: gen_compose_env <colon-separated-compose-files>",
             file=sys.stderr,
         )
-        return 2
+        return USAGE_ERROR
     files = sys.argv[1].strip()
     if not DOTENV.is_file():
         print("error: .env missing — run make lab-env first.", file=sys.stderr)
-        return 2
-    _upsert(DOTENV, "COMPOSE_FILE", files)
-    _upsert(DOTENV, "COMPOSE_PATH_SEPARATOR", ":")
-    print(f"wrote COMPOSE_FILE in .env ({files})")
+        return USAGE_ERROR
+    required = required_variables(files)
+    unset = [name for name in required if not os.environ.get(name)]
+    if unset:
+        print(f"error: {', '.join(unset)} unset — run this through make, which exports them.", file=sys.stderr)
+        return USAGE_ERROR
+    values = {"COMPOSE_FILE": files, "COMPOSE_PATH_SEPARATOR": ":"}
+    values.update((name, os.environ[name]) for name in required)
+    _upsert(DOTENV, values)
+    print(f"wrote {', '.join(values)} in .env")
     return 0
 
 
