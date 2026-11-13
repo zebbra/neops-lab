@@ -1,5 +1,6 @@
-# Engine and monitor app share one image: the public developer preview, whose
-# `develop` tag the engine's CI republishes on every merge to its develop branch.
+# The engine runs the public developer preview, whose `develop` tag the engine's
+# CI republishes on every merge to its develop branch; the monitor app overrides
+# the image on its own service below.
 # A scenario that needs the licensed engine, which is not public, gets its
 # repository from the Makefile (NEOPS_ENGINE_REPOSITORY).
 x-workflow-engine-image: &workflow-engine-image
@@ -137,6 +138,13 @@ services:
 
   workflow-engine-client:
     <<: *workflow-engine-image
+    # The monitor app (`rest/monitor-app`) ships in the **developer preview**
+    # image. The licensed `neops-workflow-engine` image often lacks that tree,
+    # so overriding NEOPS_WORKFLOW_ENGINE_IMAGE alone used to leave this
+    # service exited and `/monitor` as Traefik 502. Pin the monitor separately
+    # (defaults to preview); set NEOPS_MONITOR_IMAGE to share a custom build.
+    image: ${NEOPS_MONITOR_IMAGE:-quay.io/zebbra/neops-workflow-engine-preview:${NEOPS_ENGINE_TAG:-develop}}
+    pull_policy: ${NEOPS_MONITOR_PULL_POLICY:-${NEOPS_WORKFLOW_ENGINE_PULL_POLICY:-missing}}
     environment:
       # `npm run dev` needs vite, @sveltejs/kit and svelte, which are
       # devDependencies of rest/monitor-app; `npm install` omits
@@ -240,7 +248,7 @@ services:
     cpus: 2
     mem_limit: 4g
     volumes:
-      - elasticsearch:/usr/share/elasticsearch/data
+      - elasticsearch_lab:/usr/share/elasticsearch/data
     healthcheck:
       test: [ "CMD-SHELL", "curl -s -f http://localhost:9200 || exit 1" ]
       interval: 15s
@@ -252,7 +260,7 @@ services:
       start_period: 90s
 
 volumes:
-  elasticsearch:
+  elasticsearch_lab:
     driver: local
   postgres_data:
     driver: local

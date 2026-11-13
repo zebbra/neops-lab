@@ -100,6 +100,14 @@ def test_monitor_calls_the_engine_this_lab_publishes():
     assert "LAB_ENGINE_PORT" in _host_ports(_service("workflow_engine"))
 
 
+def test_monitor_defaults_to_preview_image():
+    """Licensed engine overrides must not pull the monitor onto an image
+    that lacks rest/monitor-app (exited client → Traefik /monitor 502)."""
+    monitor = "\n".join(_service("workflow-engine-client"))
+    assert "NEOPS_MONITOR_IMAGE" in monitor
+    assert "neops-workflow-engine-preview" in monitor
+
+
 def test_monitor_service_installs_its_dev_dependencies():
     """`npm run dev` resolves vite and @sveltejs/kit from rest/monitor-app's
     devDependencies, which `npm install` omits under NODE_ENV=production."""

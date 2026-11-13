@@ -1,0 +1,113 @@
+# Host-mode overlay: bundled Traefik with path-prefix routing (HTTP on :80).
+#
+# Routing uses the **file provider** (traefik/dynamic.*.yml), not the Docker
+# provider — Traefik ≤3.6.0 hardcodes Docker API 1.24, which modern daemons
+# reject (min 1.40/1.44). Fixed service URLs via compose DNS need no socket.
+#
+# LAB_SCHEME=https → Makefile also loads docker-compose.traefik-https.yml.
+# TRAEFIK_CERTRESOLVER set → docker-compose.traefik-acme.yml swaps in the ACME
+# dynamic file.
+#
+# Path map:
+#   /traefik  -> Traefik dashboard
+#   /cms      -> cms-proxy (nginx) -> cms:8000  (rewrites redirects under /cms)
+#   /djstatic -> cms:8000  (Django STATIC_URL; root-absolute in admin HTML)
+#   /engine   -> workflow_engine:3030
+#   /monitor  -> workflow-engine-client:5173  (browse-only; same origin as /)
+#   /         -> web_client:8080
+#
+# Monitor iframe auth (postMessage) requires a **different origin** than the
+# web client. Same-host `/monitor` is rejected by design. The iframe URL is
+# therefore the published monitor port (:3031), not the Traefik path. HTTPS
+# mode adds :8443 (TLS) so the iframe is not mixed-content blocked.
+#
+# Use `make host-ps` / `make host-logs` (bare docker compose has no traefik).
+
+services:
+  traefik:
+    # Pin a patch release; the floating `v3.3` / `v3.6` tags can lag the fix.
+    image: traefik:v3.6.4
+    command:
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --api.dashboard=true
+      # Dashboard JS fetches /traefik/api/… (not bare /api). Without basePath,
+      # those calls hit the web-client catch-all and return HTML → JSON errors.
+      - --api.basePath=/traefik
+      - --log.level=INFO
+      - --accesslog=true
+    ports:
+      - "80:80"
+    volumes:
+      - ./traefik/dynamic.http.yml:/etc/traefik/dynamic.yml:ro
+    depends_on:
+      cms:
+        condition: service_healthy
+      cms-proxy:
+        condition: service_started
+      web_client:
+        condition: service_healthy
+      workflow_engine:
+        condition: service_healthy
+      workflow-engine-client:
+        condition: service_started
+
+  # Rewrites Django's root-absolute redirects (/admin/login/ → /cms/admin/login/)
+  # so they do not fall through to the web-client catch-all. See cms-proxy.conf.
+  cms-proxy:
+    image: openresty/openresty:1.27.1.2-0-alpine
+    volumes:
+      - ./traefik/cms-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      cms:
+        condition: service_healthy
+
+  cms:
+    environment:
+      # Kept for images that honour it; cms-proxy is the reliable path-prefix fix.
+      - FORCE_SCRIPT_NAME=/cms
+      - CSRF_TRUSTED_ORIGINS=${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:8001
+      - USE_X_FORWARDED_HOST=True
+      - SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https
+    volumes: !override
+      - ./cms/oidc-config.host.json:/etc/neops/oidc-config.json:ro
+      - ./cms/jwt:/etc/neops/jwt:ro
+    ports: !override
+      # All interfaces — host scripts and remote debug both use :8001.
+      - "8001:8000"
+
+  workflow_engine:
+    # Mapping form merges with the base list — do not !override the whole env.
+    environment:
+      NEOPS_CORS_ORIGINS: ${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:3031
+    ports: !override
+      - "3030:3030"
+
+  workflow-engine-client:
+    environment:
+      NODE_ENV: development
+      PUBLIC_ENGINE_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/engine
+      VITE_ENGINE_URL: ${LAB_SCHEME:-https}://${LAB_HOST}/engine
+      # Vite host check (no --allowedHosts CLI on older Vite in the image).
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${LAB_HOST}
+    volumes: !override
+      - ./generated/monitor/config.host.js:/app/rest/monitor-app/static/config.js:ro
+    ports: !override
+      # Cross-origin iframe target (HTTP). Root base — not /monitor/.
+      - "3031:5173"
+    # No --base /monitor/: the iframe origin is :3031 / :8443 at site root so
+    # in-app links like /dashboard work. Traefik :80/:443 /monitor uses StripPrefix.
+    command: >
+      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+
+  web_client:
+    environment:
+      FRONTEND_GRAPHQL_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/graphql
+      FRONTEND_FILEAPI_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/
+      FRONTEND_DEVMODE: "true"
+      # Must differ in origin from the web client (scheme/host/port). Same-host
+      # Traefik /monitor hides the menu and disables the token broker.
+      FRONTEND_WORKFLOW_MANAGER_URL: http://${LAB_HOST}:3031/
+    ports: !override
+      - "8080:8080"

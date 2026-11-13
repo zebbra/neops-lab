@@ -1,0 +1,51 @@
+# HTTPS overlay for host mode. Loaded when LAB_SCHEME is unset or `https`.
+#
+# Adds :443, HTTP→HTTPS redirect, ACME resolver registration, and swaps the
+# file-provider config to traefik/dynamic.https.yml (self-signed TLS).
+#
+# Also publishes :8443 (entrypoint `monitor`) so the web client's monitor
+# iframe can load a **different origin** over TLS — required for postMessage
+# auth and to avoid mixed-content blocking of http://HOST:3031.
+
+services:
+  traefik:
+    command: !override
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.monitor.address=:8443
+      - --api.dashboard=true
+      - --api.basePath=/traefik
+      - --log.level=INFO
+      - --accesslog=true
+      - --certificatesresolvers.letsencrypt.acme.email=${TRAEFIK_ACME_EMAIL:-noreply@localhost}
+      - --certificatesresolvers.letsencrypt.acme.storage=/acme/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    ports: !override
+      - "80:80"
+      - "443:443"
+      - "8443:8443"
+    volumes: !override
+      - ./traefik/dynamic.https.yml:/etc/traefik/dynamic.yml:ro
+      - traefik_acme:/acme
+
+  workflow_engine:
+    # Mapping form merges with the base list — never !override (that wipes
+    # NEOPS_CMS_URL / JWT / Postgres and the engine exits immediately).
+    environment:
+      NEOPS_CORS_ORIGINS: ${LAB_SCHEME:-https}://${LAB_HOST},http://${LAB_HOST}:8080,http://${LAB_HOST}:3031,https://${LAB_HOST}:8443
+
+  web_client:
+    environment:
+      FRONTEND_GRAPHQL_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/graphql
+      FRONTEND_FILEAPI_ENDPOINT: ${LAB_SCHEME:-https}://${LAB_HOST}/cms/
+      FRONTEND_DEVMODE: "true"
+      # TLS cross-origin iframe at site root (Vite has no --base /monitor/).
+      FRONTEND_WORKFLOW_MANAGER_URL: https://${LAB_HOST}:8443/
+
+volumes:
+  traefik_acme:
+    driver: local

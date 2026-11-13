@@ -1,0 +1,23 @@
+[
+  {
+    "configId": "neops-host-noop",
+    "authority": "{{LAB_ORIGIN}}",
+    "redirectUrl": "{{LAB_ORIGIN}}/",
+    "postLogoutRedirectUri": "{{LAB_ORIGIN}}/",
+    "clientId": "neops-local",
+    "scope": "openid",
+    "responseType": "code",
+    "silentRenew": false,
+    "useRefreshToken": false,
+    "autoUserInfo": false,
+    "triggerAuthorizationResultEvent": true,
+    "authWellknownEndpoints": {
+      "issuer": "{{LAB_ORIGIN}}",
+      "jwksUri": "{{LAB_ORIGIN}}/jwks",
+      "authorizationEndpoint": "{{LAB_ORIGIN}}/auth",
+      "tokenEndpoint": "{{LAB_ORIGIN}}/token",
+      "userInfoEndpoint": "{{LAB_ORIGIN}}/userinfo",
+      "endSessionEndpoint": "{{LAB_ORIGIN}}/logout"
+    }
+  }
+]

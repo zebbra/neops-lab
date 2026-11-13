@@ -1,0 +1,87 @@
+# Traefik dynamic config for LAB_SCHEME=http (entrypoint web, no TLS).
+# Mounted by docker-compose.traefik.yml. Services are compose DNS names.
+#
+# /cms goes to cms-proxy (nginx), which strips the prefix toward Django and
+# rewrites redirects/HTML back under /cms — do not StripPrefix here.
+# Traefik dashboard uses static --api.basePath=/traefik (no StripPrefix).
+
+http:
+  middlewares:
+    engine-strip:
+      stripPrefix:
+        prefixes:
+          - /engine
+    monitor-strip:
+      stripPrefix:
+        prefixes:
+          - /monitor
+
+  routers:
+    dashboard:
+      rule: PathPrefix(`/traefik`)
+      entryPoints:
+        - web
+      priority: 200
+      service: api@internal
+
+    cms:
+      rule: PathPrefix(`/cms`)
+      entryPoints:
+        - web
+      priority: 100
+      service: cms
+
+    # CMS STATIC_URL is /djstatic/ — root-absolute in HTML; must not hit web_client.
+    djstatic:
+      rule: PathPrefix(`/djstatic`)
+      entryPoints:
+        - web
+      priority: 100
+      service: cms-direct
+
+    engine:
+      rule: PathPrefix(`/engine`)
+      entryPoints:
+        - web
+      priority: 100
+      middlewares:
+        - engine-strip
+      service: engine
+
+    monitor:
+      rule: PathPrefix(`/monitor`)
+      entryPoints:
+        - web
+      priority: 100
+      middlewares:
+        - monitor-strip
+      service: monitor
+
+    web:
+      rule: PathPrefix(`/`)
+      entryPoints:
+        - web
+      priority: 1
+      service: web
+
+  services:
+    cms:
+      loadBalancer:
+        servers:
+          - url: http://cms-proxy:80
+    cms-direct:
+      loadBalancer:
+        servers:
+          - url: http://cms:8000
+    engine:
+      loadBalancer:
+        servers:
+          - url: http://workflow_engine:3030
+    monitor:
+      loadBalancer:
+        servers:
+          - url: http://workflow-engine-client:5173
+    web:
+      loadBalancer:
+        servers:
+          - url: http://web_client:8080

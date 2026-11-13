@@ -42,6 +42,18 @@ tags: [operations]
 
     The FRR devices as pods in a local KIND cluster, reached by in-cluster DNS. A second flavour of the lab that needs neither containerlab nor the control plane.
 
+-   :material-server-network:{ .lg .middle } &nbsp; **[Host mode (Traefik)](50-host-proxy.md)**
+
+    ---
+
+    Single-hostname path-prefix deployment behind a bundled Traefik on :80/:443. Parallel `host-*` make targets; laptop `local-*` unchanged.
+
+-   :material-lan-connect:{ .lg .middle } &nbsp; **[Host-direct mode (ports)](55-host-direct.md)**
+
+    ---
+
+    Same ports as the laptop lab on a shared host (`LAB_HOST:8080` …), no reverse proxy. Use when path-prefix redirects get in the way.
+
 </div>
 
 ## The lifecycle at a glance

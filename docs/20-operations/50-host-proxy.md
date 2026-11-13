@@ -1,0 +1,201 @@
+---
+title: Host mode (Traefik)
+description: Run the lab on a shared host behind a bundled Traefik reverse proxy — one hostname, path prefixes, same key setup as the laptop targets.
+tags: [operations, host, traefik]
+---
+
+# Host mode (Traefik)
+
+*Same control plane and devices as the laptop lab, published on a single hostname through a Traefik that ships with the stack. The `local-*` make targets are unchanged.*
+
+For **published ports without Traefik** (no `/cms` prefix pain), see [Host-direct mode](55-host-direct.md).
+
+## When to use this
+
+Use **host mode** when the lab runs on a Linux box that should be reached by name (colleagues, a jump host, a demo VM) without wiring an external proxy. Use **laptop mode** (`make local-lab-up`) on a developer machine with published ports `8080` / `8001` / `3030` / `3031`. Use **host-direct** when you want those same ports on a shared host with `LAB_HOST` in OIDC/CORS.
+
+Do not mix the compose file sets in one shell — export `COMPOSE_FILE` only through the matching make targets. Tear down with `make host-env-down` before switching to `host-direct-*`. After `make host-env-init` / `host-lab-up`, `COMPOSE_FILE` is also written into `.env`, together with `SCENARIO` and the `LAB_*` values the compose files require (as make resolved them for that run), so bare `docker compose up -d` / `down` / `ps` work from the repo root (same pattern as [neops-docker-compose](https://github.com/zebbra/neops-docker-compose)). `make local-env-init` resets `.env` to the laptop file set.
+
+## Path map
+
+Routing uses Traefik's **file provider** (`traefik/dynamic.*.yml`) with fixed
+compose service URLs — not the Docker provider — so modern Docker daemons that
+reject API 1.24 do not break host mode.
+
+| Public path | Backend | Notes |
+|---|---|---|
+| `/` | web client `:8080` | Catch-all (lowest priority) |
+| `/cms` | `cms-proxy` → CMS `:8000` | nginx strips `/cms` toward Django and rewrites `Location` / admin HTML back under `/cms` (CMS ignores `FORCE_SCRIPT_NAME` env) |
+| `/djstatic` | CMS `:8000` | Django `STATIC_URL`; root-absolute in admin HTML — routed so it does not hit the web client |
+| `/engine` | workflow engine `:3030` | StripPrefix |
+| `/monitor` | monitor app `:5173` | StripPrefix; Vite at **site root**. Iframe auth uses `:3031` (http) or `:8443` (https) — same-origin postMessage is rejected by design |
+| `/traefik` | Traefik dashboard | `--api.basePath=/traefik`; open `/traefik/dashboard/` (trailing slash) |
+
+Static assets of the CMS (`/cms/djstatic/…` or `/djstatic/…`) and of the web client (`/assets/…`) do not collide. The file API is the CMS root, so `FRONTEND_FILEAPI_ENDPOINT` is `${LAB_SCHEME}://${LAB_HOST}/cms/`.
+
+OIDC noop endpoints (`/auth`, `/token`, `/jwks`, …) stay on the web client origin — they are not under `/cms`.
+
+**Direct ports** (same numbers as laptop mode) stay published for debugging — Traefik is still the intended public path for the web client:
+
+- `:8080` → web client (OIDC/monitor relay expect the Traefik origin, not this port)
+- `:8001` → CMS (no `/cms` prefix; admin at `/admin/`, static at `/djstatic/`)
+- `:3030` → engine
+- `:3031` → monitor at site root; **HTTP host mode** iframe origin
+- `:8443` → monitor via Traefik TLS (catch-all); **HTTPS host mode** iframe origin
+
+### Monitor authentication (iframe)
+
+The monitor has no login of its own. The web client embeds it and relays the
+access token over `postMessage`. That only works when the iframe URL is a
+**different origin** (scheme/host/port) than the web client — path prefixes on
+the same host do not count. Lab config therefore sets
+`FRONTEND_WORKFLOW_MANAGER_URL` to `http://LAB_HOST:3031/` or
+`https://LAB_HOST:8443/`, while `generated/monitor/config.host.js` keeps
+`webclientOrigin` at `${LAB_SCHEME}://${LAB_HOST}`.
+
+Open the web client at `https://LAB_HOST/` (or `http://…` in HTTP mode), not
+`:8080`. With self-signed TLS, visit `https://LAB_HOST:8443/` once and accept
+the certificate, then reload the web client — otherwise the iframe stays blank
+or the relay never starts. Opening `:8443/dashboard` in a top-level tab shows
+“Not signed in” by design (no parent to relay from).
+
+Worker and bootstrap still talk to `http://workflow_engine:3030` on the compose network.
+
+## HTTP vs HTTPS
+
+| `LAB_SCHEME` | Ports | Behaviour |
+|---|---|---|
+| `http` | **:80 only** (+ app ports above) | No TLS, no redirect, no `:443` |
+| `https` (default if unset) | :80 + **:443** (+ app ports) | HTTP→HTTPS redirect; TLS (self-signed unless ACME) |
+
+The base overlay [`docker-compose.traefik.yml`](../../docker-compose.traefik.yml) is always HTTP. Make appends [`docker-compose.traefik-https.yml`](../../docker-compose.traefik-https.yml) unless `LAB_SCHEME=http`.
+
+## `.env`
+
+```bash
+make lab-env          # copies .env.example → .env once
+# edit .env:
+LAB_HOST=lab.example.com
+LAB_SCHEME=http       # or https (default)
+
+make host-env-init    # writes COMPOSE_FILE, SCENARIO and LAB_* into .env + first bring-up
+```
+
+After `make host-env-init` (or `make host-env-up`), bare `docker compose up -d` /
+`docker compose down` from the repo root use the same overlays as the make targets.
+
+Optional Let's Encrypt (**HTTPS only**, public DNS + port 80 reachable):
+
+```bash
+TRAEFIK_CERTRESOLVER=letsencrypt
+TRAEFIK_ACME_EMAIL=ops@example.com
+```
+
+When `TRAEFIK_CERTRESOLVER` is set (and scheme is not `http`), make also loads [`docker-compose.traefik-acme.yml`](../../docker-compose.traefik-acme.yml). Otherwise HTTPS uses Traefik's **default self-signed** certificate — browsers will warn; that is expected for a private lab host.
+
+## Make targets
+
+| Target | Laptop counterpart | What it does |
+|---|---|---|
+| `make host-env-init` | `local-env-init` | JWT, Traefik overlay, OIDC render, pull/up, mint `cms_api_key.env`, `apply_cms_config`, force-recreate engine |
+| `make host-env-up` | `local-env-up` | Start base stack + Traefik again |
+| `make host-env-down` | `local-env-down` | Stop; keep volumes |
+| `make host-env-prune` | `local-env-prune` | Stop and drop volumes |
+| `make host-lab-up` | `local-lab-up` | Worker + bootstrap + containerlab devices |
+| `make host-lab-discover` | `local-lab-discover` | Run discovery workflow |
+| `make host-lab-down` | `local-lab-down` | Destroy devices + compose down |
+| `make host-lab-logs` | `local-lab-logs` | Tail worker + bootstrap |
+
+Compose files for host lab (HTTP example):
+
+```text
+docker-compose.yml:docker-compose.worker.yml:docker-compose.traefik.yml
+```
+
+HTTPS adds `:docker-compose.traefik-https.yml` (+ `:docker-compose.traefik-acme.yml` when ACME is set).
+
+`host-env-init` performs the **same key setup** as `local-env-init`: `make lab-jwt` → CMS starts with `cms/jwt` → `generate_api_key` → `cms_api_key.env` → `./apply_cms_config` (GraphQL via `http://localhost:8001`) → recreate `workflow_engine` so it picks up `NEOPS_CMS_TOKEN`.
+
+`./gen_host_oidc` (via `make host-oidc`, `LAB_ACCESS=proxy`) writes git-ignored `cms/oidc-config.host.json` and `generated/monitor/config.host.js` from `LAB_HOST` / `LAB_SCHEME` before every host `up`.
+
+## First bring-up
+
+```bash
+# /etc/hosts or DNS → this host
+cat >> .env <<'EOF'
+LAB_HOST=lab.example.com
+LAB_SCHEME=http
+EOF
+
+make host-env-init    # sets COMPOSE_FILE in .env and starts the control plane
+make host-lab-up      # switches .env to worker overlay, then devices
+make host-lab-discover
+```
+
+Then open (with `LAB_SCHEME=http`):
+
+- `http://lab.example.com/` — web client
+- `http://lab.example.com/cms/admin/` — CMS (`neops` / `neops`)
+- `http://lab.example.com/monitor/` — monitor app
+- `http://lab.example.com/traefik/dashboard/` — Traefik dashboard
+
+After changing `LAB_SCHEME`, recreate Traefik so ports/labels apply:
+
+```bash
+make host-env-up
+# or: docker compose up -d --force-recreate traefik
+```
+
+If the monitor still talks to `http://localhost:3030`, open its Settings page and set the engine URL to `${LAB_SCHEME}://${LAB_HOST}/engine`.
+
+## Ports
+
+- **`LAB_SCHEME=http`**: Traefik **80** plus app ports `8080` / `8001` / `3030` / `3031`.
+- **`LAB_SCHEME=https`**: Traefik **80** (redirect) and **443**, plus the same app ports.
+
+This overlay does not attach to an external Traefik network.
+
+## Host data dirs (Postgres + CMS /tmp)
+
+On **laptop** (`local-*`) Postgres and Elasticsearch use named Docker volumes
+(`postgres_data`, `elasticsearch_lab`).
+
+On **host** / **host-direct** modes, [`docker-compose.host-data.yml`](../../docker-compose.host-data.yml)
+bind-mounts durable CMS-related paths under `./data/` — the same idea as
+[neops-docker-compose](https://github.com/zebbra/neops-docker-compose)
+(`./data/neops_postgres`, `./data/neops_backend/tmp`):
+
+| Host path | Container |
+|---|---|
+| `${LAB_DATA_DIR:-./data}/postgres` | Postgres data |
+| `${LAB_DATA_DIR:-./data}/cms_tmp` | CMS `/tmp` (scratch / uploads) |
+
+Elasticsearch and Redis stay ephemeral (named volume / no volume). Point
+`LAB_DATA_DIR` at an NFS/CIFS mount if the share lives elsewhere.
+
+`make host-data-dirs` (chained into every host `up` / `init`) creates the dirs.
+`make host-env-prune` / `host-direct-env-prune` run `docker compose down -v` but
+**do not delete** bind-mount directories — remove `./data` (or `LAB_DATA_DIR`)
+yourself for a full wipe. Switching from an older host deploy that used named
+Postgres volumes does not copy data automatically.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `docker compose logs traefik` → `no such service` | Stale/missing `COMPOSE_FILE` in `.env` — run `make host-env-up` (rewrites it) or use `make host-logs` |
+| CMS admin redirect lands on web client (`/admin/login/`) | Stale Traefik without `cms-proxy` — pull and `make host-env-up`; redirects must become `/cms/admin/login/` |
+| `/djstatic/…` → 404 on web client | Stale dynamic.yml without `djstatic` router — pull and recreate Traefik; or open `http://HOST:8001/djstatic/…` directly |
+| `/monitor/` → 502 | `workflow-engine-client` not running — often licensed engine image without `rest/monitor-app`. Defaults use preview for the monitor; `make host-logs SERVICE=workflow-engine-client`. Vite `npm install` can also take a few minutes. |
+| Traefik dashboard JSON / doctype error | Stale Traefik without `--api.basePath=/traefik` — pull and `make host-env-up`; open `/traefik/dashboard/` |
+| Traefik 404 on every path | Stale container — `make host-env-up` after pulling; confirm file provider mount (`./traefik/dynamic.*.yml`) |
+| `client version 1.24 is too old` | Old setup used the Docker provider. Current compose uses the **file** provider (no socket). Pull latest, recreate Traefik. |
+| Browser jumps to HTTPS / 404 on HTTPS | `LAB_SCHEME=http` but old Traefik still has the HTTPS overlay — recreate Traefik; clear HSTS if the browser cached HTTPS |
+| Blank `<app-root>` | Missing/stale `cms/oidc-config.host.json` — run `make host-oidc`; `LAB_HOST` must match the URL you type in the browser |
+| `LAB_HOST is required` | Set it in `.env` or the environment before `host-*` |
+| ACME challenge fails | Host not publicly reachable on :80, or DNS not pointing here, or `LAB_SCHEME=http` |
+| `apply_cms_config` / `wait_ready` fail | `:8001` / `:3030` not published — confirm the traefik overlay is in `COMPOSE_FILE` |
+| Prefer no path prefixes | `make host-env-down` then [host-direct](55-host-direct.md) |
+| Monitor link missing on Traefik URL | Same-origin `/monitor` — pull so iframe URL is `:3031`/`:8443`; recreate `web_client` |
+| Monitor iframe loads but stays logged out | Open web client at `${LAB_SCHEME}://${LAB_HOST}/`, not `:8080`; `webclientOrigin` must match that origin |
+| Firewall | Open **8443** (HTTPS iframe) in addition to 80/443 |

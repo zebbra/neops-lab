@@ -16,6 +16,8 @@ The lab is declared in two files:
 |---|---|
 | `docker-compose.yml` | The **base stack**: CMS, workflow engine, monitor app, web client, Postgres, Elasticsearch, Redis, VictoriaLogs, plus a `wait_health` helper |
 | `docker-compose.worker.yml` | The **worker overlay**: the `worker`, the one-shot `lab_bootstrap`, and the `lab-net` network definition |
+| `docker-compose.traefik.yml` | **Host-mode only**: bundled Traefik on :80/:443 and path-prefix labels (`make host-*`) |
+| `docker-compose.traefik-acme.yml` | **Host-mode optional**: Let's Encrypt `certresolver` labels when `TRAEFIK_CERTRESOLVER` is set |
 
 They are combined through docker compose's `COMPOSE_FILE` environment variable, exported only for the lab targets in the `Makefile`:
 
@@ -25,6 +27,12 @@ local-lab-up local-lab-down local-lab-discover local-lab-logs: export COMPOSE_FI
 ```
 
 The scoping is deliberate: `local-env-*` targets keep using the base `docker-compose.yml` only, so you can run the control plane without the worker or the devices.
+
+Host mode adds a third (and optionally fourth) file — see [Host mode (Traefik)](../20-operations/50-host-proxy.md):
+
+```make
+HOST_LAB_COMPOSE_FILES := docker-compose.yml:docker-compose.worker.yml:docker-compose.traefik.yml
+```
 
 !!! warning "`docker compose` by hand needs the same environment"
     Running `docker compose logs worker` in a plain shell will not find the
@@ -42,12 +50,12 @@ export SCENARIO=wan-and-fabric   # compose refuses to interpolate without it
 |---|---|---|---|
 | `cms` | `quay.io/zebbra/neops-cms-free:develop` | `8001` → 8000 | Django CMS + GraphQL. Runs `migrate`, creates the `neops` superuser, builds the ES index, then `runserver`. `REDIS_URL` points it at `redis` |
 | `workflow_engine` | `quay.io/zebbra/neops-workflow-engine-preview:develop` | `3030` | Reads the CMS token from `cms_api_key.env`. The **developer preview**, public; a scenario whose `scenario.json` names `"engine": "enterprise"` (`network-zones`) runs the full licensed engine instead, and `NEOPS_WORKFLOW_ENGINE_IMAGE` wins over both |
-| `workflow-engine-client` | same image as the engine | `3031` → 5173 | The **monitor app**, run in dev mode (`npm install && npm run dev`) out of `/app/rest/monitor-app` |
+| `workflow-engine-client` | the developer preview at the engine's tag (`NEOPS_MONITOR_IMAGE`) | `3031` → 5173 | The **monitor app**, run in dev mode (`npm install && npm run dev`) out of `/app/rest/monitor-app` |
 | `web_client` | `quay.io/zebbra/neops-web-client:develop` | `8080` | `FRONTEND_*` env vars are browser-relative, so they point at host ports |
 | `worker` | `quay.io/zebbra/neops-worker-sdk:develop` | — | On **both** networks; polls the engine's blackboard and drives the devices |
 | `lab_bootstrap` | `neops-lab-bootstrap:latest` (local) | — | One-shot: POSTs every workflow document in the resolved scenario to the engine, then exits |
 | `postgres` | `postgres:15-alpine` | — | Volume `postgres_data` |
-| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.19.23` | — | Volume `elasticsearch`; 2 CPU / 4 GB limits (2 GB heap) |
+| `elasticsearch` | `docker.elastic.co/elasticsearch/elasticsearch:8.19.23` | — | Volume `elasticsearch_lab` (avoids colliding with a host ES volume named `elasticsearch`); 2 CPU / 4 GB limits (2 GB heap) |
 | `redis` | `redis:7-alpine` | — | The CMS's channel layer (GraphQL subscriptions), cache and Celery broker |
 | `victorialogs` | `victoriametrics/victoria-logs:v1.53.0` | — | The engine's log store (`NEOPS_LOG_BACKEND=victorialogs`): engine and worker lines, read back by the monitor app's log views. Volume `victorialogs_data`, 30-day retention, no healthcheck (the image has no shell) |
 | `wait_health` | `busybox` | — | Depends on CMS + engine + web client being *healthy*, so `up -d` blocks until they are |

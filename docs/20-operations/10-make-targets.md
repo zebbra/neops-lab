@@ -144,6 +144,29 @@ A separate flavour that runs the FRR devices as pods in a local KIND cluster. It
 | `make apply-cms-config` | Runs `./apply_cms_config` on its own. Idempotent, and worth re-running after a CMS restart (see below). |
 | `make lab-grant` | `make lab-grant ROLE=<role> [PROFILE=operator]` — applies one workflow grant profile to one role, the same `manage.py grant_workflow_permissions` call `apply_cms_config` makes per role in the scenario's `cms/permissions.json`. Grants only widen — see [Authorization](../10-concepts/50-authorization.md). |
 
+## Host mode (Traefik)
+
+Parallel targets for a single-hostname deployment behind the bundled Traefik overlay. See [Host mode (Traefik)](50-host-proxy.md). Require `LAB_HOST` in `.env`.
+
+| Target | What it does |
+|---|---|
+| `make host-write-compose-env` | Writes `COMPOSE_FILE`, plus `SCENARIO` and every `LAB_*` value the selected compose files require, into `.env` for bare `docker compose` (also chained into `host-env-*` / `host-lab-up`). |
+| `make host-data-dirs` | Creates `${LAB_DATA_DIR:-./data}/{postgres,cms_tmp}` for bind mounts. |
+| `make host-oidc` | Renders `cms/oidc-config.host.json` from `LAB_HOST` / `LAB_SCHEME` (`LAB_ACCESS=proxy`). |
+| `make host-env-init` | Same key setup as `local-env-init`, with `docker-compose.traefik.yml` (and ACME overlay when `TRAEFIK_CERTRESOLVER` is set). |
+| `make host-env-up` / `host-env-down` / `host-env-prune` | Base stack + Traefik lifecycle. |
+| `make host-lab-up` / `host-lab-down` / `host-lab-discover` / `host-lab-logs` | Lab lifecycle with worker + devices, banner prints path-prefix URLs. |
+| `make host-check-cms` | Smoke-test that `/cms/admin/` redirects keep the `/cms` prefix. |
+
+## Host-direct mode (ports)
+
+Published ports on `LAB_HOST` without Traefik — see [Host-direct mode](55-host-direct.md).
+
+| Target | What it does |
+|---|---|
+| `make host-direct-env-init` / `up` / `down` / `prune` | Base stack with `docker-compose.host-direct.yml`. |
+| `make host-direct-lab-up` / `down` / `discover` / `logs` | Lab lifecycle; URLs are `http://LAB_HOST:8080` etc. |
+
 !!! warning "Re-run `apply-cms-config` after a CMS restart"
     The CMS image seeds a scope named `Global` on every startup with
     `always_update_on_restart=True`, so a restart resets its columns and

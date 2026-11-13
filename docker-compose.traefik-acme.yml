@@ -1,0 +1,9 @@
+# Optional Let's Encrypt dynamic config for host mode. Included by the Makefile
+# when TRAEFIK_CERTRESOLVER is set. Requires TRAEFIK_ACME_EMAIL and a publicly
+# resolvable LAB_HOST (HTTP-01 on entrypoint web).
+
+services:
+  traefik:
+    volumes: !override
+      - ./traefik/dynamic.https-acme.yml:/etc/traefik/dynamic.yml:ro
+      - traefik_acme:/acme

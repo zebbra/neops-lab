@@ -1,0 +1,23 @@
+# Host-mode data overlay — bind mounts under ./data/ (neops-docker-compose style).
+#
+# Loaded last in the host COMPOSE_FILE chain so cms volumes: !override from
+# traefik/host-direct overlays do not drop cms_tmp.
+#
+# Layout (override root with LAB_DATA_DIR):
+#   ${LAB_DATA_DIR:-./data}/postgres  → Postgres data directory
+#   ${LAB_DATA_DIR:-./data}/cms_tmp   → CMS /tmp (uploads / scratch; like
+#                                       neops-docker-compose ./data/neops_backend/tmp)
+#
+# Elasticsearch and Redis stay on the base compose defaults (named volume /
+# ephemeral). `docker compose down -v` does **not** delete bind-mount dirs —
+# wipe with `rm -rf data` (or LAB_DATA_DIR) when you want a clean slate.
+# Make creates the directories via `host-data-dirs` before every host up.
+
+services:
+  postgres:
+    volumes: !override
+      - ${LAB_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
+
+  cms:
+    volumes:
+      - ${LAB_DATA_DIR:-./data}/cms_tmp:/tmp

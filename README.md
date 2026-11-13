@@ -302,6 +302,13 @@ wait_ready              # blocks until the worker's function block has an online
 wait_devices            # blocks until every device in the scenario accepts SSH
 docker-compose.yml               # base stack (CMS, engine, monitor app, web client, postgres, ES, redis, victorialogs)
 docker-compose.worker.yml        # worker + lab_bootstrap + the lab-net network definition
+docker-compose.traefik.yml       # host-mode overlay: bundled Traefik + path-prefix routing
+docker-compose.traefik-https.yml # host-mode HTTPS (:443 + redirect)
+docker-compose.traefik-acme.yml  # optional Let's Encrypt dynamic config
+docker-compose.host-data.yml     # host-mode bind mounts: Postgres + CMS /tmp under ./data/
+docker-compose.host-direct.yml   # host-mode published ports, no Traefik
+traefik/                         # file-provider routes (dynamic.http.yml / .https.yml)
+gen_host_oidc                    # renders cms/oidc-config.host.json for host mode
 tests/                  # unit tests for the generators and the scenario overlay
 ```
 
@@ -361,6 +368,8 @@ without it they use the `Makefile`'s default, `wan-and-fabric`.
 | `make kind-lab-up` | The Kubernetes flavour: renders the scenario's **FRR** devices into `generated/$(SCENARIO)/kind/lab.yaml` and runs them as pods in a local KIND cluster, reachable over SSH at `<device>.neops-lab.svc.cluster.local`. Needs no containerlab, no compose stack and no control plane. `make kind-lab-status` / `make kind-lab-down` alongside it — the latter deletes the namespace, never the cluster. |
 | `make kind-lab-cms-config` | Points the existing `apply_cms_config` at a Kubernetes-deployed CMS through `CMS_EXEC` (reused, not reimplemented): grants the `neops` user the `lab-admin` role and seeds the `Global` scope, without which the web client shows no scope. Idempotent. Getting devices into the CMS stays discovery's job. |
 | `make kind-lab-discover` | Discovery against the pods, through the same scripts the containerlab flavour uses: publishes the workflow definition with `bootstrap/register.py`, generates one `/32` per device from the Service ClusterIPs with `./gen_kind_discover_params`, waits with `./wait_ready`, executes with `./run_workflow`. Needs a worker image that carries `global_discover_network`, and the engine reachable at `KIND_ENGINE_URL` — the offline ingress name `http://engine.neops.local` by default, so run `make -C neops-helm config-hosts` once. |
+| `make host-env-init` / `host-lab-up` / … | Host-mode behind bundled Traefik — [Host mode](docs/20-operations/50-host-proxy.md). |
+| `make host-direct-env-init` / `host-direct-lab-up` / … | Same ports as laptop on `LAB_HOST`, no Traefik — [Host-direct](docs/20-operations/55-host-direct.md). |
 | `make lab-env` | Copies `.env.example` to `.env` if absent, so compose has one. A prerequisite of `local-lab-up`; never overwrites an existing `.env`. |
 | `make local-env-up` / `make local-env-down` | The control plane alone — CMS, engine, monitor app, web client and their datastores — with no devices and no containerlab. |
 | `make test` | `pytest tests` — unit tests for the generators and the scenario overlay, incl. that every scenario still reproduces its committed `workflow-execution-parameters/*.json` byte-for-byte. |
@@ -395,6 +404,13 @@ The devices keep their host offsets in `LAB_SUBNET` (`172.30.0.11` becomes
 under `generated/<name>/workflow-execution-parameters/`. Device containers are
 named `<LAB_NAME>-<node>`. The hand-written `discover-params-mixed.json` only fits
 the default subnet.
+
+To publish the same stack on a shared host behind a bundled Traefik (one
+hostname, path prefixes `/cms`, `/engine`, `/monitor`), see
+[Host mode (Traefik)](docs/20-operations/50-host-proxy.md) and the `make host-*`
+targets. For laptop-style ports on that host without a reverse proxy, see
+[Host-direct mode](docs/20-operations/55-host-direct.md) (`make host-direct-*`).
+Both modes publish the fixed default ports, whatever the `LAB_*_PORT` variables say.
 
 Every lab caller carries an engine token (`./lab_token` mints one); how much the
 engine gates is `NEOPS_AUTHZ_MODE` on the `workflow_engine` service. Besides

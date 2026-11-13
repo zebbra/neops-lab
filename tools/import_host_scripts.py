@@ -18,6 +18,8 @@ SCRIPTS = (
     "check_env_pins",
     "gen_clab_topology",
     "gen_device_configs",
+    "gen_compose_env",
+    "gen_host_oidc",
     "gen_kind_discover_params",
     "gen_kind_manifests",
     "lab_token",
