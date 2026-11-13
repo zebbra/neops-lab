@@ -1,0 +1,6 @@
+[[target]]
+name = "lab"
+ecosystem = "uv"
+path = "."
+scope = "all"
+fail-on = "any"
